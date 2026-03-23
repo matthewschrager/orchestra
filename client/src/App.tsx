@@ -9,6 +9,7 @@ import { ContextPanel } from "./components/ContextPanel";
 import { InputBar } from "./components/InputBar";
 import { SlashCommandInput } from "./components/SlashCommandInput";
 import { AuthGate } from "./components/AuthGate";
+import { extractTokenFromUrl, getStoredToken } from "./lib/auth";
 import { StickyRunBar } from "./components/StickyRunBar";
 import { MobileNav } from "./components/MobileNav";
 import { AttentionInbox } from "./components/AttentionInbox";
@@ -19,9 +20,12 @@ import { usePushNotifications } from "./hooks/usePushNotifications";
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
 
-  // Check if auth is required on mount
+  // Check URL for token param (from QR code), then check if auth is required
   useEffect(() => {
-    fetch("/api/agents").then((res) => {
+    extractTokenFromUrl();
+    const token = getStoredToken();
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch("/api/agents", { headers }).then((res) => {
       if (res.status === 401) setNeedsAuth(true);
       else setNeedsAuth(false);
     }).catch(() => setNeedsAuth(false));

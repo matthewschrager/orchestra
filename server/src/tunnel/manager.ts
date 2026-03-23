@@ -11,7 +11,7 @@ export interface TunnelInfo {
  * and monitors the process lifecycle.
  */
 export class TunnelManager {
-  private proc: Subprocess<"ignore", "pipe", "pipe"> | null = null;
+  private proc: Subprocess<"ignore", "ignore", "pipe"> | null = null;
   private _url: string | null = null;
   private _onUrl: ((url: string) => void) | null = null;
 
@@ -44,10 +44,10 @@ export class TunnelManager {
       );
     }
 
-    const localUrl = `http://localhost:${localPort}`;
+    const localUrl = `http://127.0.0.1:${localPort}`;
     this.proc = Bun.spawn(
       ["cloudflared", "tunnel", "--url", localUrl],
-      { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+      { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
     );
 
     // cloudflared prints the tunnel URL to stderr
@@ -56,7 +56,10 @@ export class TunnelManager {
 
     // Monitor for unexpected exit
     this.proc.exited.then((code) => {
-      console.warn(`[tunnel] cloudflared exited with code ${code}`);
+      // SIGTERM (143) during stop() is expected
+      if (this.proc !== null) {
+        console.warn(`[tunnel] cloudflared exited with code ${code}`);
+      }
       this.proc = null;
       this._url = null;
     });
@@ -66,9 +69,10 @@ export class TunnelManager {
 
   stop(): void {
     if (this.proc) {
-      this.proc.kill();
+      const p = this.proc;
       this.proc = null;
       this._url = null;
+      p.kill();
     }
   }
 
@@ -78,54 +82,67 @@ export class TunnelManager {
    *   | https://abc-xyz-123.trycloudflare.com |
    * or in newer versions:
    *   Your quick Tunnel has been created! Visit it at (URL): https://...
+   *
+   * After finding the URL, continues draining stderr in the background
+   * to avoid SIGPIPE killing cloudflared.
    */
-  private async waitForUrl(stderr: ReadableStream<Uint8Array>): Promise<string> {
-    const decoder = new TextDecoder();
-    let buffer = "";
-    const urlPattern = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/;
+  private waitForUrl(stderr: ReadableStream<Uint8Array>): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let found = false;
+      const urlPattern = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/;
 
-    const timeoutMs = 30_000;
-    const startTime = Date.now();
-
-    for await (const chunk of stderr) {
-      if (Date.now() - startTime > timeoutMs) {
-        throw new Error("Timed out waiting for cloudflared to assign a URL (30s)");
-      }
-
-      buffer += decoder.decode(chunk, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        const match = line.match(urlPattern);
-        if (match) {
-          return match[0];
+      const timeoutMs = 30_000;
+      const timeout = setTimeout(() => {
+        if (!found) {
+          reject(new Error("Timed out waiting for cloudflared to assign a URL (30s)"));
         }
-      }
-    }
+      }, timeoutMs);
 
-    throw new Error("cloudflared exited without providing a tunnel URL");
+      // Drain stderr continuously — never abandon the stream
+      (async () => {
+        try {
+          for await (const chunk of stderr) {
+            buffer += decoder.decode(chunk, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            if (!found) {
+              for (const line of lines) {
+                const match = line.match(urlPattern);
+                if (match) {
+                  found = true;
+                  clearTimeout(timeout);
+                  resolve(match[0]);
+                  break;
+                }
+              }
+            }
+          }
+        } catch {
+          // Stream closed — process exiting
+        }
+
+        if (!found) {
+          clearTimeout(timeout);
+          reject(new Error("cloudflared exited without providing a tunnel URL"));
+        }
+      })();
+    });
   }
 }
 
 /**
- * Generate a simple QR code as ASCII art for terminal display.
- * Uses a minimal approach without external dependencies.
+ * Generate a QR code as terminal output.
+ * Uses qrcode-terminal to render a scannable QR code.
  */
-export function generateQRCodeAscii(url: string): string {
-  // For a proper QR code we'd need a library, but for MVP
-  // we display the URL prominently with a border
-  const lines = [
-    "┌─────────────────────────────────────────────┐",
-    "│                                             │",
-    "│   Scan this URL on your phone:              │",
-    "│                                             │",
-    `│   ${url.padEnd(41)}│`,
-    "│                                             │",
-    "│   Or install a QR code reader and scan      │",
-    "│   the terminal (coming soon).               │",
-    "│                                             │",
-    "└─────────────────────────────────────────────┘",
-  ];
-  return lines.join("\n");
+export function generateQRCodeAscii(url: string): Promise<string> {
+  return new Promise((resolve) => {
+    import("qrcode-terminal").then((qrcode) => {
+      qrcode.generate(url, { small: true }, (code: string) => {
+        resolve(code);
+      });
+    });
+  });
 }

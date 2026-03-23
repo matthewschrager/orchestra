@@ -58,11 +58,15 @@ const app = new Hono();
 
 app.use("*", cors());
 
-// Auth middleware — only enforced for non-local requests when binding externally
+// Auth middleware — enforced for non-local requests (tunnel traffic has CF-Connecting-IP)
 app.use("/api/*", async (c, next) => {
-  if (authToken && (useTunnel || !isLocalRequest(c.req.raw, (c as any).env?.ip))) {
-    if (!validateToken(c.req.raw, authToken)) {
-      return c.json({ error: "Unauthorized — provide Bearer token" }, 401);
+  if (authToken) {
+    const isTunneled = !!c.req.raw.headers.get("cf-connecting-ip");
+    const isLocal = isLocalRequest(c.req.raw, (c as any).env?.ip);
+    if (isTunneled || !isLocal) {
+      if (!validateToken(c.req.raw, authToken)) {
+        return c.json({ error: "Unauthorized — provide Bearer token" }, 401);
+      }
     }
   }
   await next();
@@ -96,8 +100,9 @@ const server = Bun.serve({
 
     // WebSocket upgrade
     if (url.pathname === "/ws") {
-      // Auth check for external WS connections
+      // Auth check for external WS connections (tunnel traffic has CF-Connecting-IP)
       if (authToken) {
+        const isTunneled = !!req.headers.get("cf-connecting-ip");
         const ip = server.requestIP(req);
         const isLocal =
           !ip ||
@@ -105,7 +110,7 @@ const server = Bun.serve({
           ip.address === "::1" ||
           ip.address === "::ffff:127.0.0.1";
 
-        if ((useTunnel || !isLocal) && !validateWSToken(url, authToken)) {
+        if ((isTunneled || !isLocal) && !validateWSToken(url, authToken)) {
           return new Response("Unauthorized", { status: 401 });
         }
       }
@@ -133,10 +138,14 @@ app.get("/api/tunnel", (c) => {
 
 if (useTunnel) {
   console.log("\nStarting Cloudflare Tunnel...");
-  tunnelManager.start(PORT).then((url) => {
-    console.log(`\n${generateQRCodeAscii(url)}`);
+  tunnelManager.start(PORT).then(async (url) => {
+    const authUrl = authToken ? `${url}?token=${authToken}` : url;
+    const qr = await generateQRCodeAscii(authUrl);
+    console.log(`\n${qr}`);
     console.log(`\nTunnel active: ${url}`);
-    console.log(`Auth token: ${authToken ?? "(none — generate with orchestra auth regenerate)"}`);
+    if (authToken) {
+      console.log(`Scan the QR code — token is embedded in the URL.`);
+    }
   }).catch((err) => {
     console.error(`\nTunnel failed: ${(err as Error).message}`);
     console.log("Server is still running — connect via LAN/VPN instead.");

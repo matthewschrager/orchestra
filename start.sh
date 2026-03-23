@@ -7,14 +7,16 @@ ORIG_CWD="$PWD"
 # ── Parse arguments ─────────────────────────────────────
 
 usage() {
-  echo "Usage: $0 [-p|--port PORT] [-d|--data-dir DIR]"
+  echo "Usage: $0 [-p|--port PORT] [-d|--data-dir DIR] [--tunnel]"
   echo "  -p, --port PORT       Port for the UI (default: 3847, or ORCHESTRA_PORT env var)"
   echo "  -d, --data-dir DIR    Data directory for DB + auth token (default: ~/.orchestra)"
+  echo "  --tunnel              Enable Cloudflare Tunnel for remote/phone access"
   exit 0
 }
 
 CLI_PORT=""
 CLI_DATA_DIR=""
+USE_TUNNEL=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -p|--port)
@@ -24,6 +26,10 @@ while [[ $# -gt 0 ]]; do
     -d|--data-dir)
       CLI_DATA_DIR="$2"
       shift 2
+      ;;
+    --tunnel)
+      USE_TUNNEL=true
+      shift
       ;;
     -h|--help)
       usage
@@ -91,6 +97,9 @@ fi
 
 echo ""
 echo "Starting Orchestra on http://localhost:$PORT"
+if [[ "$USE_TUNNEL" == true ]]; then
+  echo "Cloudflare Tunnel enabled — remote URL will appear below."
+fi
 echo "Press Ctrl+C to stop."
 echo ""
 # Final port check before starting
@@ -101,4 +110,8 @@ if lsof -ti :"$PORT" &>/dev/null; then
 fi
 
 cd "$ROOT/server"
-exec bun run src/index.ts
+if [[ "$USE_TUNNEL" == true ]]; then
+  exec bun run src/index.ts --tunnel
+else
+  exec bun run src/index.ts
+fi
