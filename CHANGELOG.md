@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.3.0] - 2026-03-23
+
+### Added
+
+- **Directory browser** — Add Project dialog now includes a visual filesystem browser with git repo detection, replacing the raw path input
+- **Error message tracking** — Thread errors now store and display stderr output; error banners show in chat view and tooltips on status badges
+- **WebSocket error handling** — Client now surfaces server-side WebSocket errors via `onError` callback
+- **Filesystem API** — New `/api/fs/browse` endpoint for directory listing with git repo detection
+- **Stderr collection** — Session manager captures subprocess stderr (capped at 4KB) for error reporting
+- **7 filesystem route tests** — Covers directory listing, sorting, hidden file exclusion, git detection, parent path, and error cases
+
+### Fixed
+
+- **start.sh port cleanup** — SIGTERM → poll → SIGKILL escalation with final port check prevents "port in use" errors
+- **Phantom system messages** — Null/empty system events no longer create empty assistant message bubbles
+- **Empty message filtering** — MessageBubble skips rendering empty or `""` content
+- **Stream event noise** — `message_start` and `message_delta` envelope events are silently handled instead of logged as unknown
+
+### Changed
+
+- **Stop button redesign** — Replaced full-width "Stop running" banner with compact animated stop icon next to the input
+- **Concurrent threads** — Removed per-project main worktree mutex; multiple threads can run on the same project simultaneously
+- **Turn-aware UI state** — Pulse animation and StickyRunBar use `activelyWorking` (running + turn not ended) instead of raw `isRunning`
+- **Orphan thread recovery** — Server restart marks orphaned running threads with descriptive error messages
+
 ## [0.1.2.0] - 2026-03-23
 
 ### Added
