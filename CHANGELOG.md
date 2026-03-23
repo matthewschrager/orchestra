@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.1.1.0] - 2026-03-23
+
+### Added
+
+- **Multi-project support** — Register multiple git repos as projects, manage threads across them from a single Orchestra instance
+- **Project-centric sidebar** — Codex-style two-level sidebar with projects as top-level items and threads nested under each, replacing the flat thread list
+- **Project CRUD** — REST API for registering, renaming, and deleting projects with git repo validation and path deduplication
+- **CLI `orchestra add`** — Register projects from the terminal with shared validation logic
+- **Real-time streaming** — Claude's text output and tool calls stream to the UI as they happen, replacing the static "Thinking..." placeholder
+- **Stream delta pipeline** — Ephemeral WebSocket channel for streaming deltas (text, tool_start, tool_input, tool_end) without DB persistence
+- **Project-aware thread creation** — EmptyState shows repo name, branch, and path so the user knows exactly where work will happen
+- **Welcome state** — First-launch experience with "Add project" CTA and CLI instructions
+- **Add Project dialog** — Path input with validation and error display
+- **Per-project worktree lock** — Two threads in different projects can run simultaneously on their respective main worktrees
+- **Tool context display** — Streaming tool calls show the tool name plus extracted context (file path, command, pattern)
+- **Thread archiving** — Archive threads from the sidebar with hover-revealed archive button
+- **DB migration** — Auto-creates projects from existing threads' repo_path on upgrade, with path normalization and deduplication
+
+### Changed
+
+- **Spawn model** — Switched from long-lived interactive stdin pipe to `-p` one-shot mode with `--resume` for multi-turn. Fixes Bun pipe buffering issue where Claude's output never arrived.
+- **`--include-partial-messages`** — Added to Claude spawn args to enable `stream_event` real-time deltas
+- **Thread creation requires `projectId`** — API now validates project existence and resolves path from the project record
+
+### Fixed
+
+- **Duplicate final messages** — `result` event no longer persists text (already captured by `assistant` event), eliminating duplicate response messages
+- **Session ID persistence** — Session ID now survives process exit for `--resume` continuity across turns
+- **Superseded process safety** — `handleExit` and `readStream` check PID to avoid tearing down a new session when an old process exits
+- **False `tool_end` for text blocks** — `content_block_stop` now tracks current block type and only emits `tool_end` for tool_use blocks
+- **FK constraint on project delete** — Nulls out `project_id` on threads before deleting the project row
+- **Session ID leak** — `turn_end` delta text (containing session_id) is stripped before forwarding to WebSocket clients
+
 ## [0.1.0.0] - 2026-03-22
 
 ### Added
