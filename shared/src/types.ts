@@ -70,10 +70,21 @@ export interface AgentConfig {
 
 export interface StreamDelta {
   threadId: string;
-  deltaType: "text" | "tool_start" | "tool_input" | "tool_end" | "turn_end";
+  deltaType: "text" | "tool_start" | "tool_input" | "tool_end" | "turn_end" | "metrics";
   text?: string;
   toolName?: string;
   toolInput?: string;
+  costUsd?: number;
+  durationMs?: number;
+  sessionId?: string;
+}
+
+// ── Turn Metrics ──────────────────────────────────────
+
+export interface TurnMetrics {
+  costUsd: number;
+  durationMs: number;
+  turnCount: number;
 }
 
 // ── WebSocket Messages ──────────────────────────────────
@@ -90,6 +101,14 @@ export type WSServerMessage =
   | { type: "error"; error: string }
   | { type: "replay_done"; threadId: string }
   | { type: "stream_delta"; delta: StreamDelta };
+
+// ── Slash Commands ─────────────────────────────────────
+
+export interface SlashCommand {
+  name: string;
+  description: string;
+  source: "builtin" | "plugin" | "skill";
+}
 
 // ── API Types ───────────────────────────────────────────
 

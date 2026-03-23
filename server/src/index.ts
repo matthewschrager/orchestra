@@ -5,6 +5,7 @@ import { createDb } from "./db";
 import { createThreadRoutes } from "./routes/threads";
 import { createAgentRoutes } from "./routes/agents";
 import { createProjectRoutes } from "./routes/projects";
+import { createCommandRoutes } from "./routes/commands";
 import { createWSHandler } from "./ws/handler";
 import { SessionManager } from "./sessions/manager";
 import { AgentRegistry } from "./agents/registry";
@@ -54,6 +55,7 @@ app.use("/api/*", async (c, next) => {
 app.route("/api/projects", createProjectRoutes(db));
 app.route("/api/threads", createThreadRoutes(db, sessionManager, worktreeManager));
 app.route("/api/agents", createAgentRoutes(registry));
+app.route("/api/commands", createCommandRoutes());
 
 // Static frontend (production)
 app.use("/*", serveStatic({ root: "./static" }));
