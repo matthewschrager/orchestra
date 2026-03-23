@@ -1,6 +1,7 @@
 import webpush from "web-push";
 import { join } from "path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { nanoid } from "nanoid";
 import type { DB } from "../db";
 import type { AttentionItem } from "shared";
 
@@ -44,7 +45,6 @@ export class PushManager {
     keys: { p256dh: string; auth: string };
     userAgent?: string;
   }): void {
-    const { nanoid } = require("nanoid");
     const id = nanoid(16);
     this.db.query(
       `INSERT OR REPLACE INTO push_subscriptions (id, endpoint, keys_p256dh, keys_auth, user_agent)

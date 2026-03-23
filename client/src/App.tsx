@@ -12,6 +12,9 @@ import { AuthGate } from "./components/AuthGate";
 import { StickyRunBar } from "./components/StickyRunBar";
 import { MobileNav } from "./components/MobileNav";
 import { AttentionInbox } from "./components/AttentionInbox";
+import { MobileSessions } from "./components/MobileSessions";
+import { MobileNewSession } from "./components/MobileNewSession";
+import { usePushNotifications } from "./hooks/usePushNotifications";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -182,12 +185,33 @@ function AppInner() {
   const [showAddProject, setShowAddProject] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
+  const [desktopDrawerOpen, setDesktopDrawerOpen] = useState(false);
+  const [pushBannerDismissed, setPushBannerDismissed] = useState(
+    () => localStorage.getItem("orchestra_push_dismissed") === "1",
+  );
+  const drawerRef = useRef<HTMLDivElement>(null);
   const [streaming, dispatchStreaming] = useReducer(streamingReducer, initialStreamingState);
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
 
   // Attention system — cross-thread pending questions/permissions
   const attention = useAttention();
+
+  // Push notifications
+  const push = usePushNotifications();
+  const showPushBanner = push.supported && push.permission === "default" && !push.subscribed && !pushBannerDismissed;
+
+  // Close desktop drawer on click outside
+  useEffect(() => {
+    if (!desktopDrawerOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
+        setDesktopDrawerOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [desktopDrawerOpen]);
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
@@ -262,6 +286,29 @@ function AppInner() {
       subscribedRef.current = activeThreadId;
     }
   }, [activeThreadId, connected, send]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Service worker notification-click handler ─────────
+  useEffect(() => {
+    // Handle deep-link from push notification click
+    const params = new URLSearchParams(window.location.search);
+    const threadParam = params.get("thread");
+    if (threadParam) {
+      setActiveThreadId(threadParam);
+      // Clean URL without reload
+      window.history.replaceState({}, "", "/");
+    }
+
+    // Handle messages from service worker
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === "notification-click") {
+        if (event.data.threadId) {
+          setActiveThreadId(event.data.threadId);
+        }
+      }
+    };
+    navigator.serviceWorker?.addEventListener("message", handler);
+    return () => navigator.serviceWorker?.removeEventListener("message", handler);
+  }, []);
 
   // ── Data loading ──────────────────────────────────────
 
@@ -466,6 +513,30 @@ function AppInner() {
         </div>
       )}
 
+      {showPushBanner && (
+        <div className="bg-accent/10 border-b border-accent/20 px-4 py-2 text-sm flex items-center justify-between gap-3">
+          <span className="text-content-2">Get notified when agents need your input.</span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => push.subscribe()}
+              disabled={push.loading}
+              className="px-3 py-1 rounded-lg bg-accent hover:bg-accent/80 text-white text-xs font-medium disabled:opacity-50"
+            >
+              {push.loading ? "..." : "Enable"}
+            </button>
+            <button
+              onClick={() => {
+                setPushBannerDismissed(true);
+                localStorage.setItem("orchestra_push_dismissed", "1");
+              }}
+              className="text-content-3 hover:text-content-2 text-xs"
+            >
+              Later
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
         <ProjectSidebar
@@ -537,7 +608,7 @@ function AppInner() {
         )}
       </div>
 
-      {/* Mobile Attention Inbox overlay */}
+      {/* Mobile tab overlays — only show when NOT viewing a specific thread */}
       {mobileTab === "inbox" && (
         <div className="md:hidden fixed inset-0 top-0 bottom-14 z-20 bg-base overflow-y-auto"
           style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
@@ -559,6 +630,44 @@ function AppInner() {
         </div>
       )}
 
+      {mobileTab === "sessions" && !activeThread && (
+        <div className="md:hidden fixed inset-0 top-0 bottom-14 z-20 bg-base overflow-y-auto"
+          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        >
+          <MobileSessions
+            projects={projects}
+            threads={threads}
+            activeThreadId={activeThreadId}
+            onSelectThread={(threadId) => {
+              handleSelectThread(threadId);
+              setMobileTab("sessions");
+            }}
+            onNewThread={(projectId) => {
+              setActiveProjectId(projectId);
+              setActiveThreadId(null);
+              setMobileTab("new");
+            }}
+          />
+        </div>
+      )}
+
+      {mobileTab === "new" && (
+        <div className="md:hidden fixed inset-0 top-0 bottom-14 z-20 bg-base overflow-y-auto"
+          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        >
+          <MobileNewSession
+            projects={projects}
+            agents={agents}
+            commands={commands}
+            activeProjectId={activeProjectId}
+            onNewThread={(agent, prompt, isolate, projectId) => {
+              handleNewThread(agent, prompt, isolate, projectId);
+              setMobileTab("sessions");
+            }}
+          />
+        </div>
+      )}
+
       {/* Mobile Bottom Navigation */}
       <MobileNav
         activeTab={mobileTab}
@@ -566,15 +675,33 @@ function AppInner() {
         attentionCount={attention.pendingCount}
       />
 
-      {/* Desktop attention bell (top-right) */}
+      {/* Desktop attention drawer (top-right) */}
       {attention.pendingCount > 0 && (
-        <div className="hidden md:block fixed top-3 right-4 z-30">
+        <div ref={drawerRef} className="hidden md:block fixed top-3 right-4 z-30">
           <button
-            onClick={() => {/* TODO: desktop attention drawer */}}
+            onClick={() => setDesktopDrawerOpen((o) => !o)}
             className="relative px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-medium hover:bg-amber-500/20"
           >
             {attention.pendingCount} pending
           </button>
+          {desktopDrawerOpen && (
+            <div className="absolute top-full right-0 mt-2 w-96 max-h-[70vh] overflow-y-auto rounded-xl bg-surface-1 border border-edge-1 shadow-2xl shadow-black/40">
+              <div className="sticky top-0 bg-surface-1 border-b border-edge-1 px-4 py-2.5 z-10">
+                <h3 className="text-sm font-semibold text-content-1">Attention Queue</h3>
+              </div>
+              <AttentionInbox
+                items={attention.items}
+                onResolve={(id, res) => {
+                  handleResolveAttention(id, res);
+                  if (attention.pendingCount <= 1) setDesktopDrawerOpen(false);
+                }}
+                onNavigateToThread={(threadId) => {
+                  handleNavigateToThread(threadId);
+                  setDesktopDrawerOpen(false);
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -919,6 +1046,7 @@ function HeaderStatusBadge({ status, errorMessage }: { status: string; errorMess
   const styles: Record<string, string> = {
     running: "bg-emerald-900/40 text-emerald-400 border-emerald-500/20",
     pending: "bg-amber-900/40 text-amber-400 border-amber-500/20",
+    waiting: "bg-amber-900/40 text-amber-400 border-amber-500/20",
     paused: "bg-surface-3 text-content-3 border-edge-2",
     done: "bg-accent/10 text-accent border-accent/20",
     error: "bg-red-900/40 text-red-400 border-red-500/20",

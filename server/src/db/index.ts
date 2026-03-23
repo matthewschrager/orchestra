@@ -249,7 +249,7 @@ export function getProjectThreadCounts(
     .get(projectId) as { count: number };
   const active = db
     .query(
-      "SELECT COUNT(*) as count FROM threads WHERE project_id = ? AND status IN ('running', 'pending') AND archived_at IS NULL",
+      "SELECT COUNT(*) as count FROM threads WHERE project_id = ? AND status IN ('running', 'pending', 'waiting') AND archived_at IS NULL",
     )
     .get(projectId) as { count: number };
   return { total: total.count, active: active.count };

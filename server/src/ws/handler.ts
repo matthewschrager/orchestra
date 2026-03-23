@@ -53,17 +53,28 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
     }
   });
 
-  // Forward attention events to subscribed clients
-  sessionManager.onAttention((threadId: string, attention: AttentionItem) => {
+  // Forward attention events to ALL connected clients (inbox is cross-thread)
+  sessionManager.onAttention((_threadId: string, attention: AttentionItem) => {
     const payload: WSServerMessage = {
       type: "attention_required",
       attention,
     };
     const json = JSON.stringify(payload);
     for (const ws of clients) {
-      if (ws.data.subscriptions.has(threadId)) {
-        ws.send(json);
-      }
+      ws.send(json);
+    }
+  });
+
+  // Forward attention resolutions to ALL connected clients (covers REST + WS resolutions)
+  sessionManager.onAttentionResolved((attentionId: string, threadId: string) => {
+    const payload: WSServerMessage = {
+      type: "attention_resolved",
+      attentionId,
+      threadId,
+    };
+    const json = JSON.stringify(payload);
+    for (const ws of clients) {
+      ws.send(json);
     }
   });
 
@@ -142,20 +153,7 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
 
         case "resolve_attention": {
           const resolved = sessionManager.resolveAttention(msg.attentionId, msg.resolution);
-          if (resolved) {
-            // Broadcast resolution to all clients subscribed to this thread
-            const payload: WSServerMessage = {
-              type: "attention_resolved",
-              attentionId: msg.attentionId,
-              threadId: resolved.thread_id,
-            };
-            const json = JSON.stringify(payload);
-            for (const c of clients) {
-              if (c.data.subscriptions.has(resolved.thread_id)) {
-                c.send(json);
-              }
-            }
-          } else {
+          if (!resolved) {
             ws.send(
               JSON.stringify({
                 type: "error",

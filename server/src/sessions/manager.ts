@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import type { DB, MessageRow, ThreadRow, AttentionRow } from "../db";
 import {
   getThread,
+  getAttentionItem,
   insertMessage,
   updateThread,
   createAttentionItem,
@@ -28,6 +29,7 @@ type MessageListener = (threadId: string, message: MessageRow) => void;
 type ThreadListener = (thread: ThreadRow) => void;
 type StreamDeltaListener = (threadId: string, delta: StreamDelta) => void;
 type AttentionListener = (threadId: string, attention: AttentionItem) => void;
+type AttentionResolvedListener = (attentionId: string, threadId: string) => void;
 
 const STALL_TIMEOUT_MS = Number(process.env.ORCHESTRA_STALL_TIMEOUT ?? 30_000);
 
@@ -37,6 +39,7 @@ export class SessionManager {
   private threadListeners: Set<ThreadListener> = new Set();
   private streamDeltaListeners: Set<StreamDeltaListener> = new Set();
   private attentionListeners: Set<AttentionListener> = new Set();
+  private attentionResolvedListeners: Set<AttentionResolvedListener> = new Set();
   private mainWorktreeLocks: Map<string, string> = new Map();
 
   constructor(
@@ -96,8 +99,11 @@ export class SessionManager {
   stopThread(threadId: string): void {
     const session = this.sessions.get(threadId);
     if (!session) return;
+    this.clearStallTimer(session);
     session.agentProc.proc.kill();
     this.sessions.delete(threadId);
+    this.clearMainWorktreeLock(threadId);
+    orphanAttentionItems(this.db, threadId);
     updateThread(this.db, threadId, { status: "done", pid: null });
     this.notifyThread(threadId);
   }
@@ -165,19 +171,27 @@ export class SessionManager {
     return () => this.attentionListeners.delete(fn);
   }
 
+  onAttentionResolved(fn: AttentionResolvedListener): () => void {
+    this.attentionResolvedListeners.add(fn);
+    return () => this.attentionResolvedListeners.delete(fn);
+  }
+
   /** Resolve an attention item and resume the agent with the user's response. */
   resolveAttention(attentionId: string, resolution: object): AttentionRow | null {
+    // Check if already resolved BEFORE attempting — prevents double-resume race
+    const existing = getAttentionItem(this.db, attentionId);
+    if (!existing) return null;
+    if (existing.resolved_at) return existing; // Already resolved by another caller
+
     const resolved = resolveAttentionItem(this.db, attentionId, resolution);
     if (!resolved || !resolved.thread_id) return null;
 
+    // Only resume if WE actually performed the resolution (resolved_at was null before)
     const threadId = resolved.thread_id;
-
-    // If the resolution is a user response, resume the agent
     const res = resolution as { type?: string; text?: string; optionIndex?: number; action?: string };
     if (res.type === "user") {
       const thread = getThread(this.db, threadId);
       if (thread && (thread.status === "waiting" || thread.status === "done")) {
-        // Build a response prompt from the resolution
         let answer: string;
         if (res.action) {
           answer = `User ${res.action === "allow" ? "approved" : "denied"} the action.`;
@@ -190,10 +204,12 @@ export class SessionManager {
           answer = "User acknowledged.";
         }
 
-        // Resume the thread
         this.sendMessage(threadId, answer);
       }
     }
+
+    // Notify listeners so WS clients learn about the resolution
+    this.notifyAttentionResolved(attentionId, threadId);
 
     return resolved;
   }
@@ -469,6 +485,14 @@ export class SessionManager {
     }
   }
 
+  private notifyAttentionResolved(attentionId: string, threadId: string): void {
+    for (const fn of this.attentionResolvedListeners) {
+      try {
+        fn(attentionId, threadId);
+      } catch {}
+    }
+  }
+
   private notifyThread(threadId: string): void {
     const thread = getThread(this.db, threadId);
     if (!thread) return;
@@ -499,7 +523,7 @@ export class SessionManager {
 
   private recoverOrphanedThreads(): void {
     const running = this.db
-      .query("SELECT * FROM threads WHERE status = 'running'")
+      .query("SELECT * FROM threads WHERE status IN ('running', 'waiting')")
       .all() as ThreadRow[];
 
     for (const thread of running) {
@@ -513,6 +537,8 @@ export class SessionManager {
           // Already dead
         }
       }
+      // Orphan any pending attention items so they don't linger in the inbox
+      orphanAttentionItems(this.db, thread.id);
       updateThread(this.db, thread.id, {
         status: "error",
         pid: null,

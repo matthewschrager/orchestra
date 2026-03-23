@@ -51,14 +51,9 @@ function AttentionCard({ item, onResolve, onNavigateToThread }: {
 
   const handleSubmit = () => {
     if (submitting) return;
-    setSubmitting(true);
+    if (item.kind === "permission") return; // Permissions use Allow/Deny buttons
 
     let resolution: AttentionResolution;
-    if (item.kind === "permission") {
-      // Should not reach here — permissions use Allow/Deny buttons
-      return;
-    }
-
     if (selectedOption !== null) {
       resolution = { type: "user", optionIndex: selectedOption };
     } else if (customText.trim()) {
@@ -67,6 +62,7 @@ function AttentionCard({ item, onResolve, onNavigateToThread }: {
       return;
     }
 
+    setSubmitting(true);
     onResolve(item.id, resolution);
   };
 

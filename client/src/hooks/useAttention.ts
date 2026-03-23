@@ -11,9 +11,7 @@ export function useAttention() {
 
   // Load initial pending items from REST API
   useEffect(() => {
-    api.fetch("/api/attention").then(async (resp) => {
-      if (!resp.ok) return;
-      const data = (await resp.json()) as AttentionItem[];
+    api.listAttention().then((data) => {
       setItems(new Map(data.map((a) => [a.id, a])));
     }).catch(() => {});
   }, []);

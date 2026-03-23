@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
-import { createDb } from "./db";
+import { createDb, expireAttentionItems } from "./db";
 import { createThreadRoutes } from "./routes/threads";
 import { createAgentRoutes } from "./routes/agents";
 import { createProjectRoutes } from "./routes/projects";
@@ -59,7 +59,7 @@ app.use("*", cors());
 
 // Auth middleware — only enforced for non-local requests when binding externally
 app.use("/api/*", async (c, next) => {
-  if (authToken && !isLocalRequest(c.req.raw, (c as any).env?.ip)) {
+  if (authToken && (useTunnel || !isLocalRequest(c.req.raw, (c as any).env?.ip))) {
     if (!validateToken(c.req.raw, authToken)) {
       return c.json({ error: "Unauthorized — provide Bearer token" }, 401);
     }
@@ -104,7 +104,7 @@ const server = Bun.serve({
           ip.address === "::1" ||
           ip.address === "::ffff:127.0.0.1";
 
-        if (!isLocal && !validateWSToken(url, authToken)) {
+        if ((useTunnel || !isLocal) && !validateWSToken(url, authToken)) {
           return new Response("Unauthorized", { status: 401 });
         }
       }
@@ -148,6 +148,15 @@ if (useTunnel) {
       `  SSH:       ssh -L ${PORT}:localhost:${PORT} <host>\n`,
   );
 }
+
+// ── Periodic attention expiry ─────────────────────────────
+const EXPIRY_INTERVAL_MS = 60 * 60 * 1000; // every hour
+setInterval(() => {
+  const expired = expireAttentionItems(db);
+  if (expired > 0) console.log(`[attention] Expired ${expired} stale items`);
+}, EXPIRY_INTERVAL_MS);
+// Run once on startup
+expireAttentionItems(db);
 
 // Cleanup on exit
 function shutdown() {
