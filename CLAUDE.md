@@ -20,7 +20,10 @@ orchestra/
 │       │   └── manager.ts  Process spawn, stdin/stdout routing, persistence
 │       ├── worktrees/      Git worktree management
 │       │   └── manager.ts  Create, status, PR, cleanup
+│       ├── utils/          Shared utilities
+│       │   └── git.ts      Git validation + branch detection
 │       ├── routes/         REST API routes
+│       │   ├── projects.ts Project CRUD
 │       │   ├── threads.ts  Thread CRUD + actions
 │       │   └── agents.ts   Agent listing
 │       └── ws/handler.ts   WebSocket handler
@@ -45,8 +48,10 @@ cd server && bun run src/index.ts  # Production server
 ## Key design decisions
 
 - Agents are spawned as CLI processes (not SDK calls) — Orchestra wraps locally installed CLIs
-- Claude Code uses `--output-format stream-json --dangerously-skip-permissions`
-- Main worktree has a mutex — only one running thread at a time on main
-- SQLite for persistence, WAL mode for concurrent reads
-- WebSocket for real-time streaming, with seq-based replay on reconnect
+- Claude Code uses `-p` one-shot mode with `--resume` for multi-turn (Bun's stdin pipe doesn't work with Claude's interactive mode)
+- Claude Code flags: `--output-format stream-json --include-partial-messages --dangerously-skip-permissions --verbose`
+- Multi-project: single server manages multiple registered git repos via `projects` table
+- Per-project worktree mutex — one running thread per project's main worktree
+- Real-time streaming via ephemeral WebSocket deltas (not persisted to DB)
+- Complete messages persisted to SQLite with WAL mode, seq-based replay on reconnect
 - Token auth only enforced for non-localhost requests
