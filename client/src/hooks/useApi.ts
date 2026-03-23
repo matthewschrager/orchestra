@@ -83,6 +83,12 @@ export const api = {
   archiveThread: (id: string) =>
     request<{ ok: boolean }>(`/threads/${id}`, { method: "DELETE" }),
 
+  // Attention
+  listAttention: (threadId?: string) =>
+    request<import("shared").AttentionItem[]>(
+      `/attention${threadId ? `?threadId=${threadId}` : ""}`,
+    ),
+
   listAgents: () =>
     request<Array<{ name: string; detected: boolean; version: string | null }>>("/agents"),
 

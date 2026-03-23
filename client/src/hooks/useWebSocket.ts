@@ -7,6 +7,8 @@ interface UseWebSocketOpts {
   onReplayDone?: (threadId: string) => void;
   onStreamDelta?: (delta: StreamDelta) => void;
   onError?: (error: string) => void;
+  /** Raw WS message handler — receives all server messages (for attention events, etc.) */
+  onRawMessage?: (msg: WSServerMessage) => void;
 }
 
 export function useWebSocket(opts: UseWebSocketOpts = {}) {
@@ -44,6 +46,7 @@ export function useWebSocket(opts: UseWebSocketOpts = {}) {
 
       ws.onmessage = (evt) => {
         const data: WSServerMessage = JSON.parse(evt.data);
+        optsRef.current.onRawMessage?.(data);
         switch (data.type) {
           case "message":
             optsRef.current.onMessage?.(data.message);

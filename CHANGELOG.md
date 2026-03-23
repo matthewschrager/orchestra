@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.1.5.0] - 2026-03-23
+
+### Added
+
+- **Attention queue** — Durable `attention_required` table persists agent questions and permission requests across reconnects, with TTL expiry, orphan cleanup, and idempotent resolution
+- **AskUserQuestion detection** — Claude adapter detects AskUserQuestion tool calls and `permission_denials` in stream-json, extracting full question/options payload
+- **Session manager attention lifecycle** — Persists attention events, sets thread status to "waiting", 30-second stall detection, `resolveAndResume()` re-spawns agent via `--resume`
+- **Session ID persistence** — `session_id` column on threads table, survives server restart
+- **WebSocket attention protocol** — `attention_required`/`attention_resolved` events broadcast to ALL clients (cross-thread inbox), `resolve_attention` client action, pending attention replay on subscribe
+- **REST attention API** — `GET /api/attention` (list pending), `POST /api/attention/:id/resolve` (idempotent, first-caller-wins with race condition guard)
+- **Cloudflare Tunnel** — `TunnelManager` spawns cloudflared, captures URL; `--tunnel` flag forces auth on all requests including localhost (prevents tunnel auth bypass)
+- **Push notifications** — VAPID key management, Web Push dispatch, subscription CRUD, service worker with action buttons + deep-linking + notification-click client handler
+- **Mobile UI** — Bottom tab navigation (Inbox/Sessions/New) with attention badge, `AttentionInbox` with question/permission/confirmation cards, `MobileSessions` thread list, `MobileNewSession` form
+- **`useAttention` hook** — Cross-thread attention state from REST API initial sync + WebSocket live updates
+- **`usePushNotifications` hook** — VAPID subscription, permission management, IndexedDB token storage
+- **Attention expiry** — Hourly `expireAttentionItems()` sweep + startup cleanup
+- **10 attention queue tests** — CRUD, idempotent resolution, orphan cleanup, expiry, API conversion
+
+### Fixed
+
+- **Tunnel auth bypass** — `--tunnel` now forces auth on both HTTP middleware and WebSocket handler (cloudflared traffic appears local)
+- **Cross-thread attention broadcast** — Attention events now reach all connected WS clients, not just thread-subscribed ones
+- **Resolution race condition** — Double-resolution from multiple clients no longer spawns duplicate agent processes (first-caller-wins guard)
+- **REST resolution broadcast** — Resolving via REST API now notifies WS clients via `onAttentionResolved` listener
+- **stopThread cleanup** — Orphans attention items + clears stall timer when thread is stopped
+- **Post-restart recovery** — Orphans attention items for recovered waiting/running threads
+- **AttentionCard submit guard** — Permission cards no longer permanently disable on accidental Enter key
+
+### Changed
+
+- **ThreadStatus** — Added `"waiting"` status, included in active thread count and recovery queries
+- **ParseResult** — Extended with optional `attention` field for `AttentionEvent` detection
+- **WSClientMessage/WSServerMessage** — Extended with attention event types
+
 ## [0.1.3.0] - 2026-03-23
 
 ### Added

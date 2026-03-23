@@ -27,8 +27,14 @@ orchestra/
 │       │   ├── threads.ts  Thread CRUD + actions
 │       │   ├── agents.ts   Agent listing
 │       │   ├── commands.ts Slash command listing
-│       │   └── filesystem.ts Directory browser API
-│       └── ws/handler.ts   WebSocket handler
+│       │   ├── filesystem.ts Directory browser API
+│       │   ├── attention.ts Attention queue API
+│       │   └── push.ts     Push subscription API
+│       ├── push/           Web Push notification management
+│       │   └── manager.ts  VAPID keys, subscriptions, dispatch
+│       ├── tunnel/         Cloudflare Tunnel integration
+│       │   └── manager.ts  Tunnel lifecycle, URL capture
+│       └── ws/handler.ts   WebSocket handler + attention events
 ├── client/          Vite + React + Tailwind frontend
 │   └── src/
 │       ├── App.tsx         Root component with auth gate + streaming reducer
@@ -43,7 +49,11 @@ orchestra/
 │       │       ├── ReadRenderer.tsx    Read → syntax-highlighted file
 │       │       ├── SearchRenderer.tsx  Grep/Glob → match list
 │       │       └── SubAgentCard.tsx    Agent → status card
-│       └── hooks/          useWebSocket, useApi
+│       │   ├── AttentionInbox.tsx  Attention queue inbox
+│       │   ├── MobileNav.tsx      Bottom tab navigation
+│       │   ├── MobileSessions.tsx Thread list for mobile
+│       │   └── MobileNewSession.tsx New session form for mobile
+│       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications
 └── shared/          Shared TypeScript types
 ```
 
@@ -66,16 +76,21 @@ cd server && bun run src/index.ts  # Production server
 - Multiple threads can run concurrently on the same project's main worktree
 - Real-time streaming via ephemeral WebSocket deltas (not persisted to DB)
 - Complete messages persisted to SQLite with WAL mode, seq-based replay on reconnect
-- Token auth only enforced for non-localhost requests
+- Token auth enforced for non-localhost requests (and always when `--tunnel` is active)
 - Rich tool renderers parse stream-json tool data into visual components (diffs, terminal blocks, search results)
 - Shiki syntax highlighting lazy-loaded via module-level singleton with DOMPurify sanitization
 - Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
 - Cost/duration metrics extracted from Claude result events and displayed in StickyRunBar
+- Attention queue: AskUserQuestion/permission tool_use events detected in stream-json, persisted to `attention_required` table, broadcast to ALL WS clients (cross-thread), resolvable via REST or WS with first-caller-wins race guard
+- Session IDs persisted to `session_id` column on threads table (survives server restart)
+- Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
+- Push notifications: VAPID keys auto-generated, Web Push dispatch on attention events
+- Mobile UI: bottom tab navigation (Inbox/Sessions/New), attention inbox with interactive cards
 
 ## Testing
 
 ```bash
-bun test                        # Run all tests (49 tests across 3 files)
+bun test                        # Run all tests (59 tests across 4 files)
 ```
 
-Tests cover renderer parsing functions, server-side Claude adapter event handling, and filesystem route behavior.
+Tests cover renderer parsing functions, server-side Claude adapter event handling, filesystem route behavior, and attention queue CRUD operations.

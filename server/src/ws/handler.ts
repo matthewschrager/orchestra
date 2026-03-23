@@ -1,8 +1,8 @@
 import type { ServerWebSocket } from "bun";
 import type { DB, MessageRow, ThreadRow } from "../db";
-import { getMessages, messageRowToApi, threadRowToApi } from "../db";
+import { getMessages, getPendingAttention, attentionRowToApi, messageRowToApi, threadRowToApi } from "../db";
 import type { SessionManager } from "../sessions/manager";
-import type { StreamDelta, WSClientMessage, WSServerMessage } from "shared";
+import type { AttentionItem, StreamDelta, WSClientMessage, WSServerMessage } from "shared";
 
 interface WSData {
   subscriptions: Set<string>;
@@ -53,6 +53,31 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
     }
   });
 
+  // Forward attention events to ALL connected clients (inbox is cross-thread)
+  sessionManager.onAttention((_threadId: string, attention: AttentionItem) => {
+    const payload: WSServerMessage = {
+      type: "attention_required",
+      attention,
+    };
+    const json = JSON.stringify(payload);
+    for (const ws of clients) {
+      ws.send(json);
+    }
+  });
+
+  // Forward attention resolutions to ALL connected clients (covers REST + WS resolutions)
+  sessionManager.onAttentionResolved((attentionId: string, threadId: string) => {
+    const payload: WSServerMessage = {
+      type: "attention_resolved",
+      attentionId,
+      threadId,
+    };
+    const json = JSON.stringify(payload);
+    for (const ws of clients) {
+      ws.send(json);
+    }
+  });
+
   return {
     open(ws: ServerWebSocket<WSData>) {
       ws.data = { subscriptions: new Set() };
@@ -85,6 +110,17 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
               } satisfies WSServerMessage),
             );
           }
+          // Replay pending attention items for this thread
+          const pendingAttention = getPendingAttention(db, msg.threadId);
+          for (const a of pendingAttention) {
+            ws.send(
+              JSON.stringify({
+                type: "attention_required",
+                attention: attentionRowToApi(a),
+              } satisfies WSServerMessage),
+            );
+          }
+
           ws.send(
             JSON.stringify({
               type: "replay_done",
@@ -114,6 +150,19 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
         case "stop_thread":
           sessionManager.stopThread(msg.threadId);
           break;
+
+        case "resolve_attention": {
+          const resolved = sessionManager.resolveAttention(msg.attentionId, msg.resolution);
+          if (!resolved) {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                error: `Attention item ${msg.attentionId} not found`,
+              } satisfies WSServerMessage),
+            );
+          }
+          break;
+        }
       }
     },
   };

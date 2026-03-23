@@ -1,5 +1,9 @@
-import type { AgentAdapter, AgentProcess, ParsedMessage, ParseResult, SpawnOpts } from "./types";
+import type { AgentAdapter, AgentProcess, AttentionEvent, ParsedMessage, ParseResult, SpawnOpts } from "./types";
 import type { StreamDelta } from "shared";
+
+/** Tool names that trigger attention events */
+const ASK_USER_TOOLS = new Set(["AskUserQuestion", "AskUserTool"]);
+const PERMISSION_TOOLS = new Set(["BashTool", "EditTool", "WriteTool"]);
 
 export class ClaudeAdapter implements AgentAdapter {
   name = "claude";
@@ -102,7 +106,20 @@ export class ClaudeAdapter implements AgentAdapter {
           deltaType: "turn_end",
           text: event.session_id,  // Piggyback session_id on turn_end delta
         });
-        return { messages: [], deltas };
+
+        const resultParse: ParseResult = { messages: [], deltas };
+
+        // Check permission_denials for AskUserQuestion (in -p mode, it gets denied)
+        if (event.permission_denials && Array.isArray(event.permission_denials)) {
+          for (const denial of event.permission_denials) {
+            if (ASK_USER_TOOLS.has(denial.tool_name) && denial.tool_input) {
+              resultParse.attention = this.extractAskUserAttention(denial.tool_input);
+              break;
+            }
+          }
+        }
+
+        return resultParse;
       }
 
       case "system": {
@@ -117,18 +134,28 @@ export class ClaudeAdapter implements AgentAdapter {
         };
       }
 
-      case "tool_use":
-        return {
+      case "tool_use": {
+        const toolName = event.tool?.name ?? "unknown";
+        const toolInput = event.tool?.input as Record<string, unknown> | undefined;
+        const result: ParseResult = {
           messages: [
             {
               role: "tool",
               content: "",
-              toolName: event.tool?.name ?? "unknown",
-              toolInput: JSON.stringify(event.tool?.input ?? {}),
+              toolName,
+              toolInput: JSON.stringify(toolInput ?? {}),
             },
           ],
           deltas: [],
         };
+
+        // Detect AskUserQuestion → attention event
+        if (ASK_USER_TOOLS.has(toolName) && toolInput) {
+          result.attention = this.extractAskUserAttention(toolInput);
+        }
+
+        return result;
+      }
 
       case "tool_result":
         return {
@@ -153,6 +180,25 @@ export class ClaudeAdapter implements AgentAdapter {
         }
         return { messages: [], deltas: [] };
     }
+  }
+
+  private extractAskUserAttention(toolInput: Record<string, unknown>): AttentionEvent {
+    const questions = toolInput.questions as Array<{
+      question?: string;
+      header?: string;
+      options?: Array<{ label?: string; description?: string }>;
+    }> | undefined;
+
+    const firstQ = questions?.[0];
+    const prompt = firstQ?.question ?? "Agent needs your input";
+    const options = firstQ?.options?.map((o) => o.label ?? "") ?? [];
+
+    return {
+      kind: "ask_user",
+      prompt,
+      options: options.length > 0 ? options : undefined,
+      metadata: { toolInput },
+    };
   }
 
   private currentBlockType: string | null = null;
@@ -237,6 +283,12 @@ interface ClaudeStreamEvent {
   tool?: { name?: string; input?: unknown };
   tool_name?: string;
   content?: unknown;
+  // permission_denials from result event (AskUserQuestion gets denied in -p mode)
+  permission_denials?: Array<{
+    tool_name: string;
+    tool_use_id: string;
+    tool_input: Record<string, unknown>;
+  }>;
   // For stream_event wrapper
   event?: {
     type: string;

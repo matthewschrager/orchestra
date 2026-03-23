@@ -4,12 +4,14 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
-    "build": "echo 'server runs via bun directly'"
+    "build": "echo 'server runs via bun directly'",
+    "test": "bun test"
   },
   "dependencies": {
     "hono": "^4",
+    "nanoid": "^5",
     "shared": "workspace:*",
-    "nanoid": "^5"
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/bun": "latest",

@@ -572,6 +572,7 @@ function ThreadStatusBadge({ status, errorMessage }: { status: string; errorMess
   const styles: Record<string, string> = {
     running: "bg-emerald-900/30 text-emerald-400 border-emerald-500/20",
     pending: "bg-amber-900/30 text-amber-400 border-amber-500/20",
+    waiting: "bg-amber-900/30 text-amber-400 border-amber-500/20",
     paused: "bg-surface-3 text-content-3 border-edge-2",
     done: "bg-accent/10 text-accent border-accent/20",
     error: "bg-red-900/30 text-red-400 border-red-500/20",
