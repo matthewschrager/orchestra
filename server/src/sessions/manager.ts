@@ -38,6 +38,7 @@ export class SessionManager {
   private messageListeners: Set<MessageListener> = new Set();
   private threadListeners: Set<ThreadListener> = new Set();
   private streamDeltaListeners: Set<StreamDeltaListener> = new Set();
+  private shuttingDown = false;
   private attentionListeners: Set<AttentionListener> = new Set();
   private attentionResolvedListeners: Set<AttentionResolvedListener> = new Set();
   private mainWorktreeLocks: Map<string, string> = new Map();
@@ -101,8 +102,13 @@ export class SessionManager {
     const session = this.sessions.get(threadId);
     if (!session) return;
     this.clearStallTimer(session);
-    session.agentProc.proc.kill();
+    // Delete from map BEFORE killing so handleExit can't race and find the session
     this.sessions.delete(threadId);
+    try {
+      session.agentProc.proc.kill();
+    } catch {
+      // Process already exited — that's fine
+    }
     this.clearMainWorktreeLock(threadId);
     orphanAttentionItems(this.db, threadId);
     updateThread(this.db, threadId, { status: "done", pid: null });
@@ -110,6 +116,7 @@ export class SessionManager {
   }
 
   stopAll(): void {
+    this.shuttingDown = true;
     for (const [id] of this.sessions) {
       this.stopThread(id);
     }
@@ -125,8 +132,13 @@ export class SessionManager {
     // If there's already a running process for this thread, kill it first
     const existingSession = this.sessions.get(threadId);
     if (existingSession) {
-      existingSession.agentProc.proc.kill();
+      // Delete from map BEFORE killing so handleExit can't race and find the session
       this.sessions.delete(threadId);
+      try {
+        existingSession.agentProc.proc.kill();
+      } catch {
+        // Process already exited — that's fine
+      }
     }
 
     // Persist user message
@@ -377,6 +389,9 @@ export class SessionManager {
   }
 
   private handleExit(threadId: string, exitCode: number, pid: number): void {
+    // During shutdown, stopAll/stopThread already handles cleanup
+    if (this.shuttingDown) return;
+
     // Only act if this is still the current session (not superseded by sendMessage)
     const current = this.sessions.get(threadId);
     if (!current || current.agentProc.proc.pid !== pid) return;
@@ -390,16 +405,19 @@ export class SessionManager {
     // Surface stderr as an assistant error message when process fails
     if (exitCode !== 0) {
       const stderrText = current?.stderrBuffer.trim().slice(-2000) ?? "";
-      errorMessage = stderrText
-        ? `Process exited with code ${exitCode}: ${stderrText.slice(0, 200)}`
-        : `Process exited with code ${exitCode}`;
+      const signalInfo = describeExitCode(exitCode);
+      const summary = signalInfo ?? `Process exited with code ${exitCode}`;
 
-      if (stderrText) {
-        this.persistMessage(threadId, {
-          role: "assistant",
-          content: `**Process exited with code ${exitCode}**\n\n\`\`\`\n${stderrText}\n\`\`\``,
-        });
-      }
+      errorMessage = stderrText
+        ? `${summary}: ${stderrText.slice(0, 200)}`
+        : summary;
+
+      this.persistMessage(threadId, {
+        role: "assistant",
+        content: stderrText
+          ? `**${summary}**\n\n\`\`\`\n${stderrText}\n\`\`\``
+          : `**${summary}**`,
+      });
     }
 
     // Check if thread is in "waiting" state (attention pending) — don't overwrite
@@ -560,4 +578,31 @@ export class SessionManager {
       return false;
     }
   }
+}
+
+/** Decode exit codes into human-readable descriptions, especially signal-based (128+N). */
+function describeExitCode(exitCode: number): string | null {
+  const signals: Record<number, [string, string]> = {
+    // signal number → [name, likely cause]
+    1:  ["SIGHUP",  "Terminal closed or server restarted"],
+    2:  ["SIGINT",  "Process interrupted (Ctrl+C)"],
+    6:  ["SIGABRT", "Process aborted — possible internal error"],
+    9:  ["SIGKILL", "Process force-killed — likely OOM or system resource limit"],
+    13: ["SIGPIPE", "Broken pipe — output reader disconnected"],
+    14: ["SIGALRM", "Timeout expired"],
+    15: ["SIGTERM", "Process terminated — server may have restarted or the session timed out"],
+  };
+
+  if (exitCode > 128 && exitCode <= 128 + 31) {
+    const sigNum = exitCode - 128;
+    const info = signals[sigNum];
+    if (info) {
+      return `Agent killed by ${info[0]} (exit ${exitCode}) — ${info[1]}`;
+    }
+    return `Agent killed by signal ${sigNum} (exit ${exitCode})`;
+  }
+
+  if (exitCode === 1) return "Agent exited with an error (exit 1)";
+
+  return null;
 }
