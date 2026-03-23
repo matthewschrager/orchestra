@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { createDb } from "./db";
 import { createThreadRoutes } from "./routes/threads";
 import { createAgentRoutes } from "./routes/agents";
+import { createProjectRoutes } from "./routes/projects";
 import { createWSHandler } from "./ws/handler";
 import { SessionManager } from "./sessions/manager";
 import { AgentRegistry } from "./agents/registry";
@@ -50,6 +51,7 @@ app.use("/api/*", async (c, next) => {
 });
 
 // API routes
+app.route("/api/projects", createProjectRoutes(db));
 app.route("/api/threads", createThreadRoutes(db, sessionManager, worktreeManager));
 app.route("/api/agents", createAgentRoutes(registry));
 

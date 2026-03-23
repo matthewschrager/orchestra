@@ -2,10 +2,12 @@ import { Hono } from "hono";
 import type { DB, ThreadRow } from "../db";
 import {
   getMessages,
+  getProject,
   getThread,
   listThreads,
   messageRowToApi,
   threadRowToApi,
+  touchProjectUpdatedAt,
   updateThread,
 } from "../db";
 import type { SessionManager } from "../sessions/manager";
@@ -43,38 +45,40 @@ export function createThreadRoutes(
     const body = await c.req.json<{
       agent: string;
       prompt: string;
+      projectId: string;
       title?: string;
       isolate?: boolean;
-      repoPath?: string;
     }>();
 
     if (!body.agent || !body.prompt) {
       return c.json({ error: "agent and prompt are required" }, 400);
     }
 
-    // Default repo path to cwd, validate it's a git repo
-    const repoPath = body.repoPath || process.cwd();
-    try {
-      const check = Bun.spawnSync(["git", "rev-parse", "--git-dir"], {
-        cwd: repoPath,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      if (check.exitCode !== 0) {
-        return c.json({ error: "repoPath is not a git repository" }, 400);
-      }
-    } catch {
-      return c.json({ error: "repoPath does not exist or is not accessible" }, 400);
+    if (!body.projectId) {
+      return c.json({ error: "projectId is required" }, 400);
+    }
+
+    // Resolve project path
+    const project = getProject(db, body.projectId);
+    if (!project) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const { existsSync } = await import("fs");
+    if (!existsSync(project.path)) {
+      return c.json({ error: "Project path no longer exists" }, 400);
     }
 
     try {
       const thread = await sessionManager.startThread({
         agent: body.agent,
         prompt: body.prompt,
-        repoPath,
+        repoPath: project.path,
+        projectId: body.projectId,
         title: body.title,
         isolate: body.isolate,
       });
+      touchProjectUpdatedAt(db, body.projectId);
       return c.json(threadRowToApi(thread), 201);
     } catch (err) {
       return c.json({ error: (err as Error).message }, 400);
@@ -174,6 +178,23 @@ export function createThreadRoutes(
     const thread = getThread(db, c.req.param("id"));
     if (!thread) return c.json({ error: "Not found" }, 404);
     return c.json(threadRowToApi(thread));
+  });
+
+  // Archive (soft-delete) thread
+  app.delete("/:id", (c) => {
+    const threadId = c.req.param("id");
+    const thread = getThread(db, threadId);
+    if (!thread) return c.json({ error: "Not found" }, 404);
+
+    // Stop the thread if it's running
+    sessionManager.stopThread(threadId);
+
+    // Soft-delete by setting archived_at
+    db.query(
+      "UPDATE threads SET archived_at = datetime('now') WHERE id = ?",
+    ).run(threadId);
+
+    return c.json({ ok: true });
   });
 
   return app;

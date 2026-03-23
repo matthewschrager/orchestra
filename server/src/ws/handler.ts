@@ -2,7 +2,7 @@ import type { ServerWebSocket } from "bun";
 import type { DB, MessageRow, ThreadRow } from "../db";
 import { getMessages, messageRowToApi, threadRowToApi } from "../db";
 import type { SessionManager } from "../sessions/manager";
-import type { WSClientMessage, WSServerMessage } from "shared";
+import type { StreamDelta, WSClientMessage, WSServerMessage } from "shared";
 
 interface WSData {
   subscriptions: Set<string>;
@@ -17,6 +17,21 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
       type: "message",
       message: messageRowToApi(msg),
     };
+    const json = JSON.stringify(payload);
+    for (const ws of clients) {
+      if (ws.data.subscriptions.has(threadId)) {
+        ws.send(json);
+      }
+    }
+  });
+
+  // Forward stream deltas (ephemeral — not persisted)
+  sessionManager.onStreamDelta((threadId: string, delta: StreamDelta) => {
+    // Strip session_id from turn_end before sending to client
+    const clientDelta = delta.deltaType === "turn_end" && delta.text
+      ? { ...delta, text: undefined }
+      : delta;
+    const payload: WSServerMessage = { type: "stream_delta", delta: clientDelta };
     const json = JSON.stringify(payload);
     for (const ws of clients) {
       if (ws.data.subscriptions.has(threadId)) {
