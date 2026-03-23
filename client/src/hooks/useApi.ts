@@ -1,0 +1,65 @@
+const BASE = "/api";
+
+async function request<T>(path: string, opts?: RequestInit): Promise<T> {
+  const token = localStorage.getItem("orchestra_auth_token");
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(`${BASE}${path}`, {
+    headers,
+    ...opts,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error || res.statusText);
+  }
+  return res.json();
+}
+
+export const api = {
+  listThreads: () => request<import("shared").Thread[]>("/threads"),
+
+  getThread: (id: string) => request<import("shared").Thread>(`/threads/${id}`),
+
+  getMessages: (id: string, afterSeq = 0) =>
+    request<import("shared").Message[]>(`/threads/${id}/messages?after_seq=${afterSeq}`),
+
+  createThread: (body: import("shared").CreateThreadRequest) =>
+    request<import("shared").Thread>("/threads", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  stopThread: (id: string) =>
+    request<import("shared").Thread>(`/threads/${id}/stop`, { method: "POST" }),
+
+  sendMessage: (id: string, content: string) =>
+    request<{ ok: boolean }>(`/threads/${id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    }),
+
+  isolateThread: (id: string) =>
+    request<import("shared").Thread>(`/threads/${id}/isolate`, { method: "POST" }),
+
+  getWorktreeStatus: (id: string) =>
+    request<import("shared").WorktreeInfo>(`/threads/${id}/worktree`),
+
+  createPR: (id: string, opts?: { title?: string; body?: string; commitMessage?: string }) =>
+    request<{ prUrl: string }>(`/threads/${id}/pr`, {
+      method: "POST",
+      body: JSON.stringify(opts ?? {}),
+    }),
+
+  cleanupWorktree: (id: string) =>
+    request<import("shared").Thread>(`/threads/${id}/cleanup`, { method: "POST" }),
+
+  updateThread: (id: string, fields: { title?: string }) =>
+    request<import("shared").Thread>(`/threads/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(fields),
+    }),
+
+  listAgents: () =>
+    request<Array<{ name: string; detected: boolean; version: string | null }>>("/agents"),
+};

@@ -1,0 +1,168 @@
+import { Hono } from "hono";
+import type { DB, ThreadRow } from "../db";
+import {
+  getMessages,
+  getThread,
+  listThreads,
+  messageRowToApi,
+  threadRowToApi,
+  updateThread,
+} from "../db";
+import type { SessionManager } from "../sessions/manager";
+import type { WorktreeManager } from "../worktrees/manager";
+
+export function createThreadRoutes(
+  db: DB,
+  sessionManager: SessionManager,
+  worktreeManager: WorktreeManager,
+) {
+  const app = new Hono();
+
+  // List threads
+  app.get("/", (c) => {
+    const threads = listThreads(db).map(threadRowToApi);
+    return c.json(threads);
+  });
+
+  // Get thread
+  app.get("/:id", (c) => {
+    const thread = getThread(db, c.req.param("id"));
+    if (!thread) return c.json({ error: "Not found" }, 404);
+    return c.json(threadRowToApi(thread));
+  });
+
+  // Get thread messages
+  app.get("/:id/messages", (c) => {
+    const afterSeq = parseInt(c.req.query("after_seq") || "0", 10);
+    const messages = getMessages(db, c.req.param("id"), afterSeq).map(messageRowToApi);
+    return c.json(messages);
+  });
+
+  // Create thread + start agent
+  app.post("/", async (c) => {
+    const body = await c.req.json<{
+      agent: string;
+      prompt: string;
+      title?: string;
+      isolate?: boolean;
+      repoPath?: string;
+    }>();
+
+    if (!body.agent || !body.prompt) {
+      return c.json({ error: "agent and prompt are required" }, 400);
+    }
+
+    // Default repo path to cwd
+    const repoPath = body.repoPath || process.cwd();
+
+    try {
+      const thread = await sessionManager.startThread({
+        agent: body.agent,
+        prompt: body.prompt,
+        repoPath,
+        title: body.title,
+        isolate: body.isolate,
+      });
+      return c.json(threadRowToApi(thread), 201);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+
+  // Stop thread
+  app.post("/:id/stop", (c) => {
+    sessionManager.stopThread(c.req.param("id"));
+    const thread = getThread(db, c.req.param("id"));
+    if (!thread) return c.json({ error: "Not found" }, 404);
+    return c.json(threadRowToApi(thread));
+  });
+
+  // Send message to running thread
+  app.post("/:id/messages", async (c) => {
+    const { content } = await c.req.json<{ content: string }>();
+    if (!content) return c.json({ error: "content is required" }, 400);
+    try {
+      sessionManager.sendMessage(c.req.param("id"), content);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+
+  // Isolate to worktree
+  app.post("/:id/isolate", async (c) => {
+    const threadId = c.req.param("id");
+    const thread = getThread(db, threadId) as ThreadRow | null;
+    if (!thread) return c.json({ error: "Not found" }, 404);
+    if (thread.worktree) return c.json({ error: "Already isolated" }, 400);
+
+    try {
+      // Stop current session
+      sessionManager.stopThread(threadId);
+
+      // Create worktree
+      const wt = await worktreeManager.create(threadId, thread.repo_path);
+      updateThread(db, threadId, {
+        worktree: wt.path,
+        branch: wt.branch,
+        status: "paused",
+      });
+
+      const updated = getThread(db, threadId)!;
+      return c.json(threadRowToApi(updated));
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // Get worktree status
+  app.get("/:id/worktree", async (c) => {
+    const status = await worktreeManager.getStatus(c.req.param("id"));
+    if (!status) return c.json({ error: "No worktree" }, 404);
+    return c.json(status);
+  });
+
+  // Create PR
+  app.post("/:id/pr", async (c) => {
+    const body = await c.req.json<{
+      title?: string;
+      body?: string;
+      commitMessage?: string;
+    }>().catch(() => ({}));
+
+    try {
+      const prUrl = await worktreeManager.createPR(c.req.param("id"), body);
+      return c.json({ prUrl });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // Cleanup worktree
+  app.post("/:id/cleanup", async (c) => {
+    const threadId = c.req.param("id");
+    const thread = getThread(db, threadId) as ThreadRow | null;
+    if (!thread) return c.json({ error: "Not found" }, 404);
+
+    try {
+      await worktreeManager.cleanup(threadId, thread.repo_path);
+      const updated = getThread(db, threadId)!;
+      return c.json(threadRowToApi(updated));
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // Update thread title
+  app.patch("/:id", async (c) => {
+    const { title } = await c.req.json<{ title?: string }>();
+    if (title) {
+      updateThread(db, c.req.param("id"), { title });
+    }
+    const thread = getThread(db, c.req.param("id"));
+    if (!thread) return c.json({ error: "Not found" }, 404);
+    return c.json(threadRowToApi(thread));
+  });
+
+  return app;
+}

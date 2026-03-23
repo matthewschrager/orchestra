@@ -1,0 +1,11 @@
+node_modules/
+dist/
+server/static/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.local
+bun.lock
+.DS_Store
+.gstack/

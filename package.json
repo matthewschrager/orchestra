@@ -1,0 +1,15 @@
+{
+  "name": "orchestra",
+  "private": true,
+  "workspaces": ["server", "client", "shared"],
+  "scripts": {
+    "dev": "bun run --filter '*' dev",
+    "dev:server": "bun run --filter server dev",
+    "dev:client": "bun run --filter client dev",
+    "build": "bun run --filter client build && bun run --filter server build",
+    "start": "bun run --filter server start"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
