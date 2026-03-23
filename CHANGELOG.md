@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.1.4.0] - 2026-03-23
+
+### Added
+
+- **Attention queue** — Durable `attention_required` table persists agent questions and permission requests across reconnects, with TTL expiry, orphan cleanup, and idempotent resolution
+- **AskUserQuestion detection** — Claude adapter detects AskUserQuestion tool calls and `permission_denials` in stream-json output, extracting full question/options payload
+- **Session manager attention lifecycle** — Persists attention events, sets thread status to "waiting", 30-second stall detection, `resolveAndResume()` re-spawns agent with user's answer via `--resume`
+- **Session ID persistence** — `session_id` column on threads table (survives server restart), replaces in-memory-only map
+- **WebSocket attention protocol** — `attention_required`/`attention_resolved` server events, `resolve_attention` client event, pending attention replay on subscribe
+- **REST attention API** — `GET /api/attention` (list pending, filter by threadId), `POST /api/attention/:id/resolve` (idempotent resolution)
+- **Cloudflare Tunnel integration** — `TunnelManager` spawns cloudflared, captures URL, monitors lifecycle; `--tunnel` flag on server; `GET /api/tunnel` endpoint
+- **Tunnel auth bypass fix** — `--tunnel` forces auth enforcement on all requests (prevents cloudflared making remote traffic appear local)
+- **Push notification infrastructure** — `PushManager` with VAPID key generation/storage, subscription CRUD, Web Push dispatch with 410 Gone cleanup; `POST /api/push/subscribe` and `DELETE /api/push/subscribe` routes
+- **Service worker** — Push notification handler with action buttons, notification click deep-linking, offline app shell cache
+- **Mobile bottom navigation** — `MobileNav` component with Inbox/Sessions/New tabs, attention badge count, safe-area-inset support
+- **Attention inbox** — `AttentionInbox` + `AttentionCard` components with ask_user (option selection + free text), permission (Allow/Deny), and confirmation variants; empty state; time-ago display
+- **`useAttention` hook** — Cross-thread attention state management from WebSocket events and REST API
+- **`usePushNotifications` hook** — VAPID subscription, permission request, IndexedDB token storage for service worker auth
+- **PWA manifest icons** — Added 192px and 512px icon entries
+- **Desktop attention indicator** — Amber badge showing pending attention count (top-right)
+- **10 attention queue tests** — Covers CRUD, idempotent resolution, orphan cleanup, expiry, and API conversion
+
+### Changed
+
+- **ThreadStatus** — Added `"waiting"` status for threads with pending attention items
+- **ParseResult** — Extended with optional `attention` field for `AttentionEvent` detection
+- **WSClientMessage/WSServerMessage** — Extended with attention event types
+
 ## [0.1.3.0] - 2026-03-23
 
 ### Added
