@@ -26,7 +26,8 @@ orchestra/
 │       │   ├── projects.ts Project CRUD
 │       │   ├── threads.ts  Thread CRUD + actions
 │       │   ├── agents.ts   Agent listing
-│       │   └── commands.ts Slash command listing
+│       │   ├── commands.ts Slash command listing
+│       │   └── filesystem.ts Directory browser API
 │       └── ws/handler.ts   WebSocket handler
 ├── client/          Vite + React + Tailwind frontend
 │   └── src/
@@ -74,7 +75,7 @@ cd server && bun run src/index.ts  # Production server
 ## Testing
 
 ```bash
-bun test                        # Run all tests (38 tests across 2 files)
+bun test                        # Run all tests (49 tests across 3 files)
 ```
 
-Tests cover renderer parsing functions and server-side Claude adapter event handling.
+Tests cover renderer parsing functions, server-side Claude adapter event handling, and filesystem route behavior.
