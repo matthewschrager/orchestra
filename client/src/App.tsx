@@ -277,7 +277,7 @@ function AppInner() {
 
   // ── Actions ───────────────────────────────────────────
 
-  const handleNewThread = async (agent: string, prompt: string, isolate: boolean, projectId?: string) => {
+  const handleNewThread = async (agent: string, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string) => {
     const pid = projectId || activeProjectId;
     if (!pid) {
       setError("Select a project first");
@@ -285,7 +285,7 @@ function AppInner() {
     }
     try {
       setError(null);
-      const thread = await api.createThread({ agent, prompt, projectId: pid, isolate });
+      const thread = await api.createThread({ agent, prompt, projectId: pid, isolate, worktreeName });
       setThreads((prev) => [thread, ...prev]);
       setActiveThreadId(thread.id);
       setActiveProjectId(pid);
@@ -490,6 +490,7 @@ function AppInner() {
                 agents={agents}
                 thread={activeThread}
                 activeProjectId={activeProjectId}
+                activeProjectName={activeProject?.name ?? null}
                 commands={commands}
                 pendingQuestion={pendingQuestion}
                 onSend={handleSendMessage}
@@ -540,10 +541,14 @@ function ProjectEmptyState({
   project: ProjectWithStatus;
   agents: Array<{ name: string; detected: boolean }>;
   commands: SlashCommand[];
-  onNewThread: (agent: string, prompt: string, isolate: boolean, projectId: string) => void;
+  onNewThread: (agent: string, prompt: string, isolate: boolean, projectId: string, worktreeName?: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
   const [isolate, setIsolate] = useState(false);
+  const [worktreeName, setWorktreeName] = useState(() => {
+    const suffix = Math.random().toString(36).slice(2, 13);
+    return `${project.name}-${suffix}`;
+  });
   const defaultAgent = agents.find((a) => a.detected)?.name ?? "claude";
 
   return (
@@ -567,7 +572,7 @@ function ProjectEmptyState({
           onChange={setPrompt}
           onSubmit={() => {
             if (prompt.trim()) {
-              onNewThread(defaultAgent, prompt.trim(), isolate, project.id);
+              onNewThread(defaultAgent, prompt.trim(), isolate, project.id, isolate ? worktreeName : undefined);
               setPrompt("");
             }
           }}
@@ -575,28 +580,45 @@ function ProjectEmptyState({
           placeholder="What would you like to build?"
           rows={5}
         />
-        <div className="flex items-center justify-between mt-3">
-          <label className="flex items-center gap-2 text-sm text-content-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={isolate}
-              onChange={(e) => setIsolate(e.target.checked)}
-              className="rounded"
-            />
-            Isolate to worktree
-          </label>
-          <button
-            onClick={() => {
-              if (prompt.trim()) {
-                onNewThread(defaultAgent, prompt.trim(), isolate, project.id);
-                setPrompt("");
-              }
-            }}
+        <div className="flex flex-col gap-2 mt-3">
+          <div className="flex items-center justify-between">
+            <label className="flex items-center gap-2 text-sm text-content-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isolate}
+                onChange={(e) => {
+                  setIsolate(e.target.checked);
+                  if (e.target.checked) {
+                    const suffix = Math.random().toString(36).slice(2, 13);
+                    setWorktreeName(`${project.name}-${suffix}`);
+                  }
+                }}
+                className="rounded"
+              />
+              Isolate to worktree
+            </label>
+            <button
+              onClick={() => {
+                if (prompt.trim()) {
+                  onNewThread(defaultAgent, prompt.trim(), isolate, project.id, isolate ? worktreeName : undefined);
+                  setPrompt("");
+                }
+              }}
             disabled={!prompt.trim()}
             className="px-5 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base"
           >
             Send
           </button>
+          </div>
+          {isolate && (
+            <input
+              type="text"
+              value={worktreeName}
+              onChange={(e) => setWorktreeName(e.target.value)}
+              className="text-sm bg-surface-2 border border-edge-2 rounded-lg px-3 py-1.5 text-content-2 font-mono w-full"
+              placeholder="worktree name"
+            />
+          )}
         </div>
       </div>
     </div>

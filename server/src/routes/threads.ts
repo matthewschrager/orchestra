@@ -48,6 +48,7 @@ export function createThreadRoutes(
       projectId: string;
       title?: string;
       isolate?: boolean;
+      worktreeName?: string;
     }>();
 
     if (!body.agent || !body.prompt) {
@@ -77,6 +78,7 @@ export function createThreadRoutes(
         projectId: body.projectId,
         title: body.title,
         isolate: body.isolate,
+        worktreeName: body.worktreeName,
       });
       touchProjectUpdatedAt(db, body.projectId);
       return c.json(threadRowToApi(thread), 201);
