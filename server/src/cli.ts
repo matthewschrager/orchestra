@@ -10,6 +10,7 @@ const { positionals } = parseArgs({
   strict: false,
 });
 
+const DATA_DIR = process.env.ORCHESTRA_DATA_DIR || undefined;
 const command = positionals[0];
 
 switch (command) {
@@ -22,11 +23,11 @@ switch (command) {
   case "auth": {
     const subCommand = positionals[1];
     if (subCommand === "regenerate") {
-      const token = regenerateToken();
+      const token = regenerateToken(DATA_DIR);
       console.log("New auth token generated:");
       console.log(token);
     } else if (subCommand === "show") {
-      const token = readToken();
+      const token = readToken(DATA_DIR);
       if (token) {
         console.log(token);
       } else {
@@ -45,7 +46,7 @@ switch (command) {
       process.exit(1);
     }
     try {
-      const db = createDb();
+      const db = createDb(DATA_DIR);
       const row = validateAndInsertProject(db, projectPath);
       const project = projectRowToApi(row);
       console.log(`Project "${project.name}" registered (${project.path})`);
@@ -73,8 +74,9 @@ Usage:
   orchestra auth regenerate  Generate a new auth token
 
 Environment variables:
-  ORCHESTRA_PORT   Server port (default: 3847)
-  ORCHESTRA_HOST   Bind address (default: 127.0.0.1, use 0.0.0.0 for remote)
+  ORCHESTRA_PORT      Server port (default: 3847)
+  ORCHESTRA_HOST      Bind address (default: 127.0.0.1, use 0.0.0.0 for remote)
+  ORCHESTRA_DATA_DIR  Data directory for DB + auth token (default: ~/.orchestra)
 `.trim());
     break;
 

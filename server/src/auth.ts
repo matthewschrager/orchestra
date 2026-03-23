@@ -3,32 +3,38 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { timingSafeEqual } from "crypto";
 import { nanoid } from "nanoid";
 
-const ORCHESTRA_DIR = join(process.env.HOME || "~", ".orchestra");
-const TOKEN_PATH = join(ORCHESTRA_DIR, "auth-token");
+function resolveDataDir(dataDir?: string): string {
+  return dataDir || join(process.env.HOME || "~", ".orchestra");
+}
 
-export function getOrCreateToken(): string {
-  mkdirSync(ORCHESTRA_DIR, { recursive: true });
+export function getOrCreateToken(dataDir?: string): string {
+  const dir = resolveDataDir(dataDir);
+  mkdirSync(dir, { recursive: true });
+  const tokenPath = join(dir, "auth-token");
 
-  if (existsSync(TOKEN_PATH)) {
-    const token = readFileSync(TOKEN_PATH, "utf-8").trim();
+  if (existsSync(tokenPath)) {
+    const token = readFileSync(tokenPath, "utf-8").trim();
     if (token) return token;
   }
 
   const token = nanoid(48);
-  writeFileSync(TOKEN_PATH, token, { mode: 0o600 });
+  writeFileSync(tokenPath, token, { mode: 0o600 });
   return token;
 }
 
-export function regenerateToken(): string {
-  mkdirSync(ORCHESTRA_DIR, { recursive: true });
+export function regenerateToken(dataDir?: string): string {
+  const dir = resolveDataDir(dataDir);
+  mkdirSync(dir, { recursive: true });
+  const tokenPath = join(dir, "auth-token");
   const token = nanoid(48);
-  writeFileSync(TOKEN_PATH, token, { mode: 0o600 });
+  writeFileSync(tokenPath, token, { mode: 0o600 });
   return token;
 }
 
-export function readToken(): string | null {
+export function readToken(dataDir?: string): string | null {
+  const tokenPath = join(resolveDataDir(dataDir), "auth-token");
   try {
-    return readFileSync(TOKEN_PATH, "utf-8").trim() || null;
+    return readFileSync(tokenPath, "utf-8").trim() || null;
   } catch {
     return null;
   }

@@ -25,13 +25,14 @@ import { TunnelManager, generateQRCodeAscii } from "./tunnel/manager";
 
 const PORT = parseInt(process.env.ORCHESTRA_PORT || "3847", 10);
 const HOST = process.env.ORCHESTRA_HOST || "127.0.0.1";
+const DATA_DIR = process.env.ORCHESTRA_DATA_DIR || undefined;
 const useTunnel = process.argv.includes("--tunnel");
 // When tunnel is active, force auth on ALL requests — tunnel makes remote traffic appear local
 const isExternal = useTunnel || HOST !== "127.0.0.1" && HOST !== "localhost";
 
 // ── Init ────────────────────────────────────────────────
 
-const db = createDb();
+const db = createDb(DATA_DIR);
 const registry = new AgentRegistry();
 const worktreeManager = new WorktreeManager(db);
 const sessionManager = new SessionManager(db, registry, worktreeManager);
@@ -46,9 +47,9 @@ sessionManager.onAttention((_threadId, attention) => {
 
 let authToken: string | null = null;
 if (isExternal) {
-  authToken = getOrCreateToken();
+  authToken = getOrCreateToken(DATA_DIR);
   console.log(`Auth token required for external access.`);
-  console.log(`Token stored in ~/.orchestra/auth-token`);
+  console.log(`Token stored in ${DATA_DIR || "~/.orchestra"}/auth-token`);
 }
 
 // ── App ─────────────────────────────────────────────────
@@ -120,6 +121,7 @@ const server = Bun.serve({
 });
 
 console.log(`Orchestra server running at http://${HOST}:${PORT}`);
+if (DATA_DIR) console.log(`Data directory: ${DATA_DIR}`);
 
 // ── Tunnel ───────────────────────────────────────────────
 const tunnelManager = new TunnelManager();

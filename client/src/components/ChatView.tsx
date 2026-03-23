@@ -184,22 +184,38 @@ interface ToolPair {
 
 function pairTools(toolMsgs: Message[]): ToolPair[] {
   const pairs: ToolPair[] = [];
+  const consumed = new Set<number>();
   let i = 0;
   while (i < toolMsgs.length) {
+    if (consumed.has(i)) { i++; continue; }
     const msg = toolMsgs[i];
     // tool_use: has toolInput, no toolOutput
     if (msg.toolInput && !msg.toolOutput) {
-      const next = toolMsgs[i + 1];
-      // Check if next is the matching tool_result
-      if (next?.toolOutput && (!next.toolName || next.toolName === msg.toolName)) {
+      // For Agent tools, sub-agent internal tool events appear between the
+      // Agent tool_use and its tool_result, so scan forward to find the match.
+      let matchIdx = -1;
+      for (let j = i + 1; j < toolMsgs.length; j++) {
+        if (consumed.has(j)) continue;
+        const candidate = toolMsgs[j];
+        if (candidate.toolOutput && (!candidate.toolName || candidate.toolName === msg.toolName)) {
+          matchIdx = j;
+          break;
+        }
+        // Stop scanning if we hit another tool_use with the same name (next invocation)
+        if (candidate.toolInput && !candidate.toolOutput && candidate.toolName === msg.toolName) {
+          break;
+        }
+      }
+      if (matchIdx !== -1) {
+        consumed.add(matchIdx);
         pairs.push({
           id: msg.id,
           name: msg.toolName || "tool",
           input: msg.toolInput,
-          output: next.toolOutput,
+          output: toolMsgs[matchIdx].toolOutput,
           context: extractToolContext(msg.toolName || "tool", msg.toolInput),
         });
-        i += 2;
+        i++;
         continue;
       }
     }
