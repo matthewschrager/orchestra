@@ -124,7 +124,7 @@ export class SessionManager {
       ?? null;
 
     // Spawn a new process with --resume + -p
-    updateThread(this.db, threadId, { status: "running" });
+    updateThread(this.db, threadId, { status: "running", error_message: null });
     this.notifyThread(threadId);
     this.spawnTurn(threadId, adapter, cwd, content, sessionId);
   }
@@ -304,7 +304,7 @@ export class SessionManager {
   private handleExit(threadId: string, exitCode: number, pid: number): void {
     // Only act if this is still the current session (not superseded by sendMessage)
     const current = this.sessions.get(threadId);
-    if (current && current.agentProc.proc.pid !== pid) return;
+    if (!current || current.agentProc.proc.pid !== pid) return;
 
     let errorMessage: string | null = null;
 
