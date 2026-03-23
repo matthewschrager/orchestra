@@ -1,30 +1,36 @@
 # Changelog
 
-## [0.1.4.0] - 2026-03-23
+## [0.1.5.0] - 2026-03-23
 
 ### Added
 
 - **Attention queue** — Durable `attention_required` table persists agent questions and permission requests across reconnects, with TTL expiry, orphan cleanup, and idempotent resolution
-- **AskUserQuestion detection** — Claude adapter detects AskUserQuestion tool calls and `permission_denials` in stream-json output, extracting full question/options payload
-- **Session manager attention lifecycle** — Persists attention events, sets thread status to "waiting", 30-second stall detection, `resolveAndResume()` re-spawns agent with user's answer via `--resume`
-- **Session ID persistence** — `session_id` column on threads table (survives server restart), replaces in-memory-only map
-- **WebSocket attention protocol** — `attention_required`/`attention_resolved` server events, `resolve_attention` client event, pending attention replay on subscribe
-- **REST attention API** — `GET /api/attention` (list pending, filter by threadId), `POST /api/attention/:id/resolve` (idempotent resolution)
-- **Cloudflare Tunnel integration** — `TunnelManager` spawns cloudflared, captures URL, monitors lifecycle; `--tunnel` flag on server; `GET /api/tunnel` endpoint
-- **Tunnel auth bypass fix** — `--tunnel` forces auth enforcement on all requests (prevents cloudflared making remote traffic appear local)
-- **Push notification infrastructure** — `PushManager` with VAPID key generation/storage, subscription CRUD, Web Push dispatch with 410 Gone cleanup; `POST /api/push/subscribe` and `DELETE /api/push/subscribe` routes
-- **Service worker** — Push notification handler with action buttons, notification click deep-linking, offline app shell cache
-- **Mobile bottom navigation** — `MobileNav` component with Inbox/Sessions/New tabs, attention badge count, safe-area-inset support
-- **Attention inbox** — `AttentionInbox` + `AttentionCard` components with ask_user (option selection + free text), permission (Allow/Deny), and confirmation variants; empty state; time-ago display
-- **`useAttention` hook** — Cross-thread attention state management from WebSocket events and REST API
-- **`usePushNotifications` hook** — VAPID subscription, permission request, IndexedDB token storage for service worker auth
-- **PWA manifest icons** — Added 192px and 512px icon entries
-- **Desktop attention indicator** — Amber badge showing pending attention count (top-right)
-- **10 attention queue tests** — Covers CRUD, idempotent resolution, orphan cleanup, expiry, and API conversion
+- **AskUserQuestion detection** — Claude adapter detects AskUserQuestion tool calls and `permission_denials` in stream-json, extracting full question/options payload
+- **Session manager attention lifecycle** — Persists attention events, sets thread status to "waiting", 30-second stall detection, `resolveAndResume()` re-spawns agent via `--resume`
+- **Session ID persistence** — `session_id` column on threads table, survives server restart
+- **WebSocket attention protocol** — `attention_required`/`attention_resolved` events broadcast to ALL clients (cross-thread inbox), `resolve_attention` client action, pending attention replay on subscribe
+- **REST attention API** — `GET /api/attention` (list pending), `POST /api/attention/:id/resolve` (idempotent, first-caller-wins with race condition guard)
+- **Cloudflare Tunnel** — `TunnelManager` spawns cloudflared, captures URL; `--tunnel` flag forces auth on all requests including localhost (prevents tunnel auth bypass)
+- **Push notifications** — VAPID key management, Web Push dispatch, subscription CRUD, service worker with action buttons + deep-linking + notification-click client handler
+- **Mobile UI** — Bottom tab navigation (Inbox/Sessions/New) with attention badge, `AttentionInbox` with question/permission/confirmation cards, `MobileSessions` thread list, `MobileNewSession` form
+- **`useAttention` hook** — Cross-thread attention state from REST API initial sync + WebSocket live updates
+- **`usePushNotifications` hook** — VAPID subscription, permission management, IndexedDB token storage
+- **Attention expiry** — Hourly `expireAttentionItems()` sweep + startup cleanup
+- **10 attention queue tests** — CRUD, idempotent resolution, orphan cleanup, expiry, API conversion
+
+### Fixed
+
+- **Tunnel auth bypass** — `--tunnel` now forces auth on both HTTP middleware and WebSocket handler (cloudflared traffic appears local)
+- **Cross-thread attention broadcast** — Attention events now reach all connected WS clients, not just thread-subscribed ones
+- **Resolution race condition** — Double-resolution from multiple clients no longer spawns duplicate agent processes (first-caller-wins guard)
+- **REST resolution broadcast** — Resolving via REST API now notifies WS clients via `onAttentionResolved` listener
+- **stopThread cleanup** — Orphans attention items + clears stall timer when thread is stopped
+- **Post-restart recovery** — Orphans attention items for recovered waiting/running threads
+- **AttentionCard submit guard** — Permission cards no longer permanently disable on accidental Enter key
 
 ### Changed
 
-- **ThreadStatus** — Added `"waiting"` status for threads with pending attention items
+- **ThreadStatus** — Added `"waiting"` status, included in active thread count and recovery queries
 - **ParseResult** — Extended with optional `attention` field for `AttentionEvent` detection
 - **WSClientMessage/WSServerMessage** — Extended with attention event types
 
