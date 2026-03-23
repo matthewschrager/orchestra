@@ -235,6 +235,9 @@ function AppInner() {
     onStreamDelta: useCallback((delta: StreamDelta) => {
       dispatchStreaming({ type: "delta", delta });
     }, []),
+    onError: useCallback((error: string) => {
+      setError(error);
+    }, []),
   });
 
   // Subscribe to active thread
@@ -382,6 +385,7 @@ function AppInner() {
   // ── Render ────────────────────────────────────────────
 
   const isRunning = activeThread?.status === "running";
+  const activelyWorking = isRunning && !activeTurnEnded;
 
   return (
     <div className="h-screen flex flex-col bg-base text-content-1 overflow-hidden">
@@ -394,7 +398,7 @@ function AppInner() {
           >
             <MenuIcon />
           </button>
-          <div className={`w-2 h-2 rounded-full bg-accent shrink-0 ${isRunning ? "animate-pulse" : ""}`} />
+          <div className={`w-2 h-2 rounded-full bg-accent shrink-0 ${activelyWorking ? "animate-pulse" : ""}`} />
           <h1 className="text-sm font-semibold tracking-tight text-content-2 shrink-0">Orchestra</h1>
           {activeProject && (
             <span className="text-xs text-content-3 font-light shrink-0">
@@ -405,7 +409,7 @@ function AppInner() {
         {activeThread && (
           <div className="flex items-center gap-2 mx-4 min-w-0 justify-center flex-1">
             <span className="text-sm font-medium truncate">{activeThread.title}</span>
-            <HeaderStatusBadge status={activeThread.status} />
+            <HeaderStatusBadge status={activeThread.status} errorMessage={activeThread.errorMessage} />
           </div>
         )}
         <div className="flex items-center gap-3 shrink-0">
@@ -475,10 +479,11 @@ function AppInner() {
               />
               <StickyRunBar
                 isRunning={isRunning}
+                turnEnded={activeTurnEnded}
                 currentAction={activeStreamingToolInput ? extractToolContextForBar(activeStreamingTool ?? null, activeStreamingToolInput) : null}
                 currentTool={activeStreamingTool ?? null}
                 metrics={activeMetrics}
-                elapsedMs={isRunning ? Date.now() - (turnStartRef.current || Date.now()) : activeMetrics.durationMs}
+                elapsedMs={activelyWorking ? Date.now() - (turnStartRef.current || Date.now()) : activeMetrics.durationMs}
                 onInterrupt={handleStopThread}
               />
               <InputBar
@@ -654,6 +659,12 @@ function WelcomeState({ onAddProject }: { onAddProject: () => void }) {
 
 // ── Add Project Dialog ──────────────────────────────────
 
+interface BrowseEntry {
+  name: string;
+  path: string;
+  isGitRepo: boolean;
+}
+
 function AddProjectDialog({
   onAdd,
   onClose,
@@ -664,6 +675,35 @@ function AddProjectDialog({
   const [path, setPath] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Browser state
+  const [browseCurrent, setBrowseCurrent] = useState<string | null>(null);
+  const [browseParent, setBrowseParent] = useState<string | null>(null);
+  const [browseDirs, setBrowseDirs] = useState<BrowseEntry[]>([]);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const navigate = useCallback(async (targetPath?: string) => {
+    setBrowseLoading(true);
+    setBrowseError(null);
+    try {
+      const data = await api.browsePath(targetPath);
+      setBrowseCurrent(data.current);
+      setBrowseParent(data.parent);
+      setBrowseDirs(data.directories);
+      if (listRef.current) listRef.current.scrollTop = 0;
+    } catch (err) {
+      setBrowseError((err as Error).message);
+    } finally {
+      setBrowseLoading(false);
+    }
+  }, []);
+
+  // Load home directory on mount
+  useEffect(() => {
+    navigate();
+  }, [navigate]);
 
   const handleSubmit = async () => {
     if (!path.trim()) return;
@@ -679,28 +719,123 @@ function AddProjectDialog({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-surface-2 border border-edge-2 rounded-2xl p-6 w-full max-w-md shadow-2xl shadow-black/50">
+    <div
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}
+    >
+      <div className="bg-surface-2 border border-edge-2 rounded-2xl p-6 w-full max-w-lg shadow-2xl shadow-black/50 flex flex-col max-h-[80vh]">
         <h3 className="text-lg font-semibold mb-1">Add Project</h3>
-        <p className="text-sm text-content-2 mb-5">
-          Enter the absolute path to a git repository on your machine.
+        <p className="text-sm text-content-2 mb-4">
+          Browse to a git repository or type its path directly.
         </p>
-        <input
-          type="text"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          placeholder="/home/user/projects/my-repo"
-          className="w-full bg-surface-1 border border-edge-2 rounded-lg px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent mb-2 placeholder:text-content-3"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleSubmit();
-            if (e.key === "Escape") onClose();
-          }}
-          autoFocus
-        />
+
+        {/* Path input */}
+        <div className="flex gap-2 mb-3">
+          <input
+            type="text"
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            placeholder="/home/user/projects/my-repo"
+            className="flex-1 bg-surface-1 border border-edge-2 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent placeholder:text-content-3"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSubmit();
+            }}
+            autoFocus
+          />
+          <button
+            onClick={handleSubmit}
+            disabled={!path.trim() || loading}
+            className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base whitespace-nowrap"
+          >
+            {loading ? "Adding..." : "Add"}
+          </button>
+        </div>
+
         {error && (
-          <p className="text-sm text-red-400 mb-3">{error}</p>
+          <p className="text-sm text-red-400 mb-2">{error}</p>
         )}
-        <div className="flex justify-end gap-2 mt-4">
+
+        {/* Directory browser */}
+        <div className="flex-1 min-h-0 flex flex-col border border-edge-2 rounded-lg bg-surface-1 overflow-hidden">
+          {/* Current path breadcrumb + up button */}
+          <div className="flex items-center gap-1.5 px-3 py-2 border-b border-edge-2 bg-surface-1/50 shrink-0">
+            <button
+              onClick={() => browseParent && navigate(browseParent)}
+              disabled={!browseParent || browseLoading}
+              className="p-1 rounded hover:bg-surface-3 disabled:opacity-30 text-content-2 hover:text-content-1 shrink-0"
+              title="Go up"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M8 12V4M4 8l4-4 4 4" />
+              </svg>
+            </button>
+            <span className="text-xs font-mono text-content-2 truncate" title={browseCurrent ?? ""}>
+              {browseCurrent ?? "Loading..."}
+            </span>
+          </div>
+
+          {/* Directory list */}
+          <div ref={listRef} className="flex-1 overflow-y-auto min-h-[200px] max-h-[320px]">
+            {browseLoading && browseDirs.length === 0 ? (
+              <div className="p-4 text-center text-sm text-content-3">Loading...</div>
+            ) : browseError ? (
+              <div className="p-4 text-center text-sm text-red-400">{browseError}</div>
+            ) : browseDirs.length === 0 ? (
+              <div className="p-4 text-center text-sm text-content-3">No subdirectories</div>
+            ) : (
+              browseDirs.map((dir) => (
+                <button
+                  key={dir.path}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-surface-3/60 transition-colors ${
+                    dir.path === path ? "bg-accent/10 border-l-2 border-accent" : "border-l-2 border-transparent"
+                  }`}
+                  onClick={() => {
+                    if (dir.isGitRepo) {
+                      setPath(dir.path);
+                      setError(null);
+                    } else {
+                      navigate(dir.path);
+                    }
+                  }}
+                  onDoubleClick={() => navigate(dir.path)}
+                  title={dir.isGitRepo ? `${dir.path} (git repo — click to select)` : dir.path}
+                >
+                  {/* Icon */}
+                  {dir.isGitRepo ? (
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0 text-accent">
+                      <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.5" />
+                      <circle cx="8" cy="5" r="1.5" fill="currentColor" />
+                      <circle cx="8" cy="11" r="1.5" fill="currentColor" />
+                      <path d="M8 6.5v3" stroke="currentColor" strokeWidth="1.5" />
+                    </svg>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0 text-content-3">
+                      <path d="M2 4.5A1.5 1.5 0 013.5 3H6l1.5 1.5h5A1.5 1.5 0 0114 6v5.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-7z" stroke="currentColor" strokeWidth="1.3" />
+                    </svg>
+                  )}
+                  {/* Name + label */}
+                  <span className={`text-sm truncate ${dir.isGitRepo ? "text-content-1 font-medium" : "text-content-2"}`}>
+                    {dir.name}
+                  </span>
+                  {dir.isGitRepo && (
+                    <span className="ml-auto text-[10px] uppercase tracking-wider text-accent/70 font-medium shrink-0">
+                      git
+                    </span>
+                  )}
+                  {/* Chevron for non-git dirs */}
+                  {!dir.isGitRepo && (
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="ml-auto shrink-0 text-content-3/50">
+                      <path d="M5 3l4 4-4 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-2 mt-4 shrink-0">
           <button
             onClick={onClose}
             className="px-4 py-2 text-sm text-content-2 hover:text-content-1 rounded-lg hover:bg-surface-3"
@@ -720,7 +855,7 @@ function AddProjectDialog({
   );
 }
 
-function HeaderStatusBadge({ status }: { status: string }) {
+function HeaderStatusBadge({ status, errorMessage }: { status: string; errorMessage?: string | null }) {
   const styles: Record<string, string> = {
     running: "bg-emerald-900/40 text-emerald-400 border-emerald-500/20",
     pending: "bg-amber-900/40 text-amber-400 border-amber-500/20",
@@ -729,7 +864,10 @@ function HeaderStatusBadge({ status }: { status: string }) {
     error: "bg-red-900/40 text-red-400 border-red-500/20",
   };
   return (
-    <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium shrink-0 ${styles[status] ?? ""}`}>
+    <span
+      className={`text-[10px] px-2 py-0.5 rounded-full border font-medium shrink-0 ${styles[status] ?? ""}`}
+      title={status === "error" && errorMessage ? errorMessage : undefined}
+    >
       {status}
     </span>
   );

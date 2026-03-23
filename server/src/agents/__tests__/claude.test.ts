@@ -81,8 +81,40 @@ describe("ClaudeAdapter.parseOutput", () => {
     expect(messages[0].content).toBe("System initialization complete");
   });
 
+  test("handles system event with null content (no phantom message)", () => {
+    const line = JSON.stringify({ type: "system", content: null });
+    const { messages } = adapter.parseOutput(line);
+    expect(messages).toHaveLength(0);
+  });
+
+  test("handles system event with empty string content (no phantom message)", () => {
+    const line = JSON.stringify({ type: "system", content: "" });
+    const { messages } = adapter.parseOutput(line);
+    expect(messages).toHaveLength(0);
+  });
+
   test("handles empty line gracefully", () => {
     const { messages, deltas } = adapter.parseOutput("");
+    expect(messages).toHaveLength(0);
+    expect(deltas).toHaveLength(0);
+  });
+
+  test("silently ignores message_start stream events", () => {
+    const line = JSON.stringify({
+      type: "stream_event",
+      event: { type: "message_start", message: { id: "msg_1", model: "claude-4" } },
+    });
+    const { messages, deltas } = adapter.parseOutput(line);
+    expect(messages).toHaveLength(0);
+    expect(deltas).toHaveLength(0);
+  });
+
+  test("silently ignores message_delta stream events", () => {
+    const line = JSON.stringify({
+      type: "stream_event",
+      event: { type: "message_delta", delta: { stop_reason: "end_turn" } },
+    });
+    const { messages, deltas } = adapter.parseOutput(line);
     expect(messages).toHaveLength(0);
     expect(deltas).toHaveLength(0);
   });

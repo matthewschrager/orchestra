@@ -105,12 +105,17 @@ export class ClaudeAdapter implements AgentAdapter {
         return { messages: [], deltas };
       }
 
-      case "system":
+      case "system": {
         // Surface system messages as assistant messages
+        const sysContent = typeof event.content === "string"
+          ? event.content
+          : event.content ? JSON.stringify(event.content) : "";
+        if (!sysContent) return { messages: [], deltas: [] };
         return {
-          messages: [{ role: "assistant", content: typeof event.content === "string" ? event.content : JSON.stringify(event.content ?? "") }],
+          messages: [{ role: "assistant", content: sysContent }],
           deltas: [],
         };
+      }
 
       case "tool_use":
         return {
@@ -203,6 +208,11 @@ export class ClaudeAdapter implements AgentAdapter {
 
       case "message_stop":
         return { messages: [], deltas: [{ deltaType: "turn_end" }] };
+
+      // Standard Anthropic API envelope events — no content to render
+      case "message_start":
+      case "message_delta":
+        return { messages: [], deltas: [] };
 
       default:
         if (inner.type) {

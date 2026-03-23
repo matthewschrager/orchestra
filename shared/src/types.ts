@@ -34,6 +34,7 @@ export interface Thread {
   prUrl: string | null;
   pid: number | null;
   status: ThreadStatus;
+  errorMessage: string | null;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;

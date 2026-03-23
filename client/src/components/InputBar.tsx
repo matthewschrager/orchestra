@@ -60,16 +60,6 @@ export function InputBar({ agents, thread, activeProjectId, commands, pendingQue
 
   return (
     <div className="border-t border-edge-1 bg-surface-1 p-3 shrink-0 relative z-10">
-      {/* Stop banner when running */}
-      {isRunning && (
-        <button
-          onClick={onStop}
-          className="w-full mb-2 py-1.5 bg-red-950/40 text-red-300 hover:bg-red-900/40 rounded-lg border border-red-900/20 text-xs font-medium text-center"
-        >
-          Stop running
-        </button>
-      )}
-
       {/* Input area */}
       <div className="flex gap-2 items-end">
         {/* New thread button */}
@@ -95,18 +85,36 @@ export function InputBar({ agents, thread, activeProjectId, commands, pendingQue
               ? "Describe what you want to build..."
               : pendingQuestion
                 ? "Type your answer..."
-                : "Send a message..."
+                : isRunning
+                  ? "Agent is working..."
+                  : "Send a message..."
           }
         />
 
-        <button
-          onClick={handleSubmit}
-          disabled={!input.trim()}
-          className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base shrink-0"
-          title={`${navigator.platform.includes("Mac") ? "Cmd" : "Ctrl"}+Enter to send`}
-        >
-          {mode === "new" && thread ? "New" : "Send"}
-        </button>
+        {isRunning ? (
+          <button
+            onClick={onStop}
+            className="relative p-2 rounded-lg shrink-0 self-end group"
+            aria-label="Stop agent"
+            title="Stop running"
+          >
+            {/* Pulse ring */}
+            <span className="absolute inset-0 rounded-lg border border-accent/40 animate-[stop-pulse_2s_ease-in-out_infinite]" />
+            {/* Stop icon — rounded square */}
+            <svg width="16" height="16" viewBox="0 0 16 16" className="relative text-accent group-hover:text-accent-light transition-colors">
+              <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor" />
+            </svg>
+          </button>
+        ) : (
+          <button
+            onClick={handleSubmit}
+            disabled={!input.trim()}
+            className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base shrink-0"
+            title={`${navigator.platform.includes("Mac") ? "Cmd" : "Ctrl"}+Enter to send`}
+          >
+            {mode === "new" && thread ? "New" : "Send"}
+          </button>
+        )}
       </div>
 
       {/* Collapsed options row — only in new-thread mode */}

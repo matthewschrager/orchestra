@@ -26,7 +26,8 @@ orchestra/
 │       │   ├── projects.ts Project CRUD
 │       │   ├── threads.ts  Thread CRUD + actions
 │       │   ├── agents.ts   Agent listing
-│       │   └── commands.ts Slash command listing
+│       │   ├── commands.ts Slash command listing
+│       │   └── filesystem.ts Directory browser API
 │       └── ws/handler.ts   WebSocket handler
 ├── client/          Vite + React + Tailwind frontend
 │   └── src/
@@ -62,7 +63,7 @@ cd server && bun run src/index.ts  # Production server
 - Claude Code uses `-p` one-shot mode with `--resume` for multi-turn (Bun's stdin pipe doesn't work with Claude's interactive mode)
 - Claude Code flags: `--output-format stream-json --include-partial-messages --dangerously-skip-permissions --verbose`
 - Multi-project: single server manages multiple registered git repos via `projects` table
-- Per-project worktree mutex — one running thread per project's main worktree
+- Multiple threads can run concurrently on the same project's main worktree
 - Real-time streaming via ephemeral WebSocket deltas (not persisted to DB)
 - Complete messages persisted to SQLite with WAL mode, seq-based replay on reconnect
 - Token auth only enforced for non-localhost requests
@@ -74,7 +75,7 @@ cd server && bun run src/index.ts  # Production server
 ## Testing
 
 ```bash
-bun test                        # Run all tests (38 tests across 2 files)
+bun test                        # Run all tests (49 tests across 3 files)
 ```
 
-Tests cover renderer parsing functions and server-side Claude adapter event handling.
+Tests cover renderer parsing functions, server-side Claude adapter event handling, and filesystem route behavior.

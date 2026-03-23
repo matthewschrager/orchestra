@@ -2,6 +2,7 @@ import type { TurnMetrics } from "shared";
 
 interface Props {
   isRunning: boolean;
+  turnEnded: boolean;
   currentAction: string | null;
   currentTool: string | null;
   metrics: TurnMetrics;
@@ -9,8 +10,10 @@ interface Props {
   onInterrupt: () => void;
 }
 
-export function StickyRunBar({ isRunning, currentAction, currentTool, metrics, elapsedMs, onInterrupt }: Props) {
-  if (!isRunning && metrics.turnCount === 0) return null;
+export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool, metrics, elapsedMs, onInterrupt }: Props) {
+  // Treat "process still running but turn ended" as idle — agent is just cleaning up
+  const activelyWorking = isRunning && !turnEnded;
+  if (!activelyWorking && metrics.turnCount === 0) return null;
 
   const formatCost = (usd: number) => {
     if (usd === 0) return "—";
@@ -26,7 +29,7 @@ export function StickyRunBar({ isRunning, currentAction, currentTool, metrics, e
     return `${m}m ${s % 60}s`;
   };
 
-  if (!isRunning) {
+  if (!activelyWorking) {
     // Idle state — session summary
     return (
       <div className="sticky-run-bar" role="status" aria-live="polite">
