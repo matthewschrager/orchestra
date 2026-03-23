@@ -1,3 +1,24 @@
+// ── Project ─────────────────────────────────────────────
+
+export interface Project {
+  id: string;
+  name: string;
+  path: string;
+  updatedAt: string;
+  addedAt: string;
+}
+
+export interface ProjectWithStatus extends Project {
+  currentBranch: string;
+  threadCount: number;
+  activeThreadCount: number;
+}
+
+export interface CreateProjectRequest {
+  path: string;
+  name?: string;
+}
+
 // ── Thread ──────────────────────────────────────────────
 
 export type ThreadStatus = "running" | "pending" | "paused" | "done" | "error";
@@ -6,6 +27,7 @@ export interface Thread {
   id: string;
   title: string;
   agent: string;
+  projectId: string;
   repoPath: string;
   worktree: string | null;
   branch: string | null;
@@ -44,6 +66,16 @@ export interface AgentConfig {
   version: string | null;
 }
 
+// ── Streaming ──────────────────────────────────────────
+
+export interface StreamDelta {
+  threadId: string;
+  deltaType: "text" | "tool_start" | "tool_input" | "tool_end" | "turn_end";
+  text?: string;
+  toolName?: string;
+  toolInput?: string;
+}
+
 // ── WebSocket Messages ──────────────────────────────────
 
 export type WSClientMessage =
@@ -56,13 +88,15 @@ export type WSServerMessage =
   | { type: "message"; message: Message }
   | { type: "thread_updated"; thread: Thread }
   | { type: "error"; error: string }
-  | { type: "replay_done"; threadId: string };
+  | { type: "replay_done"; threadId: string }
+  | { type: "stream_delta"; delta: StreamDelta };
 
 // ── API Types ───────────────────────────────────────────
 
 export interface CreateThreadRequest {
   agent: string;
   prompt: string;
+  projectId: string;
   title?: string;
   isolate?: boolean;
 }

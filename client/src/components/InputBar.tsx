@@ -4,12 +4,13 @@ import type { Thread } from "shared";
 interface Props {
   agents: Array<{ name: string; detected: boolean }>;
   thread: Thread | null;
+  activeProjectId: string | null;
   onSend: (content: string) => void;
-  onNewThread: (agent: string, prompt: string, isolate: boolean) => void;
+  onNewThread: (agent: string, prompt: string, isolate: boolean, projectId?: string) => void;
   onStop: () => void;
 }
 
-export function InputBar({ agents, thread, onSend, onNewThread, onStop }: Props) {
+export function InputBar({ agents, thread, activeProjectId, onSend, onNewThread, onStop }: Props) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
   const [agent, setAgent] = useState(agents.find((a) => a.detected)?.name ?? "claude");
@@ -22,7 +23,7 @@ export function InputBar({ agents, thread, onSend, onNewThread, onStop }: Props)
     if (!text) return;
 
     if (mode === "new" || !thread) {
-      onNewThread(agent, text, isolate);
+      onNewThread(agent, text, isolate, activeProjectId ?? undefined);
     } else {
       onSend(text);
     }

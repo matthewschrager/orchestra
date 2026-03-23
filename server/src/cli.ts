@@ -2,6 +2,7 @@
 
 import { parseArgs } from "util";
 import { regenerateToken, readToken } from "./auth";
+import { createDb, validateAndInsertProject, projectRowToApi } from "./db";
 
 const { positionals } = parseArgs({
   args: Bun.argv.slice(2),
@@ -37,12 +38,36 @@ switch (command) {
     break;
   }
 
+  case "add": {
+    const projectPath = positionals[1];
+    if (!projectPath) {
+      console.error("Usage: orchestra add <path>");
+      process.exit(1);
+    }
+    try {
+      const db = createDb();
+      const row = validateAndInsertProject(db, projectPath);
+      const project = projectRowToApi(row);
+      console.log(`Project "${project.name}" registered (${project.path})`);
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes("UNIQUE constraint")) {
+        console.error("Error: Project already registered");
+      } else {
+        console.error(`Error: ${msg}`);
+      }
+      process.exit(1);
+    }
+    break;
+  }
+
   case "help":
     console.log(`
 Orchestra — Agent-first development interface
 
 Usage:
   orchestra [serve]          Start the Orchestra server (default)
+  orchestra add <path>       Register a project (git repo directory)
   orchestra auth show        Show the current auth token
   orchestra auth regenerate  Generate a new auth token
 

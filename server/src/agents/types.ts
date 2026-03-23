@@ -1,13 +1,15 @@
 import type { Subprocess } from "bun";
+import type { StreamDelta } from "shared";
 
 export interface SpawnOpts {
   cwd: string;
+  prompt: string;
   resumeSessionId?: string;
   env?: Record<string, string>;
 }
 
 export interface AgentProcess {
-  proc: Subprocess<"pipe", "pipe", "pipe">;
+  proc: Subprocess<"ignore", "pipe", "pipe">;
 }
 
 export interface ParsedMessage {
@@ -19,13 +21,17 @@ export interface ParsedMessage {
   metadata?: Record<string, unknown>;
 }
 
+export interface ParseResult {
+  messages: ParsedMessage[];
+  deltas: Omit<StreamDelta, "threadId">[];
+}
+
 export interface AgentAdapter {
   name: string;
   detect(): Promise<boolean>;
   getVersion(): Promise<string | null>;
   spawn(opts: SpawnOpts): AgentProcess;
-  parseOutput(line: string): ParsedMessage[];
-  sendInput(proc: AgentProcess, text: string): void;
+  parseOutput(line: string): ParseResult;
   supportsResume(): boolean;
   getBypassFlags(): string[];
 }

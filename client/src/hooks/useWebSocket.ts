@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Message, Thread, WSClientMessage, WSServerMessage } from "shared";
+import type { Message, StreamDelta, Thread, WSClientMessage, WSServerMessage } from "shared";
 
 interface UseWebSocketOpts {
   onMessage?: (msg: Message) => void;
   onThreadUpdate?: (thread: Thread) => void;
   onReplayDone?: (threadId: string) => void;
+  onStreamDelta?: (delta: StreamDelta) => void;
 }
 
 export function useWebSocket(opts: UseWebSocketOpts = {}) {
@@ -51,6 +52,9 @@ export function useWebSocket(opts: UseWebSocketOpts = {}) {
             break;
           case "replay_done":
             optsRef.current.onReplayDone?.(data.threadId);
+            break;
+          case "stream_delta":
+            optsRef.current.onStreamDelta?.(data.delta);
             break;
         }
       };

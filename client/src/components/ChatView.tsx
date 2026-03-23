@@ -4,19 +4,22 @@ import type { Message, Thread } from "shared";
 interface Props {
   messages: Message[];
   thread: Thread;
+  streamingText?: string;
+  streamingTool?: string;
+  streamingToolInput?: string;
 }
 
-export function ChatView({ messages, thread }: Props) {
+export function ChatView({ messages, thread, streamingText, streamingTool, streamingToolInput }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
-  // Auto-scroll on new messages
+  // Auto-scroll on new messages or streaming content
   useEffect(() => {
     if (autoScroll) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages.length, autoScroll]);
+  }, [messages.length, streamingText, streamingTool, streamingToolInput, autoScroll]);
 
   // Detect manual scroll
   const handleScroll = () => {
@@ -25,6 +28,8 @@ export function ChatView({ messages, thread }: Props) {
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
     setAutoScroll(atBottom);
   };
+
+  const isStreaming = !!(streamingText || streamingTool);
 
   return (
     <div
@@ -52,10 +57,36 @@ export function ChatView({ messages, thread }: Props) {
         <MessageBubble key={msg.id} message={msg} />
       ))}
 
+      {/* Streaming content — replaces "Thinking..." */}
       {thread.status === "running" && (
-        <div className="flex items-center gap-2 text-slate-500 text-sm py-2">
-          <span className="animate-pulse">Thinking...</span>
-        </div>
+        <>
+          {streamingTool && (
+            <div className="max-w-[80%] py-1">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <span className="animate-pulse w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                <span className="font-mono">{streamingTool}</span>
+                {streamingToolInput && (
+                  <span className="text-slate-500 truncate max-w-[300px]">
+                    {extractToolContext(streamingTool, streamingToolInput)}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {streamingText ? (
+            <div className="max-w-[80%]" aria-live="polite">
+              <div className="bg-slate-800 rounded-lg px-4 py-2.5 text-sm whitespace-pre-wrap">
+                {streamingText}
+                <span className="inline-block w-0.5 h-4 bg-slate-400 ml-0.5 animate-pulse align-text-bottom" />
+              </div>
+            </div>
+          ) : !streamingTool ? (
+            <div className="flex items-center gap-2 text-slate-500 text-sm py-2">
+              <span className="animate-pulse">Thinking...</span>
+            </div>
+          ) : null}
+        </>
       )}
 
       <div ref={bottomRef} />
@@ -114,6 +145,27 @@ function MessageBubble({ message }: { message: Message }) {
       </div>
     </div>
   );
+}
+
+function extractToolContext(toolName: string, input: string): string {
+  try {
+    const parsed = JSON.parse(input);
+    // Show the most useful field for common tools
+    if (parsed.file_path || parsed.filePath) return parsed.file_path || parsed.filePath;
+    if (parsed.path) return parsed.path;
+    if (parsed.command) return parsed.command.slice(0, 80);
+    if (parsed.pattern) return parsed.pattern;
+    if (parsed.query) return parsed.query.slice(0, 80);
+    if (parsed.url) return parsed.url;
+    return "";
+  } catch {
+    // Input is still streaming (partial JSON) — try to extract file_path
+    const pathMatch = input.match(/"(?:file_path|filePath|path)"\s*:\s*"([^"]+)"/);
+    if (pathMatch) return pathMatch[1];
+    const cmdMatch = input.match(/"command"\s*:\s*"([^"]{1,80})/);
+    if (cmdMatch) return cmdMatch[1];
+    return "";
+  }
 }
 
 function formatJson(s: string): string {
