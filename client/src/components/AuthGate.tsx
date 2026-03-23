@@ -32,15 +32,19 @@ export function AuthGate({ onAuthenticated }: Props) {
   };
 
   return (
-    <div className="h-screen flex items-center justify-center bg-slate-950 text-slate-100 p-4">
-      <div className="w-full max-w-sm space-y-4">
+    <div className="h-screen flex items-center justify-center bg-base text-content-1 p-4 relative">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(207,138,78,0.04)_0%,_transparent_70%)] pointer-events-none" />
+      <div className="w-full max-w-sm space-y-5 relative">
         <div className="text-center">
-          <h1 className="text-2xl font-bold mb-1">Orchestra</h1>
-          <p className="text-slate-400 text-sm">
+          <div className="inline-flex items-center gap-2.5 mb-3">
+            <div className="w-2.5 h-2.5 rounded-full bg-accent" />
+            <h1 className="text-2xl font-semibold tracking-tight">Orchestra</h1>
+          </div>
+          <p className="text-content-2 text-sm">
             Enter your auth token to connect remotely.
           </p>
-          <p className="text-slate-500 text-xs mt-1">
-            Find it in <code className="text-slate-400">~/.orchestra/auth-token</code>
+          <p className="text-content-3 text-xs mt-1.5">
+            Find it in <code className="text-content-2 font-mono bg-surface-2 px-1 py-0.5 rounded">~/.orchestra/auth-token</code>
           </p>
         </div>
 
@@ -49,7 +53,7 @@ export function AuthGate({ onAuthenticated }: Props) {
           value={token}
           onChange={(e) => setToken(e.target.value)}
           placeholder="Paste auth token"
-          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-slate-500"
+          className="w-full bg-surface-2 border border-edge-2 rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent placeholder:text-content-3"
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSubmit();
           }}
@@ -60,7 +64,7 @@ export function AuthGate({ onAuthenticated }: Props) {
         <button
           onClick={handleSubmit}
           disabled={!token || loading}
-          className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg text-sm font-medium"
+          className="w-full py-3 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base"
         >
           {loading ? "Connecting..." : "Connect"}
         </button>

@@ -25,12 +25,23 @@ orchestra/
 │       ├── routes/         REST API routes
 │       │   ├── projects.ts Project CRUD
 │       │   ├── threads.ts  Thread CRUD + actions
-│       │   └── agents.ts   Agent listing
+│       │   ├── agents.ts   Agent listing
+│       │   └── commands.ts Slash command listing
 │       └── ws/handler.ts   WebSocket handler
 ├── client/          Vite + React + Tailwind frontend
 │   └── src/
-│       ├── App.tsx         Root component with auth gate
+│       ├── App.tsx         Root component with auth gate + streaming reducer
 │       ├── components/     UI components
+│       │   ├── ChatView.tsx      Chat messages + tool rendering
+│       │   ├── StickyRunBar.tsx  Real-time status + metrics strip
+│       │   ├── InputBar.tsx      Message input with slash commands
+│       │   ├── ProjectSidebar.tsx Project/thread navigation
+│       │   └── renderers/        Rich tool output renderers
+│       │       ├── DiffRenderer.tsx    Edit → inline diff
+│       │       ├── BashRenderer.tsx    Bash → terminal block
+│       │       ├── ReadRenderer.tsx    Read → syntax-highlighted file
+│       │       ├── SearchRenderer.tsx  Grep/Glob → match list
+│       │       └── SubAgentCard.tsx    Agent → status card
 │       └── hooks/          useWebSocket, useApi
 └── shared/          Shared TypeScript types
 ```
@@ -55,3 +66,15 @@ cd server && bun run src/index.ts  # Production server
 - Real-time streaming via ephemeral WebSocket deltas (not persisted to DB)
 - Complete messages persisted to SQLite with WAL mode, seq-based replay on reconnect
 - Token auth only enforced for non-localhost requests
+- Rich tool renderers parse stream-json tool data into visual components (diffs, terminal blocks, search results)
+- Shiki syntax highlighting lazy-loaded via module-level singleton with DOMPurify sanitization
+- Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
+- Cost/duration metrics extracted from Claude result events and displayed in StickyRunBar
+
+## Testing
+
+```bash
+bun test                        # Run all tests (38 tests across 2 files)
+```
+
+Tests cover renderer parsing functions and server-side Claude adapter event handling.

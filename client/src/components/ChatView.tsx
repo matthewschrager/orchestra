@@ -1,5 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Message, Thread } from "shared";
+import { MarkdownContent } from "./MarkdownContent";
+import { DiffRenderer } from "./renderers/DiffRenderer";
+import { BashRenderer } from "./renderers/BashRenderer";
+import { ReadRenderer } from "./renderers/ReadRenderer";
+import { SearchRenderer, searchSummary } from "./renderers/SearchRenderer";
+import { SubAgentCard } from "./renderers/SubAgentCard";
 
 interface Props {
   messages: Message[];
@@ -7,12 +13,31 @@ interface Props {
   streamingText?: string;
   streamingTool?: string;
   streamingToolInput?: string;
+  turnEnded?: boolean;
+  onSubmitAnswers?: (text: string) => void;
 }
 
-export function ChatView({ messages, thread, streamingText, streamingTool, streamingToolInput }: Props) {
+export function ChatView({ messages, thread, streamingText, streamingTool, streamingToolInput, turnEnded, onSubmitAnswers }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+
+  const grouped = useMemo(() => groupMessages(messages), [messages]);
+
+  // Detect which AskUserQuestion messages have been answered (user replied after them)
+  const answeredQuestionIds = useMemo(() => {
+    const ids = new Set<string>();
+    let lastUserSeq = -1;
+    for (const msg of messages) {
+      if (msg.role === "user") lastUserSeq = msg.seq;
+    }
+    for (const msg of messages) {
+      if (msg.toolName === "AskUserQuestion" && msg.toolInput && !msg.toolOutput && msg.seq < lastUserSeq) {
+        ids.add(msg.id);
+      }
+    }
+    return ids;
+  }, [messages]);
 
   // Auto-scroll on new messages or streaming content
   useEffect(() => {
@@ -29,64 +54,77 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
     setAutoScroll(atBottom);
   };
 
-  const isStreaming = !!(streamingText || streamingTool);
-
   return (
     <div
       ref={containerRef}
       onScroll={handleScroll}
-      className="flex-1 overflow-y-auto p-4 space-y-3"
+      className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4"
     >
       {/* Thread header */}
-      <div className="mb-4 pb-3 border-b border-slate-800">
-        <h2 className="text-lg font-semibold">{thread.title}</h2>
-        <div className="flex items-center gap-2 mt-1 text-xs text-slate-400">
-          <span>{thread.agent}</span>
-          <span>·</span>
-          <span>{thread.status}</span>
+      <div className="mb-6 pb-4 border-b border-edge-1">
+        <h2 className="text-lg font-semibold tracking-tight">{thread.title}</h2>
+        <div className="flex items-center gap-2 mt-1.5 text-xs text-content-3">
+          <span className="text-content-2">{thread.agent}</span>
+          <span className="text-content-3">&middot;</span>
+          <ThreadStatusBadge status={thread.status} />
           {thread.branch && (
             <>
-              <span>·</span>
-              <span className="font-mono">{thread.branch}</span>
+              <span className="text-content-3">&middot;</span>
+              <span className="font-mono text-content-2">{thread.branch}</span>
             </>
           )}
         </div>
       </div>
 
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
-      ))}
+      {grouped.map((item, i) =>
+        Array.isArray(item) ? (
+          <ToolGroup key={`tg-${item[0].id}`} messages={item} answeredIds={answeredQuestionIds} onSubmitAnswers={onSubmitAnswers} />
+        ) : (
+          <MessageBubble key={item.id} message={item} />
+        ),
+      )}
 
-      {/* Streaming content — replaces "Thinking..." */}
-      {thread.status === "running" && (
-        <>
-          {streamingTool && (
-            <div className="max-w-[80%] py-1">
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <span className="animate-pulse w-1.5 h-1.5 rounded-full bg-indigo-400" />
-                <span className="font-mono">{streamingTool}</span>
-                {streamingToolInput && (
-                  <span className="text-slate-500 truncate max-w-[300px]">
-                    {extractToolContext(streamingTool, streamingToolInput)}
-                  </span>
-                )}
+      {/* Streaming status — active tool + text */}
+      {thread.status === "running" && !turnEnded && (
+        <div className="py-1">
+          {/* Active tool — special handling for AskUserQuestion */}
+          {streamingTool === "AskUserQuestion" ? (
+            <div className="my-2 max-w-[80%] rounded-lg border border-sky-500/20 bg-sky-950/20 px-4 py-3">
+              <div className="flex items-center gap-2 mb-1.5 text-xs text-sky-400/80 font-medium">
+                <EqBars />
+                <span>Agent is asking...</span>
               </div>
+              {streamingToolInput && (
+                <div className="text-sm text-content-1 whitespace-pre-wrap">
+                  {extractQuestionPreview(streamingToolInput)}
+                  <span className="inline-block w-0.5 h-4 bg-sky-400 ml-0.5 animate-pulse align-text-bottom" />
+                </div>
+              )}
             </div>
-          )}
+          ) : streamingTool ? (
+            <div className="flex items-center gap-2 text-xs text-content-2 py-0.5">
+              <EqBars />
+              <span className="font-mono truncate">
+                {formatToolLabel(streamingTool, extractToolContext(streamingTool, streamingToolInput ?? ""), true)}
+              </span>
+            </div>
+          ) : null}
 
+          {/* Streaming text */}
           {streamingText ? (
-            <div className="max-w-[80%]" aria-live="polite">
-              <div className="bg-slate-800 rounded-lg px-4 py-2.5 text-sm whitespace-pre-wrap">
-                {streamingText}
-                <span className="inline-block w-0.5 h-4 bg-slate-400 ml-0.5 animate-pulse align-text-bottom" />
+            <div className="max-w-[80%] mt-2" aria-live="polite">
+              <div className="bg-surface-3 rounded-lg px-4 py-3 text-sm border-l-2 border-l-accent/20">
+                <MarkdownContent content={streamingText} />
+                <span className="inline-block w-0.5 h-4 bg-accent ml-0.5 animate-pulse align-text-bottom" />
               </div>
             </div>
           ) : !streamingTool ? (
-            <div className="flex items-center gap-2 text-slate-500 text-sm py-2">
-              <span className="animate-pulse">Thinking...</span>
+            <div className="flex items-center gap-2 text-xs text-content-3 py-1">
+              <EqBars />
+              <span>Thinking...</span>
             </div>
           ) : null}
-        </>
+        </div>
       )}
 
       <div ref={bottomRef} />
@@ -94,45 +132,451 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
-  const [expanded, setExpanded] = useState(false);
+// ── Message grouping ────────────────────────────────────
 
-  if (message.role === "user") {
-    return (
-      <div className="flex justify-end">
-        <div className="max-w-[80%] bg-indigo-600 rounded-lg px-4 py-2.5 text-sm whitespace-pre-wrap">
-          {message.content}
+type GroupedItem = Message | Message[];
+
+function groupMessages(msgs: Message[]): GroupedItem[] {
+  const result: GroupedItem[] = [];
+  let toolBuffer: Message[] = [];
+
+  const flush = () => {
+    if (toolBuffer.length > 0) {
+      result.push(toolBuffer);
+      toolBuffer = [];
+    }
+  };
+
+  for (const msg of msgs) {
+    if (msg.role === "tool") {
+      toolBuffer.push(msg);
+    } else {
+      flush();
+      result.push(msg);
+    }
+  }
+  flush();
+  return result;
+}
+
+// ── Tool pairing ────────────────────────────────────────
+
+interface ToolPair {
+  id: string;
+  name: string;
+  input: string | null;
+  output: string | null;
+  context: string;
+}
+
+function pairTools(toolMsgs: Message[]): ToolPair[] {
+  const pairs: ToolPair[] = [];
+  let i = 0;
+  while (i < toolMsgs.length) {
+    const msg = toolMsgs[i];
+    // tool_use: has toolInput, no toolOutput
+    if (msg.toolInput && !msg.toolOutput) {
+      const next = toolMsgs[i + 1];
+      // Check if next is the matching tool_result
+      if (next?.toolOutput && (!next.toolName || next.toolName === msg.toolName)) {
+        pairs.push({
+          id: msg.id,
+          name: msg.toolName || "tool",
+          input: msg.toolInput,
+          output: next.toolOutput,
+          context: extractToolContext(msg.toolName || "tool", msg.toolInput),
+        });
+        i += 2;
+        continue;
+      }
+    }
+    // Single tool message (unpaired)
+    pairs.push({
+      id: msg.id,
+      name: msg.toolName || "tool",
+      input: msg.toolInput,
+      output: msg.toolOutput,
+      context: msg.toolInput ? extractToolContext(msg.toolName || "tool", msg.toolInput) : "",
+    });
+    i++;
+  }
+  return pairs;
+}
+
+// ── Components ──────────────────────────────────────────
+
+function ToolGroup({ messages, answeredIds, onSubmitAnswers }: { messages: Message[]; answeredIds: Set<string>; onSubmitAnswers?: (text: string) => void }) {
+  const pairs = useMemo(() => pairTools(messages), [messages]);
+  const grouped = useMemo(() => groupConsecutiveTools(pairs), [pairs]);
+  const [expandAll, setExpandAll] = useState(false);
+
+  return (
+    <div className="space-y-0.5">
+      {grouped.length > 4 && (
+        <button
+          onClick={() => setExpandAll(!expandAll)}
+          className="text-[10px] text-content-3 hover:text-content-2 mb-0.5"
+        >
+          {expandAll ? "Collapse all" : "Expand all"}
+        </button>
+      )}
+      {grouped.map((group) =>
+        group.length === 1 ? (
+          <ToolLine key={group[0].id} pair={group[0]} isAnswered={answeredIds.has(group[0].id)} onSubmitAnswers={onSubmitAnswers} forceExpand={expandAll} />
+        ) : (
+          <ToolGroupRow key={group[0].id} pairs={group} forceExpand={expandAll} />
+        ),
+      )}
+    </div>
+  );
+}
+
+function ToolGroupRow({ pairs, forceExpand }: { pairs: ToolPair[]; forceExpand: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const isOpen = expanded || forceExpand;
+
+  return (
+    <div>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 text-xs py-0.5 text-content-3 hover:text-content-2 cursor-pointer"
+      >
+        <ToolIcon name={pairs[0].name} />
+        <span className="font-mono">
+          {TOOL_VERBS[pairs[0].name]?.[1] ?? pairs[0].name} {pairs.length} files
+        </span>
+        <span className={`text-[10px] text-content-3 transition-transform duration-200 ${isOpen ? "rotate-90" : ""}`}>
+          &#9656;
+        </span>
+      </button>
+      {isOpen && (
+        <div className="ml-5 space-y-0.5">
+          {pairs.map((pair) => (
+            <ToolLine key={pair.id} pair={pair} isAnswered={false} forceExpand={false} />
+          ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+function groupConsecutiveTools(pairs: ToolPair[]): ToolPair[][] {
+  const groups: ToolPair[][] = [];
+  let current: ToolPair[] = [];
+
+  for (const pair of pairs) {
+    // AskUserQuestion always gets its own group
+    if (pair.name === "AskUserQuestion") {
+      if (current.length > 0) groups.push(current);
+      groups.push([pair]);
+      current = [];
+      continue;
+    }
+    if (current.length > 0 && current[0].name === pair.name) {
+      current.push(pair);
+    } else {
+      if (current.length > 0) groups.push(current);
+      current = [pair];
+    }
+  }
+  if (current.length > 0) groups.push(current);
+  return groups;
+}
+
+function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false }: { pair: ToolPair; isAnswered: boolean; onSubmitAnswers?: (text: string) => void; forceExpand?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasDetails = pair.input || pair.output;
+  const isOpen = expanded || forceExpand;
+
+  // Render AskUserQuestion as a prominent question card
+  if (pair.name === "AskUserQuestion") {
+    return <QuestionCard pair={pair} isAnswered={isAnswered} onSubmitAnswers={onSubmitAnswers} />;
+  }
+
+  // Render Agent tool_use as a SubAgentCard
+  if (pair.name === "Agent") {
+    return <SubAgentCard input={pair.input} output={pair.output} isActive={!pair.output} />;
+  }
+
+  // Rich renderer dispatch — always show rich content for supported tools
+  const richRenderer = getRichRenderer(pair);
+  const hasRichRenderer = richRenderer !== null;
+
+  // For tools with rich renderers, show inline by default (no expand needed)
+  // For tools without, show expandable raw JSON
+  const toolBadge = getToolBadge(pair);
+
+  return (
+    <div>
+      <button
+        onClick={() => hasDetails && setExpanded(!expanded)}
+        className={`flex items-center gap-2 text-xs py-0.5 ${
+          hasDetails ? "text-content-3 hover:text-content-2 cursor-pointer" : "text-content-3 cursor-default"
+        }`}
+        aria-expanded={isOpen}
+      >
+        <ToolIcon name={pair.name} />
+        <span className="font-mono truncate">
+          {formatToolLabel(pair.name, pair.context, false)}
+        </span>
+        {toolBadge && (
+          <span className="text-[10px] text-content-3 shrink-0">{toolBadge}</span>
+        )}
+        {hasDetails && (
+          <span className={`text-[10px] text-content-3 transition-transform duration-200 ${isOpen ? "rotate-90" : ""}`}>
+            &#9656;
+          </span>
+        )}
+      </button>
+      {isOpen && (
+        hasRichRenderer ? richRenderer : (
+          <div className="ml-5 mt-0.5 mb-1 space-y-1.5">
+            {pair.input && (
+              <pre className="text-xs bg-surface-2 rounded-lg p-3 overflow-x-auto text-content-2 border border-edge-1">
+                {formatJson(pair.input)}
+              </pre>
+            )}
+            {pair.output && (
+              <pre className="text-xs bg-surface-2 rounded-lg p-3 overflow-x-auto text-content-1 max-h-64 overflow-y-auto border border-edge-1">
+                {truncate(pair.output, 2000)}
+              </pre>
+            )}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+/** Dispatch to the appropriate rich renderer based on tool name */
+function getRichRenderer(pair: ToolPair): React.ReactNode | null {
+  switch (pair.name) {
+    case "Edit":
+      return <DiffRenderer input={pair.input} />;
+    case "Bash":
+      return <BashRenderer input={pair.input} output={pair.output} />;
+    case "Read":
+      return <ReadRenderer input={pair.input} output={pair.output} />;
+    case "Grep":
+    case "Glob":
+      return <SearchRenderer input={pair.input} output={pair.output} />;
+    default:
+      return null;
+  }
+}
+
+/** Get an optional badge for the tool line (e.g., match count for search) */
+function getToolBadge(pair: ToolPair): string | null {
+  switch (pair.name) {
+    case "Grep":
+    case "Glob":
+      return pair.output ? searchSummary(pair.input, pair.output) : null;
+    default:
+      return null;
+  }
+}
+
+function ToolIcon({ name }: { name: string }) {
+  const cls = "w-3 h-3 shrink-0 text-accent/50";
+  switch (name) {
+    case "Read":
+      return <svg className={cls} viewBox="0 0 16 16" fill="currentColor"><path d="M3 1h10a1 1 0 011 1v12a1 1 0 01-1 1H3a1 1 0 01-1-1V2a1 1 0 011-1zm1 3v1h8V4H4zm0 3v1h8V7H4zm0 3v1h5v-1H4z"/></svg>;
+    case "Edit":
+    case "Write":
+      return <svg className={cls} viewBox="0 0 16 16" fill="currentColor"><path d="M11.7 1.3a1 1 0 011.4 0l1.6 1.6a1 1 0 010 1.4l-9 9-3.4.9a.5.5 0 01-.6-.6l.9-3.4 9-9z"/></svg>;
+    case "Bash":
+      return <svg className={cls} viewBox="0 0 16 16" fill="currentColor"><path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3zm2 2l3 2-3 2v1l4-3-4-3v1zm4 5h3v1H8v-1z"/></svg>;
+    case "Grep":
+    case "Glob":
+    case "WebSearch":
+      return <svg className={cls} viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zm-1.1 3.8l3.3 3.3-1.4 1.4-3.3-3.3a5.5 5.5 0 111.4-1.4z"/></svg>;
+    default:
+      return <span className="w-3 h-3 shrink-0 text-accent/50 text-[10px] leading-3 text-center">&#10003;</span>;
+  }
+}
+
+interface ParsedQuestion {
+  question: string;
+  header?: string;
+  options?: Array<{ label: string; description?: string }>;
+  multiSelect?: boolean;
+}
+
+function QuestionCard({ pair, isAnswered, onSubmitAnswers }: { pair: ToolPair; isAnswered: boolean; onSubmitAnswers?: (text: string) => void }) {
+  const questions = parseQuestions(pair.input);
+  const [selections, setSelections] = useState<Map<number, string[]>>(new Map());
+  const [customInputs, setCustomInputs] = useState<Map<number, string>>(new Map());
+  const [submitting, setSubmitting] = useState(false);
+
+  if (questions.length === 0) {
+    return (
+      <div className="my-2 max-w-[80%] rounded-lg border border-sky-500/20 bg-sky-950/20 px-4 py-3">
+        <div className="flex items-center gap-2 text-xs text-sky-400/80 font-medium">
+          <span>?</span>
+          <span>Agent is asking</span>
+        </div>
+        <div className="text-sm text-content-3 mt-1">(could not parse question)</div>
       </div>
     );
   }
 
-  if (message.role === "tool") {
-    return (
-      <div className="max-w-[80%]">
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-300 py-1"
-        >
-          <span className={`transition-transform ${expanded ? "rotate-90" : ""}`}>
-            ▸
-          </span>
-          <span className="font-mono">{message.toolName || "tool"}</span>
-        </button>
-        {expanded && (
-          <div className="ml-4 mt-1 space-y-1">
-            {message.toolInput && (
-              <pre className="text-xs bg-slate-900 rounded p-2 overflow-x-auto text-slate-400">
-                {formatJson(message.toolInput)}
-              </pre>
+  const handleToggleOption = (qIndex: number, label: string, multiSelect: boolean) => {
+    setSelections((prev) => {
+      const next = new Map(prev);
+      const current = prev.get(qIndex) ?? [];
+      if (multiSelect) {
+        next.set(qIndex, current.includes(label) ? current.filter((l) => l !== label) : [...current, label]);
+      } else {
+        next.set(qIndex, current.includes(label) ? [] : [label]);
+      }
+      return next;
+    });
+    // Clear custom text when selecting an option
+    setCustomInputs((prev) => {
+      if (!prev.has(qIndex)) return prev;
+      const next = new Map(prev);
+      next.delete(qIndex);
+      return next;
+    });
+  };
+
+  const handleCustomInput = (qIndex: number, text: string) => {
+    setCustomInputs((prev) => {
+      const next = new Map(prev);
+      if (text) next.set(qIndex, text);
+      else next.delete(qIndex);
+      return next;
+    });
+    // Clear option selection when typing custom text
+    if (text) {
+      setSelections((prev) => {
+        if (!prev.has(qIndex)) return prev;
+        const next = new Map(prev);
+        next.delete(qIndex);
+        return next;
+      });
+    }
+  };
+
+  const hasAnyAnswer = questions.some((_, i) => {
+    const selected = selections.get(i);
+    const custom = customInputs.get(i);
+    return (selected && selected.length > 0) || (custom && custom.trim());
+  });
+
+  const handleSubmit = () => {
+    if (!hasAnyAnswer || submitting) return;
+    setSubmitting(true);
+    const text = formatAnswers(questions, selections, customInputs);
+    onSubmitAnswers?.(text);
+  };
+
+  const disabled = isAnswered || submitting;
+
+  return (
+    <div className={`my-2 max-w-[80%] space-y-3 ${disabled ? "opacity-60" : ""}`}>
+      {questions.map((q, i) => {
+        const selected = selections.get(i) ?? [];
+        const customText = customInputs.get(i) ?? "";
+
+        return (
+          <div key={i} className="rounded-lg border border-sky-500/20 bg-sky-950/20 px-4 py-3">
+            {q.header && (
+              <div className="text-xs text-sky-400/80 font-medium mb-1">{q.header}</div>
             )}
-            {message.toolOutput && (
-              <pre className="text-xs bg-slate-900 rounded p-2 overflow-x-auto text-slate-300 max-h-64 overflow-y-auto">
-                {truncate(message.toolOutput, 2000)}
-              </pre>
+            <div className="text-sm text-content-1 mb-2">{q.question}</div>
+            {q.multiSelect && (
+              <div className="text-xs text-sky-400/60 mb-1.5">(select all that apply)</div>
+            )}
+            {q.options && q.options.length > 0 && (
+              <div className="space-y-1.5">
+                {q.options.map((opt, j) => {
+                  const isSelected = selected.includes(opt.label);
+                  return (
+                    <button
+                      key={j}
+                      disabled={disabled}
+                      onClick={() => handleToggleOption(i, opt.label, !!q.multiSelect)}
+                      className={`w-full text-left px-3 py-2 rounded-md border transition-colors ${
+                        isSelected
+                          ? "border-sky-500/40 bg-sky-950/40"
+                          : "bg-surface-2/60 border-edge-1 hover:border-sky-500/30 hover:bg-surface-3"
+                      } ${disabled ? "pointer-events-none" : ""}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {isSelected && <span className="text-sky-400 text-xs shrink-0">&#10003;</span>}
+                        <div className={`text-sm ${isSelected ? "text-sky-300" : "text-content-1"}`}>{opt.label}</div>
+                      </div>
+                      {opt.description && (
+                        <div className={`text-xs text-content-3 mt-0.5 ${isSelected ? "ml-5" : ""}`}>{opt.description}</div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {/* Custom text input — always shown */}
+            {!disabled && (
+              <input
+                type="text"
+                value={customText}
+                onChange={(e) => handleCustomInput(i, e.target.value)}
+                placeholder={q.options?.length ? "Or type a custom response..." : "Type your answer..."}
+                className="w-full mt-2 bg-surface-2 border border-edge-2 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent placeholder:text-content-3"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && hasAnyAnswer) handleSubmit();
+                }}
+              />
             )}
           </div>
-        )}
+        );
+      })}
+      {/* Submit button */}
+      {!disabled && (
+        <button
+          onClick={handleSubmit}
+          disabled={!hasAnyAnswer || submitting}
+          className="px-5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors"
+        >
+          {submitting ? "Submitting..." : "Submit answers"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function EqBars() {
+  return (
+    <span className="inline-flex items-end gap-[2px] h-3 shrink-0">
+      <span className="w-[2px] h-full bg-accent rounded-full origin-bottom animate-eq" />
+      <span className="w-[2px] h-full bg-accent rounded-full origin-bottom animate-eq" style={{ animationDelay: "150ms" }} />
+      <span className="w-[2px] h-full bg-accent rounded-full origin-bottom animate-eq" style={{ animationDelay: "300ms" }} />
+    </span>
+  );
+}
+
+function ThreadStatusBadge({ status }: { status: string }) {
+  const styles: Record<string, string> = {
+    running: "bg-emerald-900/30 text-emerald-400 border-emerald-500/20",
+    pending: "bg-amber-900/30 text-amber-400 border-amber-500/20",
+    paused: "bg-surface-3 text-content-3 border-edge-2",
+    done: "bg-accent/10 text-accent border-accent/20",
+    error: "bg-red-900/30 text-red-400 border-red-500/20",
+  };
+  return (
+    <span className={`text-[11px] px-2 py-0.5 rounded-full border font-medium ${styles[status] ?? "bg-surface-3 text-content-3 border-edge-2"}`}>
+      {status}
+    </span>
+  );
+}
+
+function MessageBubble({ message }: { message: Message }) {
+  if (message.role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] bg-accent-dim/80 border-r-2 border-r-accent/40 rounded-lg px-4 py-3 text-sm whitespace-pre-wrap text-content-1">
+          {message.content}
+        </div>
       </div>
     );
   }
@@ -140,17 +584,46 @@ function MessageBubble({ message }: { message: Message }) {
   // Assistant message
   return (
     <div className="max-w-[80%]">
-      <div className="bg-slate-800 rounded-lg px-4 py-2.5 text-sm whitespace-pre-wrap">
-        {message.content}
+      <div className="bg-surface-3 rounded-lg px-4 py-3 text-sm border-l-2 border-l-accent/20">
+        <MarkdownContent content={message.content} />
       </div>
     </div>
   );
 }
 
+// ── Helpers ─────────────────────────────────────────────
+
+const TOOL_VERBS: Record<string, [string, string]> = {
+  Read: ["Reading", "Read"],
+  Edit: ["Editing", "Edited"],
+  Write: ["Writing", "Wrote"],
+  Bash: ["Running", "Ran"],
+  Grep: ["Searching", "Searched"],
+  Glob: ["Finding files", "Found files"],
+  Agent: ["Spawning agent", "Agent"],
+  WebSearch: ["Searching web", "Searched web"],
+  WebFetch: ["Fetching", "Fetched"],
+  NotebookEdit: ["Editing notebook", "Edited notebook"],
+  AskUserQuestion: ["Asking", "Asked"],
+};
+
+function formatToolLabel(name: string, context: string, active: boolean): string {
+  const [activeVerb, doneVerb] = TOOL_VERBS[name] ?? [name, name];
+  const verb = active ? activeVerb : doneVerb;
+  const ctx = shortenPath(context);
+  return ctx ? `${verb} ${ctx}` : verb;
+}
+
+function shortenPath(p: string): string {
+  if (!p || !p.includes("/")) return p;
+  const parts = p.split("/").filter(Boolean);
+  if (parts.length <= 3) return p;
+  return parts.slice(-3).join("/");
+}
+
 function extractToolContext(toolName: string, input: string): string {
   try {
     const parsed = JSON.parse(input);
-    // Show the most useful field for common tools
     if (parsed.file_path || parsed.filePath) return parsed.file_path || parsed.filePath;
     if (parsed.path) return parsed.path;
     if (parsed.command) return parsed.command.slice(0, 80);
@@ -166,6 +639,46 @@ function extractToolContext(toolName: string, input: string): string {
     if (cmdMatch) return cmdMatch[1];
     return "";
   }
+}
+
+function parseQuestions(input: string | null): ParsedQuestion[] {
+  if (!input) return [];
+  try {
+    const parsed = JSON.parse(input);
+    // Array format: {"questions": [{question, header, options}, ...]}
+    if (Array.isArray(parsed.questions)) return parsed.questions;
+    // Single question format: {"question": "..."}
+    if (parsed.question) return [{ question: parsed.question }];
+    return [];
+  } catch {
+    // Partial JSON — try to extract first question text
+    const match = input.match(/"question"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (match) {
+      return [{ question: match[1].replace(/\\"/g, '"').replace(/\\n/g, "\n") }];
+    }
+    return [];
+  }
+}
+
+function formatAnswers(questions: ParsedQuestion[], selections: Map<number, string[]>, customInputs: Map<number, string>): string {
+  const parts: string[] = [];
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
+    const selected = selections.get(i) ?? [];
+    const custom = customInputs.get(i)?.trim() ?? "";
+    const answer = selected.length > 0 ? selected.join(", ") : custom;
+    if (!answer) continue;
+    if (questions.length === 1) return answer;
+    const prefix = q.header || `Q${i + 1}`;
+    parts.push(`${prefix}: ${answer}`);
+  }
+  return parts.join("\n");
+}
+
+function extractQuestionPreview(input: string | null): string {
+  const questions = parseQuestions(input);
+  if (questions.length === 0) return "";
+  return questions[0].question;
 }
 
 function formatJson(s: string): string {

@@ -89,15 +89,28 @@ export class ClaudeAdapter implements AgentAdapter {
 
       case "result": {
         // Don't persist text — the `assistant` event already captured it.
-        // Pass session_id via deltas so the session manager can store it for --resume.
-        return {
-          messages: [],
-          deltas: [{
-            deltaType: "turn_end",
-            text: event.session_id,  // Piggyback session_id on turn_end delta
-          }],
-        };
+        // Emit metrics delta with cost/duration, then turn_end with session_id.
+        const deltas: Array<{ deltaType: string; text?: string; costUsd?: number; durationMs?: number }> = [];
+        if (event.cost_usd !== undefined || event.duration_ms !== undefined) {
+          deltas.push({
+            deltaType: "metrics",
+            costUsd: event.cost_usd,
+            durationMs: event.duration_ms,
+          });
+        }
+        deltas.push({
+          deltaType: "turn_end",
+          text: event.session_id,  // Piggyback session_id on turn_end delta
+        });
+        return { messages: [], deltas };
       }
+
+      case "system":
+        // Surface system messages as assistant messages
+        return {
+          messages: [{ role: "assistant", content: typeof event.content === "string" ? event.content : JSON.stringify(event.content ?? "") }],
+          deltas: [],
+        };
 
       case "tool_use":
         return {
@@ -125,57 +138,77 @@ export class ClaudeAdapter implements AgentAdapter {
           deltas: [],
         };
 
-      // ── Stream events (real-time deltas) ──────────────
+      // ── Stream events (real-time deltas + tool persistence) ──
       case "stream_event":
-        return { messages: [], deltas: this.handleStreamEvent(event) };
+        return this.handleStreamEvent(event);
 
       default:
+        if (event.type) {
+          console.warn(`[claude] Unknown event type: ${event.type}`, JSON.stringify(event).slice(0, 200));
+        }
         return { messages: [], deltas: [] };
     }
   }
 
   private currentBlockType: string | null = null;
+  private currentToolName: string | null = null;
+  private currentToolInput = "";
 
-  private handleStreamEvent(event: ClaudeStreamEvent): Omit<StreamDelta, "threadId">[] {
+  private handleStreamEvent(event: ClaudeStreamEvent): ParseResult {
     const inner = event.event;
-    if (!inner || !inner.type) return [];
+    if (!inner || !inner.type) return { messages: [], deltas: [] };
 
     switch (inner.type) {
       case "content_block_start": {
         const block = inner.content_block;
         this.currentBlockType = block?.type ?? null;
         if (block?.type === "tool_use" && block.name) {
-          return [{ deltaType: "tool_start", toolName: block.name }];
+          this.currentToolName = block.name;
+          this.currentToolInput = "";
+          return { messages: [], deltas: [{ deltaType: "tool_start", toolName: block.name }] };
         }
-        return [];
+        return { messages: [], deltas: [] };
       }
 
       case "content_block_delta": {
         const delta = inner.delta;
-        if (!delta) return [];
+        if (!delta) return { messages: [], deltas: [] };
         if (delta.type === "text_delta" && delta.text) {
-          return [{ deltaType: "text", text: delta.text }];
+          return { messages: [], deltas: [{ deltaType: "text", text: delta.text }] };
         }
         if (delta.type === "input_json_delta" && delta.partial_json) {
-          return [{ deltaType: "tool_input", toolInput: delta.partial_json }];
+          this.currentToolInput += delta.partial_json;
+          return { messages: [], deltas: [{ deltaType: "tool_input", toolInput: delta.partial_json }] };
         }
-        return [];
+        return { messages: [], deltas: [] };
       }
 
-      case "content_block_stop":
-        // Only emit tool_end for tool_use blocks, not text blocks
+      case "content_block_stop": {
         if (this.currentBlockType === "tool_use") {
+          // Persist tool_use as a message AND emit delta
+          const msg: ParsedMessage = {
+            role: "tool",
+            content: "",
+            toolName: this.currentToolName || "unknown",
+            toolInput: this.currentToolInput,
+          };
           this.currentBlockType = null;
-          return [{ deltaType: "tool_end" }];
+          this.currentToolName = null;
+          this.currentToolInput = "";
+          return { messages: [msg], deltas: [{ deltaType: "tool_end" }] };
         }
         this.currentBlockType = null;
-        return [];
+        return { messages: [], deltas: [] };
+      }
 
       case "message_stop":
-        return [{ deltaType: "turn_end" }];
+        return { messages: [], deltas: [{ deltaType: "turn_end" }] };
 
       default:
-        return [];
+        if (inner.type) {
+          console.warn(`[claude] Unknown stream event type: ${inner.type}`);
+        }
+        return { messages: [], deltas: [] };
     }
   }
 }
