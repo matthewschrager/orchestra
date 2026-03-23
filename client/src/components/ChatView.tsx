@@ -66,7 +66,7 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
         <div className="flex items-center gap-2 mt-1.5 text-xs text-content-3">
           <span className="text-content-2">{thread.agent}</span>
           <span className="text-content-3">&middot;</span>
-          <ThreadStatusBadge status={thread.status} />
+          <ThreadStatusBadge status={thread.status} errorMessage={thread.errorMessage} />
           {thread.branch && (
             <>
               <span className="text-content-3">&middot;</span>
@@ -75,6 +75,19 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
           )}
         </div>
       </div>
+
+      {/* Error banner when thread ended with an error */}
+      {thread.status === "error" && thread.errorMessage && (
+        <div className="mb-4 rounded-lg border border-red-500/20 bg-red-950/30 px-4 py-3">
+          <div className="flex items-center gap-2 text-xs text-red-400 font-medium mb-1">
+            <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 1a7 7 0 100 14A7 7 0 008 1zM7 5h2v4H7V5zm0 5h2v2H7v-2z"/>
+            </svg>
+            <span>Error</span>
+          </div>
+          <p className="text-sm text-red-300/80 font-mono break-all">{thread.errorMessage}</p>
+        </div>
+      )}
 
       {grouped.map((item, i) =>
         Array.isArray(item) ? (
@@ -555,7 +568,7 @@ function EqBars() {
   );
 }
 
-function ThreadStatusBadge({ status }: { status: string }) {
+function ThreadStatusBadge({ status, errorMessage }: { status: string; errorMessage?: string | null }) {
   const styles: Record<string, string> = {
     running: "bg-emerald-900/30 text-emerald-400 border-emerald-500/20",
     pending: "bg-amber-900/30 text-amber-400 border-amber-500/20",
@@ -564,13 +577,20 @@ function ThreadStatusBadge({ status }: { status: string }) {
     error: "bg-red-900/30 text-red-400 border-red-500/20",
   };
   return (
-    <span className={`text-[11px] px-2 py-0.5 rounded-full border font-medium ${styles[status] ?? "bg-surface-3 text-content-3 border-edge-2"}`}>
+    <span
+      className={`text-[11px] px-2 py-0.5 rounded-full border font-medium ${styles[status] ?? "bg-surface-3 text-content-3 border-edge-2"}`}
+      title={status === "error" && errorMessage ? errorMessage : undefined}
+    >
       {status}
     </span>
   );
 }
 
 function MessageBubble({ message }: { message: Message }) {
+  // Skip empty or artifact-only messages (e.g. '""' from JSON.stringify(""))
+  const trimmed = message.content.trim();
+  if (!trimmed || trimmed === '""') return null;
+
   if (message.role === "user") {
     return (
       <div className="flex justify-end">

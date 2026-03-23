@@ -6,6 +6,7 @@ interface UseWebSocketOpts {
   onThreadUpdate?: (thread: Thread) => void;
   onReplayDone?: (threadId: string) => void;
   onStreamDelta?: (delta: StreamDelta) => void;
+  onError?: (error: string) => void;
 }
 
 export function useWebSocket(opts: UseWebSocketOpts = {}) {
@@ -55,6 +56,9 @@ export function useWebSocket(opts: UseWebSocketOpts = {}) {
             break;
           case "stream_delta":
             optsRef.current.onStreamDelta?.(data.delta);
+            break;
+          case "error":
+            optsRef.current.onError?.(data.error);
             break;
         }
       };

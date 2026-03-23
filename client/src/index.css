@@ -36,6 +36,11 @@
   50% { transform: scaleY(1); }
 }
 
+@keyframes stop-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
 /* Safe area insets for notched devices */
 html {
   padding: env(safe-area-inset-top) env(safe-area-inset-right)

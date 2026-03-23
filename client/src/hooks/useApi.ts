@@ -88,4 +88,12 @@ export const api = {
 
   listCommands: () =>
     request<import("shared").SlashCommand[]>("/commands"),
+
+  // Filesystem
+  browsePath: (path?: string) =>
+    request<{
+      current: string;
+      parent: string | null;
+      directories: Array<{ name: string; path: string; isGitRepo: boolean }>;
+    }>(`/fs/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`),
 };
