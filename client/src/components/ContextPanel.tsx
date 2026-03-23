@@ -49,22 +49,22 @@ export function ContextPanel({ thread, onClose }: Props) {
     <>
       {/* Mobile overlay */}
       <div
-        className="fixed inset-0 bg-black/50 z-40 md:hidden"
+        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
         onClick={onClose}
       />
       <aside className={`
         fixed inset-x-0 bottom-0 z-50 max-h-[70vh] rounded-t-2xl
         md:static md:inset-auto md:max-h-none md:rounded-none
-        w-full md:w-80 border-l-0 md:border-l border-t md:border-t-0 border-slate-800
-        bg-slate-900 flex flex-col shrink-0 overflow-y-auto
+        w-full md:w-80 border-l-0 md:border-l border-t md:border-t-0 border-edge-1
+        bg-surface-1 flex flex-col shrink-0 overflow-y-auto
       `}>
-      <div className="flex items-center justify-between p-3 border-b border-slate-800">
+      <div className="flex items-center justify-between p-3 border-b border-edge-1">
         {/* Drag handle (mobile) */}
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1 rounded-full bg-slate-700 md:hidden" />
-        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1 rounded-full bg-surface-4 md:hidden" />
+        <h3 className="text-xs font-semibold text-content-3 uppercase tracking-widest">
           Context
         </h3>
-        <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-sm">
+        <button onClick={onClose} className="text-content-3 hover:text-content-1 text-sm">
           Close
         </button>
       </div>
@@ -73,21 +73,21 @@ export function ContextPanel({ thread, onClose }: Props) {
         {/* Branch info */}
         {thread.branch && (
           <Section title="Branch">
-            <code className="text-sm text-indigo-400">{thread.branch}</code>
+            <code className="text-sm text-accent font-mono">{thread.branch}</code>
           </Section>
         )}
 
         {/* Worktree path */}
         {thread.worktree && (
           <Section title="Worktree">
-            <code className="text-xs text-slate-400 break-all">{thread.worktree}</code>
+            <code className="text-xs text-content-2 break-all font-mono">{thread.worktree}</code>
           </Section>
         )}
 
         {/* Ahead/Behind */}
         {worktreeInfo && (
           <Section title="Status">
-            <div className="flex gap-3 text-sm">
+            <div className="flex gap-3 text-sm font-mono">
               <span className="text-emerald-400">
                 +{worktreeInfo.aheadBehind.ahead} ahead
               </span>
@@ -101,7 +101,7 @@ export function ContextPanel({ thread, onClose }: Props) {
         {/* Changed files */}
         {worktreeInfo && worktreeInfo.changedFiles.length > 0 && (
           <Section title={`Changed files (${worktreeInfo.changedFiles.length})`}>
-            <ul className="space-y-0.5 text-xs font-mono text-slate-300 max-h-48 overflow-y-auto">
+            <ul className="space-y-0.5 text-xs font-mono text-content-2 max-h-48 overflow-y-auto">
               {worktreeInfo.changedFiles.map((f) => (
                 <li key={f} className="truncate">
                   {f}
@@ -111,7 +111,7 @@ export function ContextPanel({ thread, onClose }: Props) {
           </Section>
         )}
 
-        {loading && <p className="text-sm text-slate-500">Loading worktree info...</p>}
+        {loading && <p className="text-sm text-content-3">Loading worktree info...</p>}
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -122,7 +122,7 @@ export function ContextPanel({ thread, onClose }: Props) {
               href={thread.prUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm text-indigo-400 hover:underline break-all"
+              className="text-sm text-accent hover:text-accent-light hover:underline break-all font-mono"
             >
               {thread.prUrl}
             </a>
@@ -132,7 +132,7 @@ export function ContextPanel({ thread, onClose }: Props) {
             <button
               onClick={handleCreatePR}
               disabled={prLoading}
-              className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg text-sm font-medium"
+              className="w-full py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base"
             >
               {prLoading ? "Creating PR..." : "Create PR"}
             </button>
@@ -143,7 +143,7 @@ export function ContextPanel({ thread, onClose }: Props) {
         {thread.worktree && thread.prUrl && (
           <button
             onClick={handleCleanup}
-            className="w-full py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm text-slate-300"
+            className="w-full py-2 bg-surface-3 hover:bg-surface-4 rounded-lg text-sm text-content-2"
           >
             Cleanup worktree
           </button>
@@ -157,7 +157,7 @@ export function ContextPanel({ thread, onClose }: Props) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">
+      <h4 className="text-[11px] font-medium text-content-3 uppercase tracking-widest mb-1.5">
         {title}
       </h4>
       {children}

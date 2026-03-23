@@ -85,4 +85,7 @@ export const api = {
 
   listAgents: () =>
     request<Array<{ name: string; detected: boolean; version: string | null }>>("/agents"),
+
+  listCommands: () =>
+    request<import("shared").SlashCommand[]>("/commands"),
 };
