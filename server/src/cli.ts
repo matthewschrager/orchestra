@@ -47,7 +47,7 @@ Usage:
   orchestra auth regenerate  Generate a new auth token
 
 Environment variables:
-  ORCHESTRA_PORT   Server port (default: 3000)
+  ORCHESTRA_PORT   Server port (default: 3847)
   ORCHESTRA_HOST   Bind address (default: 127.0.0.1, use 0.0.0.0 for remote)
 `.trim());
     break;

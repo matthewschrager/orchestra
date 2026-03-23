@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-PORT="${ORCHESTRA_PORT:-3000}"
+PORT="${ORCHESTRA_PORT:-3847}"
 
 # ── Check prerequisites ──────────────────────────────────
 

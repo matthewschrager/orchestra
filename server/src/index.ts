@@ -15,7 +15,7 @@ import {
   validateWSToken,
 } from "./auth";
 
-const PORT = parseInt(process.env.ORCHESTRA_PORT || "3000", 10);
+const PORT = parseInt(process.env.ORCHESTRA_PORT || "3847", 10);
 const HOST = process.env.ORCHESTRA_HOST || "127.0.0.1";
 const isExternal = HOST !== "127.0.0.1" && HOST !== "localhost";
 

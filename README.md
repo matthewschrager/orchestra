@@ -41,7 +41,7 @@ cd client && bun run build && cd ..
 cd server && bun run src/index.ts
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3847](http://localhost:3847).
 
 ## Development
 
@@ -68,8 +68,8 @@ This generates a bearer token stored in `~/.orchestra/auth-token`. You'll need i
 **Recommended setup:**
 - **Tailscale** — zero-config VPN, works from anywhere
 - **LAN** — accessible on local WiFi
-- **Cloudflare Tunnel** — `cloudflared tunnel --url http://localhost:3000`
-- **SSH tunnel** — `ssh -L 3000:localhost:3000 <host>`
+- **Cloudflare Tunnel** — `cloudflared tunnel --url http://localhost:3847`
+- **SSH tunnel** — `ssh -L 3847:localhost:3847 <host>`
 
 ## CLI
 
