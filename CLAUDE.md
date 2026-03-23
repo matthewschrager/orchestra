@@ -50,7 +50,9 @@ orchestra/
 │       │       ├── SearchRenderer.tsx  Grep/Glob → match list
 │       │       └── SubAgentCard.tsx    Agent → status card
 │       │   ├── AttentionInbox.tsx  Attention queue inbox
-│       │   └── MobileNav.tsx      Bottom tab navigation
+│       │   ├── MobileNav.tsx      Bottom tab navigation
+│       │   ├── MobileSessions.tsx Thread list for mobile
+│       │   └── MobileNewSession.tsx New session form for mobile
 │       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications
 └── shared/          Shared TypeScript types
 ```
@@ -79,7 +81,7 @@ cd server && bun run src/index.ts  # Production server
 - Shiki syntax highlighting lazy-loaded via module-level singleton with DOMPurify sanitization
 - Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
 - Cost/duration metrics extracted from Claude result events and displayed in StickyRunBar
-- Attention queue: AskUserQuestion/permission tool_use events detected in stream-json, persisted to `attention_required` table, broadcast via WS, resolvable via REST or WS
+- Attention queue: AskUserQuestion/permission tool_use events detected in stream-json, persisted to `attention_required` table, broadcast to ALL WS clients (cross-thread), resolvable via REST or WS with first-caller-wins race guard
 - Session IDs persisted to `session_id` column on threads table (survives server restart)
 - Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
 - Push notifications: VAPID keys auto-generated, Web Push dispatch on attention events
@@ -88,7 +90,7 @@ cd server && bun run src/index.ts  # Production server
 ## Testing
 
 ```bash
-bun test                        # Run all tests (29 server tests across 3 files)
+bun test                        # Run all tests (59 tests across 4 files)
 ```
 
 Tests cover renderer parsing functions, server-side Claude adapter event handling, filesystem route behavior, and attention queue CRUD operations.
