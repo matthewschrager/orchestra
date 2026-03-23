@@ -145,6 +145,7 @@ export interface CreateThreadRequest {
   projectId: string;
   title?: string;
   isolate?: boolean;
+  worktreeName?: string;
 }
 
 export interface WorktreeInfo {

@@ -24,10 +24,11 @@ export class WorktreeManager {
     this.worktreeRoot = worktreeRoot || DEFAULT_WORKTREE_ROOT;
   }
 
-  async create(threadId: string, repoPath: string): Promise<WorktreeInfo> {
+  async create(threadId: string, repoPath: string, name?: string): Promise<WorktreeInfo> {
     const repoName = basename(repoPath);
-    const branch = `orchestra/${threadId}`;
-    const wtPath = join(this.worktreeRoot, `${repoName}-${threadId}`);
+    const dirName = name || `${repoName}-${threadId}`;
+    const branch = `orchestra/${dirName}`;
+    const wtPath = join(this.worktreeRoot, dirName);
 
     // Create the worktree
     const proc = Bun.spawn(

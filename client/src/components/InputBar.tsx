@@ -6,19 +6,27 @@ interface Props {
   agents: Array<{ name: string; detected: boolean }>;
   thread: Thread | null;
   activeProjectId: string | null;
+  activeProjectName: string | null;
   commands: SlashCommand[];
   pendingQuestion?: boolean | null;
   onSend: (content: string) => void;
-  onNewThread: (agent: string, prompt: string, isolate: boolean, projectId?: string) => void;
+  onNewThread: (agent: string, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string) => void;
   onStop: () => void;
 }
 
-export function InputBar({ agents, thread, activeProjectId, commands, pendingQuestion, onSend, onNewThread, onStop }: Props) {
+function generateDefaultWorktreeName(projectName: string | null): string {
+  const base = projectName || "project";
+  const suffix = Math.random().toString(36).slice(2, 13);
+  return `${base}-${suffix}`;
+}
+
+export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, pendingQuestion, onSend, onNewThread, onStop }: Props) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
   const [showOptions, setShowOptions] = useState(false);
   const [agent, setAgent] = useState(agents.find((a) => a.detected)?.name ?? "claude");
   const [isolate, setIsolate] = useState(false);
+  const [worktreeName, setWorktreeName] = useState(() => generateDefaultWorktreeName(activeProjectName));
 
   const isRunning = thread?.status === "running";
 
@@ -35,7 +43,7 @@ export function InputBar({ agents, thread, activeProjectId, commands, pendingQue
       if (cmd === "/new") {
         const prompt = args || "";
         if (prompt) {
-          onNewThread(agent, prompt, isolate, activeProjectId ?? undefined);
+          onNewThread(agent, prompt, isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined);
         } else {
           setMode("new");
         }
@@ -50,12 +58,13 @@ export function InputBar({ agents, thread, activeProjectId, commands, pendingQue
     }
 
     if (mode === "new" || !thread) {
-      onNewThread(agent, text, isolate, activeProjectId ?? undefined);
+      onNewThread(agent, text, isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined);
     } else {
       onSend(text);
     }
     setInput("");
     setMode("reply");
+    if (isolate) setWorktreeName(generateDefaultWorktreeName(activeProjectName));
   };
 
   return (
@@ -160,11 +169,23 @@ export function InputBar({ agents, thread, activeProjectId, commands, pendingQue
             <input
               type="checkbox"
               checked={isolate}
-              onChange={(e) => setIsolate(e.target.checked)}
+              onChange={(e) => {
+                setIsolate(e.target.checked);
+                if (e.target.checked) setWorktreeName(generateDefaultWorktreeName(activeProjectName));
+              }}
               className="rounded"
             />
             Isolate to worktree
           </label>
+          {isolate && (
+            <input
+              type="text"
+              value={worktreeName}
+              onChange={(e) => setWorktreeName(e.target.value)}
+              className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2 font-mono flex-1 min-w-0"
+              placeholder="worktree name"
+            />
+          )}
         </div>
       )}
     </div>

@@ -59,6 +59,7 @@ export class SessionManager {
     projectId: string;
     title?: string;
     isolate?: boolean;
+    worktreeName?: string;
   }): Promise<ThreadRow> {
     const adapter = this.registry.get(opts.agent);
     if (!adapter) throw new Error(`Unknown agent: ${opts.agent}`);
@@ -70,7 +71,7 @@ export class SessionManager {
     let branch: string | null = null;
 
     if (opts.isolate) {
-      const wt = await this.worktreeManager.create(threadId, opts.repoPath);
+      const wt = await this.worktreeManager.create(threadId, opts.repoPath, opts.worktreeName);
       cwd = wt.path;
       worktree = wt.path;
       branch = wt.branch;
