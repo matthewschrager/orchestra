@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.2.0] - 2026-03-23
+
+### Added
+
+- **Rich tool renderers** — Edit diffs render as inline diffs with +/- lines and change counts; Bash output shows formatted terminal blocks with exit code badges and highlighted pass/fail lines; File reads display syntax-highlighted content via Shiki with line numbers; Search results show matched files/lines with highlighted terms
+- **Sub-agent visibility** — Agent tool calls render as lightweight status cards with running/done/error states and extracted descriptions
+- **Sticky run bar** — Persistent strip between chat and input showing current action, elapsed time, cost, and an Interrupt button; collapses to session summary when idle
+- **Streaming state reducer** — Replaced 6 separate `Map` state variables with a single `useReducer` for cleaner streaming state management
+- **Cost/duration tracking** — Server extracts `cost_usd` and `duration_ms` from Claude's `result` events and forwards as `metrics` stream deltas
+- **Unknown event logging** — Stream events that hit the `default` case now log to `console.warn` instead of being silently dropped
+- **DOMPurify sanitization** — Shiki's HTML output is sanitized before rendering via `dangerouslySetInnerHTML`
+- **Slash command input** — Text input with slash command autocomplete dropdown
+- **Project removal** — Remove projects from the sidebar with confirmation dialog
+- **38 unit tests** — Parser tests for all 5 renderers plus server-side cost extraction tests
+
+### Fixed
+
+- **Phantom "Thinking..." indicator** — Added `turnEnded` flag to streaming state so the thinking indicator disappears immediately when Claude's turn ends, rather than persisting until the process exits
+
+### Changed
+
+- **Design system polish** — Migrated from hardcoded Tailwind slate colors to semantic CSS custom properties (base, surface-1..5, edge-1..2, content-1..3, accent)
+- **Frosted glass header** — Top bar uses `backdrop-blur-xl` with semi-transparent background
+- **System event surfacing** — Claude's `system` events now render as assistant messages instead of being dropped
+
 ## [0.1.1.0] - 2026-03-23
 
 ### Added
