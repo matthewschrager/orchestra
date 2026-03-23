@@ -17,6 +17,26 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // Projects
+  listProjects: () =>
+    request<import("shared").ProjectWithStatus[]>("/projects"),
+
+  addProject: (body: import("shared").CreateProjectRequest) =>
+    request<import("shared").Project>("/projects", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  renameProject: (id: string, name: string) =>
+    request<import("shared").Project>(`/projects/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+
+  deleteProject: (id: string) =>
+    request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
+
+  // Threads
   listThreads: () => request<import("shared").Thread[]>("/threads"),
 
   getThread: (id: string) => request<import("shared").Thread>(`/threads/${id}`),
@@ -59,6 +79,9 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(fields),
     }),
+
+  archiveThread: (id: string) =>
+    request<{ ok: boolean }>(`/threads/${id}`, { method: "DELETE" }),
 
   listAgents: () =>
     request<Array<{ name: string; detected: boolean; version: string | null }>>("/agents"),
