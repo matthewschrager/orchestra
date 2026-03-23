@@ -253,7 +253,10 @@ export class ClaudeAdapter implements AgentAdapter {
       }
 
       case "message_stop":
-        return { messages: [], deltas: [{ deltaType: "turn_end" }] };
+        // Don't emit turn_end here — the top-level `result` event handles it
+        // with the session_id attached, preventing a race where the client
+        // sees "turn ended" before the session_id is captured.
+        return { messages: [], deltas: [] };
 
       // Standard Anthropic API envelope events — no content to render
       case "message_start":
