@@ -46,6 +46,29 @@ const MIGRATIONS = [
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     added_at   TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  `CREATE TABLE IF NOT EXISTS attention_required (
+    id                 TEXT PRIMARY KEY,
+    thread_id          TEXT NOT NULL REFERENCES threads(id),
+    kind               TEXT NOT NULL,
+    prompt             TEXT NOT NULL,
+    options            TEXT,
+    metadata           TEXT,
+    continuation_token TEXT,
+    resolved_at        TEXT,
+    resolution         TEXT,
+    expires_at         TEXT,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_attention_pending
+    ON attention_required(thread_id, resolved_at) WHERE resolved_at IS NULL`,
+  `CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id         TEXT PRIMARY KEY,
+    endpoint   TEXT NOT NULL UNIQUE,
+    keys_p256dh TEXT NOT NULL,
+    keys_auth   TEXT NOT NULL,
+    user_agent  TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
 ];
 
 // Column migration — safe to run multiple times
@@ -59,6 +82,11 @@ const COLUMN_MIGRATIONS = [
     table: "threads",
     column: "error_message",
     sql: `ALTER TABLE threads ADD COLUMN error_message TEXT`,
+  },
+  {
+    table: "threads",
+    column: "session_id",
+    sql: `ALTER TABLE threads ADD COLUMN session_id TEXT`,
   },
 ];
 
@@ -290,6 +318,117 @@ export function updateThread(db: DB, id: string, fields: Partial<ThreadRow>) {
   );
 }
 
+// ── Attention helpers ────────────────────────────────────
+
+export interface AttentionRow {
+  id: string;
+  thread_id: string;
+  kind: string;
+  prompt: string;
+  options: string | null;
+  metadata: string | null;
+  continuation_token: string | null;
+  resolved_at: string | null;
+  resolution: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+const DEFAULT_TTL_HOURS = 24;
+
+export function createAttentionItem(
+  db: DB,
+  item: {
+    threadId: string;
+    kind: string;
+    prompt: string;
+    options?: string[] | null;
+    metadata?: Record<string, unknown> | null;
+    continuationToken?: string | null;
+  },
+): AttentionRow {
+  const id = nanoid(16);
+  const expiresAt = new Date(Date.now() + DEFAULT_TTL_HOURS * 60 * 60 * 1000).toISOString();
+  db.query(
+    `INSERT INTO attention_required (id, thread_id, kind, prompt, options, metadata, continuation_token, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    item.threadId,
+    item.kind,
+    item.prompt,
+    item.options ? JSON.stringify(item.options) : null,
+    item.metadata ? JSON.stringify(item.metadata) : null,
+    item.continuationToken ?? null,
+    expiresAt,
+  );
+  return getAttentionItem(db, id)!;
+}
+
+export function getAttentionItem(db: DB, id: string): AttentionRow | null {
+  return db.query("SELECT * FROM attention_required WHERE id = ?").get(id) as AttentionRow | null;
+}
+
+export function getPendingAttention(db: DB, threadId?: string): AttentionRow[] {
+  if (threadId) {
+    return db
+      .query("SELECT * FROM attention_required WHERE thread_id = ? AND resolved_at IS NULL ORDER BY created_at DESC")
+      .all(threadId) as AttentionRow[];
+  }
+  return db
+    .query("SELECT * FROM attention_required WHERE resolved_at IS NULL ORDER BY created_at DESC")
+    .all() as AttentionRow[];
+}
+
+export function resolveAttentionItem(
+  db: DB,
+  id: string,
+  resolution: object,
+): AttentionRow | null {
+  // Idempotent — if already resolved, return existing
+  const existing = getAttentionItem(db, id);
+  if (!existing) return null;
+  if (existing.resolved_at) return existing;
+
+  db.query(
+    "UPDATE attention_required SET resolved_at = datetime('now'), resolution = ? WHERE id = ? AND resolved_at IS NULL",
+  ).run(JSON.stringify(resolution), id);
+
+  return getAttentionItem(db, id);
+}
+
+export function orphanAttentionItems(db: DB, threadId: string): number {
+  const resolution = JSON.stringify({ type: "orphaned", reason: "agent_process_exited" });
+  const result = db.query(
+    "UPDATE attention_required SET resolved_at = datetime('now'), resolution = ? WHERE thread_id = ? AND resolved_at IS NULL",
+  ).run(resolution, threadId);
+  return result.changes;
+}
+
+export function expireAttentionItems(db: DB): number {
+  const resolution = JSON.stringify({ type: "expired" });
+  const result = db.query(
+    "UPDATE attention_required SET resolved_at = datetime('now'), resolution = ? WHERE resolved_at IS NULL AND expires_at < datetime('now')",
+  ).run(resolution);
+  return result.changes;
+}
+
+export function attentionRowToApi(row: AttentionRow): import("shared").AttentionItem {
+  return {
+    id: row.id,
+    threadId: row.thread_id,
+    kind: row.kind as import("shared").AttentionKind,
+    prompt: row.prompt,
+    options: row.options ? safeJsonParse(row.options) as string[] | null : null,
+    metadata: row.metadata ? safeJsonParse(row.metadata) as Record<string, unknown> | null : null,
+    continuationToken: row.continuation_token,
+    resolvedAt: row.resolved_at,
+    resolution: row.resolution ? safeJsonParse(row.resolution) as import("shared").AttentionResolution | null : null,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+  };
+}
+
 // ── Row types (DB columns use snake_case) ───────────────
 
 export interface ThreadRow {
@@ -304,6 +443,7 @@ export interface ThreadRow {
   pid: number | null;
   status: string;
   error_message: string | null;
+  session_id: string | null;
   archived_at: string | null;
   created_at: string;
   updated_at: string;

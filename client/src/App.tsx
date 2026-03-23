@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { Message, ProjectWithStatus, SlashCommand, StreamDelta, Thread, TurnMetrics } from "shared";
+import type { AttentionResolution, Message, ProjectWithStatus, SlashCommand, StreamDelta, Thread, TurnMetrics, WSServerMessage } from "shared";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { api } from "./hooks/useApi";
+import { useAttention } from "./hooks/useAttention";
 import { ProjectSidebar } from "./components/ProjectSidebar";
 import { ChatView } from "./components/ChatView";
 import { ContextPanel } from "./components/ContextPanel";
@@ -9,6 +10,8 @@ import { InputBar } from "./components/InputBar";
 import { SlashCommandInput } from "./components/SlashCommandInput";
 import { AuthGate } from "./components/AuthGate";
 import { StickyRunBar } from "./components/StickyRunBar";
+import { MobileNav } from "./components/MobileNav";
+import { AttentionInbox } from "./components/AttentionInbox";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -178,9 +181,13 @@ function AppInner() {
   const [contextOpen, setContextOpen] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
   const [streaming, dispatchStreaming] = useReducer(streamingReducer, initialStreamingState);
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
+
+  // Attention system — cross-thread pending questions/permissions
+  const attention = useAttention();
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
@@ -238,6 +245,9 @@ function AppInner() {
     onError: useCallback((error: string) => {
       setError(error);
     }, []),
+    onRawMessage: useCallback((msg: WSServerMessage) => {
+      attention.handleWSMessage(msg);
+    }, []), // eslint-disable-line react-hooks/exhaustive-deps
   });
 
   // Subscribe to active thread
@@ -312,6 +322,15 @@ function AppInner() {
   const handleStopThread = async () => {
     if (!activeThreadId) return;
     send({ type: "stop_thread", threadId: activeThreadId });
+  };
+
+  const handleResolveAttention = (attentionId: string, resolution: AttentionResolution) => {
+    send({ type: "resolve_attention", attentionId, resolution });
+  };
+
+  const handleNavigateToThread = (threadId: string) => {
+    setActiveThreadId(threadId);
+    setMobileTab("sessions");
   };
 
   const handleAddProject = async (path: string) => {
@@ -464,8 +483,8 @@ function AppInner() {
           onClose={() => setSidebarOpen(false)}
         />
 
-        {/* Main area */}
-        <div className="flex-1 flex flex-col min-w-0">
+        {/* Main area — pb-14 on mobile for bottom nav */}
+        <div className="flex-1 flex flex-col min-w-0 pb-14 md:pb-0">
           {activeThread ? (
             <>
               <ChatView
@@ -517,6 +536,47 @@ function AppInner() {
           />
         )}
       </div>
+
+      {/* Mobile Attention Inbox overlay */}
+      {mobileTab === "inbox" && (
+        <div className="md:hidden fixed inset-0 top-0 bottom-14 z-20 bg-base overflow-y-auto"
+          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        >
+          <div className="sticky top-0 bg-base border-b border-edge-1 px-4 py-3 z-10">
+            <h2 className="text-lg font-semibold text-content-1">
+              Inbox {attention.pendingCount > 0 && (
+                <span className="ml-2 text-sm font-normal text-content-3">
+                  {attention.pendingCount} pending
+                </span>
+              )}
+            </h2>
+          </div>
+          <AttentionInbox
+            items={attention.items}
+            onResolve={handleResolveAttention}
+            onNavigateToThread={handleNavigateToThread}
+          />
+        </div>
+      )}
+
+      {/* Mobile Bottom Navigation */}
+      <MobileNav
+        activeTab={mobileTab}
+        onTabChange={setMobileTab}
+        attentionCount={attention.pendingCount}
+      />
+
+      {/* Desktop attention bell (top-right) */}
+      {attention.pendingCount > 0 && (
+        <div className="hidden md:block fixed top-3 right-4 z-30">
+          <button
+            onClick={() => {/* TODO: desktop attention drawer */}}
+            className="relative px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-medium hover:bg-amber-500/20"
+          >
+            {attention.pendingCount} pending
+          </button>
+        </div>
+      )}
 
       {/* Add Project Dialog */}
       {showAddProject && (

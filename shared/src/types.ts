@@ -21,7 +21,7 @@ export interface CreateProjectRequest {
 
 // ── Thread ──────────────────────────────────────────────
 
-export type ThreadStatus = "running" | "pending" | "paused" | "done" | "error";
+export type ThreadStatus = "running" | "pending" | "paused" | "waiting" | "done" | "error";
 
 export interface Thread {
   id: string;
@@ -94,14 +94,40 @@ export type WSClientMessage =
   | { type: "subscribe"; threadId: string; lastSeq?: number }
   | { type: "unsubscribe"; threadId: string }
   | { type: "send_message"; threadId: string; content: string }
-  | { type: "stop_thread"; threadId: string };
+  | { type: "stop_thread"; threadId: string }
+  | { type: "resolve_attention"; attentionId: string; resolution: AttentionResolution };
 
 export type WSServerMessage =
   | { type: "message"; message: Message }
   | { type: "thread_updated"; thread: Thread }
   | { type: "error"; error: string }
   | { type: "replay_done"; threadId: string }
-  | { type: "stream_delta"; delta: StreamDelta };
+  | { type: "stream_delta"; delta: StreamDelta }
+  | { type: "attention_required"; attention: AttentionItem }
+  | { type: "attention_resolved"; attentionId: string; threadId: string };
+
+// ── Attention ──────────────────────────────────────────
+
+export type AttentionKind = "ask_user" | "permission" | "confirmation";
+
+export interface AttentionItem {
+  id: string;
+  threadId: string;
+  kind: AttentionKind;
+  prompt: string;
+  options: string[] | null;        // For ask_user: list of option labels
+  metadata: Record<string, unknown> | null; // Tool name, command, file path, etc.
+  continuationToken: string | null; // session_id for --resume
+  resolvedAt: string | null;
+  resolution: AttentionResolution | null;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+export type AttentionResolution =
+  | { type: "user"; optionIndex?: number; text?: string; action?: "allow" | "deny" }
+  | { type: "orphaned"; reason: string }
+  | { type: "expired" };
 
 // ── Slash Commands ─────────────────────────────────────
 
