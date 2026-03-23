@@ -14,6 +14,7 @@ export interface ActiveSession {
   threadId: string;
   agentProc: AgentProcess;
   lineBuffer: string;
+  stderrBuffer: string;
   sessionId: string | null;
   cwd: string;
 }
@@ -27,7 +28,6 @@ export class SessionManager {
   private messageListeners: Set<MessageListener> = new Set();
   private threadListeners: Set<ThreadListener> = new Set();
   private streamDeltaListeners: Set<StreamDeltaListener> = new Set();
-  private mainWorktreeLocks: Map<string, string> = new Map();
 
   constructor(
     private db: DB,
@@ -56,17 +56,7 @@ export class SessionManager {
     let worktree: string | null = null;
     let branch: string | null = null;
 
-    // Per-project main worktree concurrency check
-    if (!opts.isolate) {
-      const existingLock = this.mainWorktreeLocks.get(opts.projectId);
-      if (existingLock && this.sessions.has(existingLock)) {
-        throw new Error(
-          `Main worktree for this project is in use by thread ${existingLock}. ` +
-            `Isolate this thread to a worktree, or stop the other thread first.`,
-        );
-      }
-      this.mainWorktreeLocks.set(opts.projectId, threadId);
-    } else {
+    if (opts.isolate) {
       const wt = await this.worktreeManager.create(threadId, opts.repoPath);
       cwd = wt.path;
       worktree = wt.path;
@@ -98,7 +88,6 @@ export class SessionManager {
     if (!session) return;
     session.agentProc.proc.kill();
     this.sessions.delete(threadId);
-    this.clearMainWorktreeLock(threadId);
     updateThread(this.db, threadId, { status: "done", pid: null });
     this.notifyThread(threadId);
   }
@@ -183,6 +172,7 @@ export class SessionManager {
       threadId,
       agentProc,
       lineBuffer: "",
+      stderrBuffer: "",
       sessionId: resumeSessionId,
       cwd,
     };
@@ -190,6 +180,9 @@ export class SessionManager {
 
     // Start reading stdout
     this.readStream(session, adapter);
+
+    // Collect stderr for error reporting
+    this.collectStderr(session);
 
     // Watch for exit — pass PID to distinguish from superseded processes
     agentProc.proc.exited.then((exitCode) => {
@@ -252,6 +245,10 @@ export class SessionManager {
       }
     } catch (err) {
       console.error(`Stream read error for thread ${session.threadId}:`, err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      updateThread(this.db, session.threadId, {
+        error_message: `Stream read error: ${errMsg.slice(0, 200)}`,
+      });
     }
   }
 
@@ -288,25 +285,48 @@ export class SessionManager {
     }
   }
 
+  private async collectStderr(session: ActiveSession): Promise<void> {
+    const stderr = session.agentProc.proc.stderr;
+    const decoder = new TextDecoder();
+    try {
+      for await (const chunk of stderr) {
+        session.stderrBuffer += decoder.decode(chunk, { stream: true });
+        // Cap at 4KB to avoid unbounded growth
+        if (session.stderrBuffer.length > 4096) {
+          session.stderrBuffer = session.stderrBuffer.slice(-4096);
+        }
+      }
+    } catch {
+      // stderr closed — expected on normal exit
+    }
+  }
+
   private handleExit(threadId: string, exitCode: number, pid: number): void {
     // Only act if this is still the current session (not superseded by sendMessage)
     const current = this.sessions.get(threadId);
     if (current && current.agentProc.proc.pid !== pid) return;
 
-    this.sessions.delete(threadId);
-    this.clearMainWorktreeLock(threadId);
-    const status = exitCode === 0 ? "done" : "error";
-    updateThread(this.db, threadId, { status, pid: null });
-    this.notifyThread(threadId);
-  }
+    let errorMessage: string | null = null;
 
-  private clearMainWorktreeLock(threadId: string): void {
-    for (const [projectId, lockedThread] of this.mainWorktreeLocks) {
-      if (lockedThread === threadId) {
-        this.mainWorktreeLocks.delete(projectId);
-        break;
+    // Surface stderr as an assistant error message when process fails
+    if (exitCode !== 0) {
+      const stderrText = current?.stderrBuffer.trim().slice(-2000) ?? "";
+      errorMessage = stderrText
+        ? `Process exited with code ${exitCode}: ${stderrText.slice(0, 200)}`
+        : `Process exited with code ${exitCode}`;
+
+      if (stderrText) {
+        this.persistMessage(threadId, {
+          role: "assistant",
+          content: `**Process exited with code ${exitCode}**\n\n\`\`\`\n${stderrText}\n\`\`\``,
+        });
       }
     }
+
+    this.sessions.delete(threadId);
+    const status = exitCode === 0 ? "done" : "error";
+    updateThread(this.db, threadId, { status, pid: null, error_message: errorMessage });
+    this.notifyThread(threadId);
   }
 
   private persistSessionId(threadId: string, sessionId: string): void {
@@ -361,7 +381,11 @@ export class SessionManager {
           // Already dead
         }
       }
-      updateThread(this.db, thread.id, { status: "error", pid: null });
+      updateThread(this.db, thread.id, {
+        status: "error",
+        pid: null,
+        error_message: "Process was orphaned (server restarted while thread was running)",
+      });
     }
   }
 

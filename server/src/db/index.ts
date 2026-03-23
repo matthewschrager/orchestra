@@ -55,6 +55,11 @@ const COLUMN_MIGRATIONS = [
     column: "project_id",
     sql: `ALTER TABLE threads ADD COLUMN project_id TEXT REFERENCES projects(id)`,
   },
+  {
+    table: "threads",
+    column: "error_message",
+    sql: `ALTER TABLE threads ADD COLUMN error_message TEXT`,
+  },
 ];
 
 const INDEX_MIGRATIONS = [
@@ -298,6 +303,7 @@ export interface ThreadRow {
   pr_url: string | null;
   pid: number | null;
   status: string;
+  error_message: string | null;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
@@ -330,6 +336,7 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
     prUrl: row.pr_url,
     pid: row.pid,
     status: row.status as import("shared").ThreadStatus,
+    errorMessage: row.error_message,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
