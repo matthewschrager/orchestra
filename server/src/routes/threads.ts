@@ -52,8 +52,20 @@ export function createThreadRoutes(
       return c.json({ error: "agent and prompt are required" }, 400);
     }
 
-    // Default repo path to cwd
+    // Default repo path to cwd, validate it's a git repo
     const repoPath = body.repoPath || process.cwd();
+    try {
+      const check = Bun.spawnSync(["git", "rev-parse", "--git-dir"], {
+        cwd: repoPath,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (check.exitCode !== 0) {
+        return c.json({ error: "repoPath is not a git repository" }, 400);
+      }
+    } catch {
+      return c.json({ error: "repoPath does not exist or is not accessible" }, 400);
+    }
 
     try {
       const thread = await sessionManager.startThread({

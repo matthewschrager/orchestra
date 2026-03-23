@@ -29,7 +29,7 @@ const MIGRATIONS = [
     metadata    TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
-  `CREATE INDEX IF NOT EXISTS idx_messages_thread_seq ON messages(thread_id, seq)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_thread_seq ON messages(thread_id, seq)`,
   `CREATE TABLE IF NOT EXISTS agent_configs (
     name     TEXT PRIMARY KEY,
     command  TEXT NOT NULL,
@@ -76,21 +76,14 @@ export function getMessages(db: DB, threadId: string, afterSeq = 0) {
     .all(threadId, afterSeq) as MessageRow[];
 }
 
-export function getNextSeq(db: DB, threadId: string): number {
-  const row = db
-    .query("SELECT COALESCE(MAX(seq), 0) as max_seq FROM messages WHERE thread_id = ?")
-    .get(threadId) as { max_seq: number } | null;
-  return (row?.max_seq ?? 0) + 1;
-}
-
-export function insertMessage(db: DB, msg: MessageRow) {
-  db.query(
+export function insertMessage(db: DB, msg: Omit<MessageRow, "seq">): number {
+  const result = db.query(
     `INSERT INTO messages (id, thread_id, seq, role, content, tool_name, tool_input, tool_output, metadata, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+     VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE thread_id = ?), ?, ?, ?, ?, ?, ?, datetime('now'))`,
   ).run(
     msg.id,
     msg.thread_id,
-    msg.seq,
+    msg.thread_id, // for the subquery
     msg.role,
     msg.content,
     msg.tool_name,
@@ -98,6 +91,11 @@ export function insertMessage(db: DB, msg: MessageRow) {
     msg.tool_output,
     msg.metadata,
   );
+  // Return the assigned seq
+  const row = db
+    .query("SELECT seq FROM messages WHERE id = ?")
+    .get(msg.id) as { seq: number };
+  return row.seq;
 }
 
 export function updateThread(db: DB, id: string, fields: Partial<ThreadRow>) {
@@ -174,7 +172,15 @@ export function messageRowToApi(row: MessageRow): import("shared").Message {
     toolName: row.tool_name,
     toolInput: row.tool_input,
     toolOutput: row.tool_output,
-    metadata: row.metadata ? JSON.parse(row.metadata) : null,
+    metadata: row.metadata ? safeJsonParse(row.metadata) : null,
     createdAt: row.created_at,
   };
+}
+
+function safeJsonParse(s: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
 }

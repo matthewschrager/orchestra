@@ -105,7 +105,7 @@ export function InputBar({ agents, thread, onSend, onNewThread, onStop }: Props)
               : "Send a message..."
           }
           rows={2}
-          className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-slate-500"
+          className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-slate-500"
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();

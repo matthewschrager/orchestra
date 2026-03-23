@@ -49,7 +49,7 @@ export function AuthGate({ onAuthenticated }: Props) {
           value={token}
           onChange={(e) => setToken(e.target.value)}
           placeholder="Paste auth token"
-          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-slate-500"
+          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-slate-500"
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSubmit();
           }}

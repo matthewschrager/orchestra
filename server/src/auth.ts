@@ -1,5 +1,6 @@
 import { join } from "path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { timingSafeEqual } from "crypto";
 import { nanoid } from "nanoid";
 
 const ORCHESTRA_DIR = join(process.env.HOME || "~", ".orchestra");
@@ -42,7 +43,7 @@ export function isLocalRequest(req: Request, ip: unknown): boolean {
       ? (ip as { address: string }).address
       : null;
 
-  if (!remoteAddr) return true; // Can't determine — assume local
+  if (!remoteAddr) return false; // Can't determine — require auth to be safe
   return (
     remoteAddr === "127.0.0.1" ||
     remoteAddr === "::1" ||
@@ -59,7 +60,8 @@ export function validateToken(req: Request, expectedToken: string): boolean {
   if (!authHeader) return false;
   const [scheme, token] = authHeader.split(" ", 2);
   if (scheme?.toLowerCase() !== "bearer") return false;
-  return token === expectedToken;
+  if (!token) return false;
+  return safeCompare(token, expectedToken);
 }
 
 /**
@@ -68,5 +70,11 @@ export function validateToken(req: Request, expectedToken: string): boolean {
  */
 export function validateWSToken(url: URL, expectedToken: string): boolean {
   const token = url.searchParams.get("token");
-  return token === expectedToken;
+  if (!token) return false;
+  return safeCompare(token, expectedToken);
+}
+
+function safeCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }

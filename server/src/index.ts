@@ -56,8 +56,8 @@ app.route("/api/agents", createAgentRoutes(registry));
 // Static frontend (production)
 app.use("/*", serveStatic({ root: "./static" }));
 // SPA fallback
-app.get("*", (c) => {
-  return c.html(Bun.file("./static/index.html").text());
+app.get("*", async (c) => {
+  return c.html(await Bun.file("./static/index.html").text());
 });
 
 // ── Server ──────────────────────────────────────────────
@@ -108,8 +108,10 @@ if (isExternal) {
 }
 
 // Cleanup on exit
-process.on("SIGINT", () => {
+function shutdown() {
   sessionManager.stopAll();
   server.stop();
   process.exit(0);
-});
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

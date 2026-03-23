@@ -236,7 +236,7 @@ function EmptyState({
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           placeholder="What would you like to build?"
-          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-4 text-sm resize-none h-32 focus:outline-none focus:border-slate-500"
+          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-4 text-sm resize-none h-32 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-slate-500"
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && prompt.trim()) {
               onNewThread(defaultAgent, prompt.trim(), isolate);

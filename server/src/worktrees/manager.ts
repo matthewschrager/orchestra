@@ -116,13 +116,22 @@ export class WorktreeManager {
       });
       await addProc.exited;
 
-      const commitMsg = opts.commitMessage || thread.title;
+      const commitMsg = (opts.commitMessage || thread.title || "Orchestra commit").trim();
+      if (!commitMsg) throw new Error("Commit message cannot be empty");
+
       const commitProc = Bun.spawn(["git", "commit", "-m", commitMsg], {
         cwd: thread.worktree,
         stdout: "pipe",
         stderr: "pipe",
       });
-      await commitProc.exited;
+      const [, commitStderr] = await Promise.all([
+        new Response(commitProc.stdout).text(),
+        new Response(commitProc.stderr).text(),
+        commitProc.exited,
+      ]);
+      if (commitProc.exitCode !== 0) {
+        throw new Error(`Failed to commit: ${commitStderr}`);
+      }
     }
 
     // Push
@@ -130,10 +139,13 @@ export class WorktreeManager {
       ["git", "push", "-u", "origin", thread.branch!],
       { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
     );
-    await pushProc.exited;
+    const [, pushStderr] = await Promise.all([
+      new Response(pushProc.stdout).text(),
+      new Response(pushProc.stderr).text(),
+      pushProc.exited,
+    ]);
     if (pushProc.exitCode !== 0) {
-      const stderr = await new Response(pushProc.stderr).text();
-      throw new Error(`Failed to push: ${stderr}`);
+      throw new Error(`Failed to push: ${pushStderr}`);
     }
 
     // Create PR
@@ -143,13 +155,17 @@ export class WorktreeManager {
       ["gh", "pr", "create", "--title", title, "--body", body],
       { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
     );
-    const prUrl = (await new Response(prProc.stdout).text()).trim();
-    await prProc.exited;
+    const [prStdout, prStderr] = await Promise.all([
+      new Response(prProc.stdout).text(),
+      new Response(prProc.stderr).text(),
+      prProc.exited,
+    ]);
 
     if (prProc.exitCode !== 0) {
-      const stderr = await new Response(prProc.stderr).text();
-      throw new Error(`Failed to create PR: ${stderr}`);
+      throw new Error(`Failed to create PR: ${prStderr}`);
     }
+
+    const prUrl = prStdout.trim();
 
     updateThread(this.db, threadId, { pr_url: prUrl });
     return prUrl;

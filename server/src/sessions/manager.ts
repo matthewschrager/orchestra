@@ -1,7 +1,6 @@
 import { nanoid } from "nanoid";
 import type { DB, MessageRow, ThreadRow } from "../db";
 import {
-  getNextSeq,
   getThread,
   insertMessage,
   updateThread,
@@ -182,11 +181,9 @@ export class SessionManager {
     threadId: string,
     parsed: Pick<ParsedMessage, "content"> & Partial<ParsedMessage> & { role: string },
   ): void {
-    const seq = getNextSeq(this.db, threadId);
-    const msg: MessageRow = {
+    const msgData = {
       id: nanoid(12),
       thread_id: threadId,
-      seq,
       role: parsed.role,
       content: parsed.content,
       tool_name: parsed.toolName ?? null,
@@ -196,11 +193,15 @@ export class SessionManager {
       created_at: new Date().toISOString(),
     };
 
+    let seq: number;
     try {
-      insertMessage(this.db, msg);
+      seq = insertMessage(this.db, msgData);
     } catch (err) {
       console.error("Failed to persist message:", err);
+      return;
     }
+
+    const msg: MessageRow = { ...msgData, seq };
 
     for (const fn of this.messageListeners) {
       try {
@@ -236,13 +237,29 @@ export class SessionManager {
       if (thread.pid) {
         try {
           process.kill(thread.pid, 0); // Check if alive
-          // Process still alive — kill it
-          process.kill(thread.pid, "SIGTERM");
+          // Verify the process is actually an agent before killing
+          if (this.isAgentProcess(thread.pid, thread.agent)) {
+            process.kill(thread.pid, "SIGTERM");
+          }
         } catch {
           // Already dead
         }
       }
       updateThread(this.db, thread.id, { status: "error", pid: null });
+    }
+  }
+
+  private isAgentProcess(pid: number, agentName: string): boolean {
+    try {
+      const proc = Bun.spawnSync(["ps", "-p", String(pid), "-o", "args="], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const args = new TextDecoder().decode(proc.stdout).trim();
+      // Only match if the command line contains the specific agent name
+      return args.includes(agentName);
+    } catch {
+      return false; // Can't verify — don't kill
     }
   }
 }
