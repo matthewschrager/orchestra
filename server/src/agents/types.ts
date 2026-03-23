@@ -1,5 +1,5 @@
 import type { Subprocess } from "bun";
-import type { StreamDelta } from "shared";
+import type { AttentionKind, StreamDelta } from "shared";
 
 export interface SpawnOpts {
   cwd: string;
@@ -21,9 +21,17 @@ export interface ParsedMessage {
   metadata?: Record<string, unknown>;
 }
 
+export interface AttentionEvent {
+  kind: AttentionKind;
+  prompt: string;
+  options?: string[];
+  metadata?: Record<string, unknown>;
+}
+
 export interface ParseResult {
   messages: ParsedMessage[];
   deltas: Omit<StreamDelta, "threadId">[];
+  attention?: AttentionEvent;
 }
 
 export interface AgentAdapter {

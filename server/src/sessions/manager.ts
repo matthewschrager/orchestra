@@ -1,14 +1,19 @@
 import { nanoid } from "nanoid";
-import type { DB, MessageRow, ThreadRow } from "../db";
+import type { DB, MessageRow, ThreadRow, AttentionRow } from "../db";
 import {
   getThread,
+  getAttentionItem,
   insertMessage,
   updateThread,
+  createAttentionItem,
+  resolveAttentionItem,
+  orphanAttentionItems,
+  attentionRowToApi,
 } from "../db";
 import type { AgentRegistry } from "../agents/registry";
-import type { AgentAdapter, AgentProcess, ParsedMessage } from "../agents/types";
+import type { AgentAdapter, AgentProcess, AttentionEvent, ParsedMessage } from "../agents/types";
 import type { WorktreeManager } from "../worktrees/manager";
-import type { StreamDelta } from "shared";
+import type { AttentionItem, StreamDelta } from "shared";
 
 export interface ActiveSession {
   threadId: string;
@@ -17,17 +22,25 @@ export interface ActiveSession {
   stderrBuffer: string;
   sessionId: string | null;
   cwd: string;
+  stallTimer: ReturnType<typeof setTimeout> | null;
 }
 
 type MessageListener = (threadId: string, message: MessageRow) => void;
 type ThreadListener = (thread: ThreadRow) => void;
 type StreamDeltaListener = (threadId: string, delta: StreamDelta) => void;
+type AttentionListener = (threadId: string, attention: AttentionItem) => void;
+type AttentionResolvedListener = (attentionId: string, threadId: string) => void;
+
+const STALL_TIMEOUT_MS = Number(process.env.ORCHESTRA_STALL_TIMEOUT ?? 30_000);
 
 export class SessionManager {
   private sessions: Map<string, ActiveSession> = new Map();
   private messageListeners: Set<MessageListener> = new Set();
   private threadListeners: Set<ThreadListener> = new Set();
   private streamDeltaListeners: Set<StreamDeltaListener> = new Set();
+  private attentionListeners: Set<AttentionListener> = new Set();
+  private attentionResolvedListeners: Set<AttentionResolvedListener> = new Set();
+  private mainWorktreeLocks: Map<string, string> = new Map();
 
   constructor(
     private db: DB,
@@ -87,8 +100,11 @@ export class SessionManager {
   stopThread(threadId: string): void {
     const session = this.sessions.get(threadId);
     if (!session) return;
+    this.clearStallTimer(session);
     session.agentProc.proc.kill();
     this.sessions.delete(threadId);
+    this.clearMainWorktreeLock(threadId);
+    orphanAttentionItems(this.db, threadId);
     updateThread(this.db, threadId, { status: "done", pid: null });
     this.notifyThread(threadId);
   }
@@ -151,6 +167,54 @@ export class SessionManager {
     return () => this.streamDeltaListeners.delete(fn);
   }
 
+  onAttention(fn: AttentionListener): () => void {
+    this.attentionListeners.add(fn);
+    return () => this.attentionListeners.delete(fn);
+  }
+
+  onAttentionResolved(fn: AttentionResolvedListener): () => void {
+    this.attentionResolvedListeners.add(fn);
+    return () => this.attentionResolvedListeners.delete(fn);
+  }
+
+  /** Resolve an attention item and resume the agent with the user's response. */
+  resolveAttention(attentionId: string, resolution: object): AttentionRow | null {
+    // Check if already resolved BEFORE attempting — prevents double-resume race
+    const existing = getAttentionItem(this.db, attentionId);
+    if (!existing) return null;
+    if (existing.resolved_at) return existing; // Already resolved by another caller
+
+    const resolved = resolveAttentionItem(this.db, attentionId, resolution);
+    if (!resolved || !resolved.thread_id) return null;
+
+    // Only resume if WE actually performed the resolution (resolved_at was null before)
+    const threadId = resolved.thread_id;
+    const res = resolution as { type?: string; text?: string; optionIndex?: number; action?: string };
+    if (res.type === "user") {
+      const thread = getThread(this.db, threadId);
+      if (thread && (thread.status === "waiting" || thread.status === "done")) {
+        let answer: string;
+        if (res.action) {
+          answer = `User ${res.action === "allow" ? "approved" : "denied"} the action.`;
+        } else if (res.optionIndex !== undefined && resolved.options) {
+          const options = JSON.parse(resolved.options) as string[];
+          answer = `User selected: "${options[res.optionIndex] ?? `option ${res.optionIndex}`}"`;
+        } else if (res.text) {
+          answer = res.text;
+        } else {
+          answer = "User acknowledged.";
+        }
+
+        this.sendMessage(threadId, answer);
+      }
+    }
+
+    // Notify listeners so WS clients learn about the resolution
+    this.notifyAttentionResolved(attentionId, threadId);
+
+    return resolved;
+  }
+
   // ── Private ───────────────────────────────────────────
 
   private spawnTurn(
@@ -176,6 +240,7 @@ export class SessionManager {
       stderrBuffer: "",
       sessionId: resumeSessionId,
       cwd,
+      stallTimer: null,
     };
     this.sessions.set(threadId, session);
 
@@ -207,7 +272,10 @@ export class SessionManager {
         session.lineBuffer = lines.pop() || "";
 
         for (const line of lines) {
-          const { messages, deltas } = adapter.parseOutput(line);
+          // Any output resets stall timer
+          this.clearStallTimer(session);
+
+          const { messages, deltas, attention } = adapter.parseOutput(line);
           for (const msg of messages) {
             this.persistMessage(session.threadId, msg);
           }
@@ -221,6 +289,9 @@ export class SessionManager {
               threadId: session.threadId,
             });
           }
+          if (attention) {
+            this.handleAttentionEvent(session, attention);
+          }
         }
       }
 
@@ -229,7 +300,7 @@ export class SessionManager {
       if (!current || current.agentProc.proc.pid !== pid) return;
 
       if (session.lineBuffer.trim()) {
-        const { messages, deltas } = adapter.parseOutput(session.lineBuffer);
+        const { messages, deltas, attention } = adapter.parseOutput(session.lineBuffer);
         for (const msg of messages) {
           this.persistMessage(session.threadId, msg);
         }
@@ -242,6 +313,9 @@ export class SessionManager {
             ...delta,
             threadId: session.threadId,
           });
+        }
+        if (attention) {
+          this.handleAttentionEvent(session, attention);
         }
       }
     } catch (err) {
@@ -307,6 +381,10 @@ export class SessionManager {
     const current = this.sessions.get(threadId);
     if (!current || current.agentProc.proc.pid !== pid) return;
 
+    this.clearStallTimer(current);
+    this.sessions.delete(threadId);
+    this.clearMainWorktreeLock(threadId);
+
     let errorMessage: string | null = null;
 
     // Surface stderr as an assistant error message when process fails
@@ -324,28 +402,96 @@ export class SessionManager {
       }
     }
 
-    this.sessions.delete(threadId);
-    const status = exitCode === 0 ? "done" : "error";
-    updateThread(this.db, threadId, { status, pid: null, error_message: errorMessage });
+    // Check if thread is in "waiting" state (attention pending) — don't overwrite
+    const thread = getThread(this.db, threadId);
+    if (thread?.status === "waiting") {
+      // Process exited while waiting for user input — this is expected
+      updateThread(this.db, threadId, { pid: null });
+    } else {
+      // Orphan any pending attention items for this thread
+      const orphaned = orphanAttentionItems(this.db, threadId);
+      if (orphaned > 0) {
+        console.log(`Orphaned ${orphaned} attention items for thread ${threadId}`);
+      }
+      const status = exitCode === 0 ? "done" : "error";
+      updateThread(this.db, threadId, { status, pid: null, error_message: errorMessage });
+    }
     this.notifyThread(threadId);
   }
 
   private persistSessionId(threadId: string, sessionId: string): void {
-    // Store in a simple key-value on the thread row's branch field as a fallback
-    // (or use a dedicated column — for now, store in the DB via a simple query)
     this.db.query(
-      "UPDATE threads SET updated_at = datetime('now') WHERE id = ?",
-    ).run(threadId);
-    // Store session_id in a way that survives process exit
-    // Use a simple in-memory map that persists across spawns
-    if (!this._sessionIds) this._sessionIds = new Map();
-    this._sessionIds.set(threadId, sessionId);
+      "UPDATE threads SET session_id = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(sessionId, threadId);
   }
 
-  private _sessionIds?: Map<string, string>;
-
   private getPersistedSessionId(threadId: string): string | null {
-    return this._sessionIds?.get(threadId) ?? null;
+    const row = this.db.query(
+      "SELECT session_id FROM threads WHERE id = ?",
+    ).get(threadId) as { session_id: string | null } | null;
+    return row?.session_id ?? null;
+  }
+
+  private handleAttentionEvent(session: ActiveSession, event: AttentionEvent): void {
+    try {
+      const row = createAttentionItem(this.db, {
+        threadId: session.threadId,
+        kind: event.kind,
+        prompt: event.prompt,
+        options: event.options ?? null,
+        metadata: event.metadata ?? null,
+        continuationToken: session.sessionId,
+      });
+
+      // Update thread status to "waiting"
+      updateThread(this.db, session.threadId, { status: "waiting" });
+      this.notifyThread(session.threadId);
+
+      // Notify attention listeners
+      const item = attentionRowToApi(row);
+      this.notifyAttention(session.threadId, item);
+
+      // Start stall timer — if no more output, kill the process
+      this.startStallTimer(session);
+    } catch (err) {
+      console.error(`Failed to create attention item for thread ${session.threadId}:`, err);
+      updateThread(this.db, session.threadId, { status: "error" });
+      this.notifyThread(session.threadId);
+    }
+  }
+
+  private startStallTimer(session: ActiveSession): void {
+    this.clearStallTimer(session);
+    session.stallTimer = setTimeout(() => {
+      console.log(`Stall timeout (${STALL_TIMEOUT_MS}ms) for thread ${session.threadId} — killing process`);
+      const current = this.sessions.get(session.threadId);
+      if (current && current.agentProc.proc.pid === session.agentProc.proc.pid) {
+        session.agentProc.proc.kill();
+      }
+    }, STALL_TIMEOUT_MS);
+  }
+
+  private clearStallTimer(session: ActiveSession): void {
+    if (session.stallTimer) {
+      clearTimeout(session.stallTimer);
+      session.stallTimer = null;
+    }
+  }
+
+  private notifyAttention(threadId: string, item: AttentionItem): void {
+    for (const fn of this.attentionListeners) {
+      try {
+        fn(threadId, item);
+      } catch {}
+    }
+  }
+
+  private notifyAttentionResolved(attentionId: string, threadId: string): void {
+    for (const fn of this.attentionResolvedListeners) {
+      try {
+        fn(attentionId, threadId);
+      } catch {}
+    }
   }
 
   private notifyThread(threadId: string): void {
@@ -366,9 +512,19 @@ export class SessionManager {
     }
   }
 
+  private clearMainWorktreeLock(threadId: string): void {
+    // Remove worktree lock if this thread holds one
+    for (const [key, holder] of this.mainWorktreeLocks) {
+      if (holder === threadId) {
+        this.mainWorktreeLocks.delete(key);
+        break;
+      }
+    }
+  }
+
   private recoverOrphanedThreads(): void {
     const running = this.db
-      .query("SELECT * FROM threads WHERE status = 'running'")
+      .query("SELECT * FROM threads WHERE status IN ('running', 'waiting')")
       .all() as ThreadRow[];
 
     for (const thread of running) {
@@ -382,6 +538,8 @@ export class SessionManager {
           // Already dead
         }
       }
+      // Orphan any pending attention items so they don't linger in the inbox
+      orphanAttentionItems(this.db, thread.id);
       updateThread(this.db, thread.id, {
         status: "error",
         pid: null,

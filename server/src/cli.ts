@@ -67,6 +67,7 @@ Orchestra — Agent-first development interface
 
 Usage:
   orchestra [serve]          Start the Orchestra server (default)
+  orchestra serve --tunnel   Start with Cloudflare Tunnel for remote access
   orchestra add <path>       Register a project (git repo directory)
   orchestra auth show        Show the current auth token
   orchestra auth regenerate  Generate a new auth token
