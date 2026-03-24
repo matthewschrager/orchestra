@@ -1,15 +1,20 @@
-import type { Subprocess } from "bun";
 import type { AttentionKind, StreamDelta } from "shared";
 
-export interface SpawnOpts {
+export interface StartOpts {
   cwd: string;
   prompt: string;
   resumeSessionId?: string;
-  env?: Record<string, string>;
 }
 
-export interface AgentProcess {
-  proc: Subprocess<"ignore", "pipe", "pipe">;
+export interface AgentSession {
+  /** Async iterator of SDK messages (typed as unknown for adapter-agnosticism) */
+  messages: AsyncIterable<unknown>;
+  /** Cancel the running query */
+  abort: () => void;
+  /** Stateful per-session message parser */
+  parseMessage(msg: unknown): ParseResult;
+  /** Session ID for resume (set after first result) */
+  sessionId?: string;
 }
 
 export interface ParsedMessage {
@@ -35,16 +40,10 @@ export interface ParseResult {
   sessionId?: string;
 }
 
-export interface AgentOutputParser {
-  parseOutput(line: string): ParseResult;
-}
-
 export interface AgentAdapter {
   name: string;
   detect(): Promise<boolean>;
   getVersion(): Promise<string | null>;
-  spawn(opts: SpawnOpts): AgentProcess;
-  createParser(): AgentOutputParser;
+  start(opts: StartOpts): AgentSession;
   supportsResume(): boolean;
-  getBypassFlags(): string[];
 }

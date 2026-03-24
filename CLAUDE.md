@@ -1,6 +1,6 @@
 # Orchestra
 
-Agent-first development interface — a local web/mobile UI that orchestrates CLI agent sessions.
+Agent-first development interface — a local web/mobile UI that orchestrates agent sessions via the Claude Agent SDK.
 
 ## Project structure
 
@@ -17,7 +17,7 @@ orchestra/
 │       │   ├── claude.ts   Claude Code adapter
 │       │   └── registry.ts Agent registry
 │       ├── sessions/       Session lifecycle management
-│       │   └── manager.ts  Process spawn, stdin/stdout routing, persistence
+│       │   └── manager.ts  SDK session orchestration, stream consumption, persistence
 │       ├── worktrees/      Git worktree management
 │       │   └── manager.ts  Create, status, PR, cleanup
 │       ├── utils/          Shared utilities
@@ -72,9 +72,9 @@ cd server && bun run src/index.ts  # Production server
 
 ## Key design decisions
 
-- Agents are spawned as CLI processes (not SDK calls) — Orchestra wraps locally installed CLIs
-- Claude Code uses `-p` one-shot mode with `--resume` for multi-turn (Bun's stdin pipe doesn't work with Claude's interactive mode)
-- Claude Code flags: `--output-format stream-json --include-partial-messages --dangerously-skip-permissions --verbose`
+- Agents use `@anthropic-ai/claude-agent-sdk` (pinned v0.2.81) — SDK manages subprocess lifecycle internally
+- Claude Code sessions use `query()` with `includePartialMessages: true` for streaming, `resume` for multi-turn
+- SDK options: `permissionMode: "bypassPermissions"`, `cwd` per-call for multi-project isolation
 - Multi-project: single server manages multiple registered git repos via `projects` table
 - Multiple threads can run concurrently on the same project's main worktree
 - Real-time streaming via ephemeral WebSocket deltas (not persisted to DB)
@@ -83,8 +83,8 @@ cd server && bun run src/index.ts  # Production server
 - Rich tool renderers parse stream-json tool data into visual components (diffs, terminal blocks, search results)
 - Shiki syntax highlighting lazy-loaded via module-level singleton with DOMPurify sanitization
 - Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
-- Duration metrics extracted from Claude result events and displayed in StickyRunBar
-- Attention queue: AskUserQuestion/permission tool_use events detected in stream-json, persisted to `attention_required` table, broadcast to ALL WS clients (cross-thread), resolvable via REST or WS with first-caller-wins race guard
+- Cost/duration metrics extracted from Claude result events and displayed in StickyRunBar
+- Attention queue: AskUserQuestion/permission tool_use events detected in SDK message stream, persisted to `attention_required` table, broadcast to ALL WS clients (cross-thread), resolvable via REST or WS with first-caller-wins race guard
 - Session IDs persisted to `session_id` column on threads table (survives server restart)
 - Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
 - Push notifications: VAPID keys auto-generated, Web Push dispatch on attention events
@@ -93,11 +93,14 @@ cd server && bun run src/index.ts  # Production server
 - AskUserQuestion rendered inline as interactive cards with answer buttons
 - WebSocket heartbeat prevents idle disconnection
 - Worktree isolation: detectWorktree returns name for port/data separation, expanded port hash range (9999 slots)
+- Session abort uses AbortController; `aborted` flag distinguishes user-stop from SDK error
+- Inactivity timeout (5 min) replaces PID-based health check for hung SDK iterators
+- `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
 
 ## Testing
 
 ```bash
-bun test                        # Run all tests (113 tests across 9 files)
+bun test                        # Run all tests
 ```
 
-Tests cover renderer parsing functions, server-side Claude adapter event handling, filesystem route behavior, attention queue CRUD operations, and slash command input logic.
+Tests cover renderer parsing functions, server-side Claude SDK message parsing, SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, and slash command input logic.
