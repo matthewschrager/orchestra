@@ -27,8 +27,9 @@ export class WorktreeManager {
   async create(threadId: string, repoPath: string, name?: string): Promise<WorktreeInfo> {
     const repoName = basename(repoPath);
     const dirName = name || `${repoName}-${threadId}`;
-    const branch = `orchestra/${dirName}`;
-    const wtPath = join(this.worktreeRoot, dirName);
+    // Support absolute paths (from directory picker) or names relative to worktreeRoot
+    const wtPath = dirName.startsWith("/") ? dirName : join(this.worktreeRoot, dirName);
+    const branch = `orchestra/${basename(wtPath)}`;
 
     // Create the worktree
     const proc = Bun.spawn(

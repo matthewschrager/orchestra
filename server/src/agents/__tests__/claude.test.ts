@@ -129,6 +129,16 @@ describe("ClaudeAdapter.parseOutput", () => {
     expect(deltas).toHaveLength(0);
   });
 
+  test("message_stop does not emit turn_end (result event handles it)", () => {
+    const line = JSON.stringify({
+      type: "stream_event",
+      event: { type: "message_stop" },
+    });
+    const { messages, deltas } = adapter.parseOutput(line);
+    expect(messages).toHaveLength(0);
+    expect(deltas).toHaveLength(0);
+  });
+
   test("handles non-JSON line as raw assistant output", () => {
     const { messages } = adapter.parseOutput("some raw text output");
     expect(messages).toHaveLength(1);
