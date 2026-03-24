@@ -22,10 +22,36 @@ import {
 } from "./auth";
 
 import { TunnelManager, generateQRCodeAscii } from "./tunnel/manager";
+import { detectWorktree } from "./utils/git";
+import { join } from "path";
+import { homedir } from "os";
 
-const PORT = parseInt(process.env.ORCHESTRA_PORT || "3847", 10);
+// ── Worktree isolation ──────────────────────────────────
+// When running from a git worktree (e.g., dev:server in a worktree), auto-isolate
+// to prevent sharing the DB/port with the main server or other worktrees.
+const worktreeName = detectWorktree(process.cwd());
+const DEFAULT_PORT = 3847;
+
+let effectiveDataDir = process.env.ORCHESTRA_DATA_DIR || undefined;
+let effectivePort = parseInt(process.env.ORCHESTRA_PORT || String(DEFAULT_PORT), 10);
+
+if (worktreeName && !process.env.ORCHESTRA_DATA_DIR) {
+  // Use a worktree-specific data directory
+  effectiveDataDir = join(homedir(), ".orchestra", `worktree-${worktreeName}`);
+  console.log(`[worktree] Detected worktree "${worktreeName}" — using isolated data dir: ${effectiveDataDir}`);
+}
+if (worktreeName && !process.env.ORCHESTRA_PORT) {
+  // Hash the worktree name to a stable port offset (range 1-9999)
+  let hash = 0;
+  for (const ch of worktreeName) hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
+  const offset = (Math.abs(hash) % 9999) + 1;
+  effectivePort = DEFAULT_PORT + offset;
+  console.log(`[worktree] Using isolated port: ${effectivePort}`);
+}
+
+const PORT = effectivePort;
 const HOST = process.env.ORCHESTRA_HOST || "127.0.0.1";
-const DATA_DIR = process.env.ORCHESTRA_DATA_DIR || undefined;
+const DATA_DIR = effectiveDataDir;
 const useTunnel = process.argv.includes("--tunnel");
 // When tunnel is active, force auth on ALL requests — tunnel makes remote traffic appear local
 const isExternal = useTunnel || HOST !== "127.0.0.1" && HOST !== "localhost";
@@ -92,38 +118,51 @@ app.get("*", async (c) => {
 
 const wsHandler = createWSHandler(sessionManager, db);
 
-const server = Bun.serve({
-  port: PORT,
-  hostname: HOST,
-  fetch(req, server) {
-    const url = new URL(req.url);
+let server: ReturnType<typeof Bun.serve>;
+try {
+  server = Bun.serve({
+    port: PORT,
+    hostname: HOST,
+    fetch(req, server) {
+      const url = new URL(req.url);
 
-    // WebSocket upgrade
-    if (url.pathname === "/ws") {
-      // Auth check for external WS connections (tunnel traffic has CF-Connecting-IP)
-      if (authToken) {
-        const isTunneled = !!req.headers.get("cf-connecting-ip");
-        const ip = server.requestIP(req);
-        const isLocal =
-          !ip ||
-          ip.address === "127.0.0.1" ||
-          ip.address === "::1" ||
-          ip.address === "::ffff:127.0.0.1";
+      // WebSocket upgrade
+      if (url.pathname === "/ws") {
+        // Auth check for external WS connections (tunnel traffic has CF-Connecting-IP)
+        if (authToken) {
+          const isTunneled = !!req.headers.get("cf-connecting-ip");
+          const ip = server.requestIP(req);
+          const isLocal =
+            !ip ||
+            ip.address === "127.0.0.1" ||
+            ip.address === "::1" ||
+            ip.address === "::ffff:127.0.0.1";
 
-        if ((isTunneled || !isLocal) && !validateWSToken(url, authToken)) {
-          return new Response("Unauthorized", { status: 401 });
+          if ((isTunneled || !isLocal) && !validateWSToken(url, authToken)) {
+            return new Response("Unauthorized", { status: 401 });
+          }
         }
+
+        if (server.upgrade(req, { data: { subscriptions: new Set() } }))
+          return undefined;
+        return new Response("WebSocket upgrade failed", { status: 400 });
       }
 
-      if (server.upgrade(req, { data: { subscriptions: new Set() } }))
-        return undefined;
-      return new Response("WebSocket upgrade failed", { status: 400 });
+      return app.fetch(req, { ip: server.requestIP(req) });
+    },
+    websocket: wsHandler,
+  });
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes("EADDRINUSE") || msg.includes("address already in use")) {
+    console.error(`\nPort ${PORT} is already in use.`);
+    if (worktreeName) {
+      console.error(`This may be a port hash collision from worktree "${worktreeName}".`);
+      console.error(`Fix: set ORCHESTRA_PORT=<free-port> to override.`);
     }
-
-    return app.fetch(req, { ip: server.requestIP(req) });
-  },
-  websocket: wsHandler,
-});
+  }
+  throw err;
+}
 
 console.log(`Orchestra server running at http://${HOST}:${PORT}`);
 if (DATA_DIR) console.log(`Data directory: ${DATA_DIR}`);
@@ -169,8 +208,11 @@ setInterval(() => {
 // Run once on startup
 expireAttentionItems(db);
 
-// Cleanup on exit
+// Cleanup on exit — set shuttingDown FIRST to prevent race where Claude child
+// processes (in same process group) exit from the signal before stopAll() runs,
+// causing handleExit to record false SIGTERM errors.
 function shutdown() {
+  sessionManager.shuttingDown = true;
   tunnelManager.stop();
   sessionManager.stopAll();
   server.stop();

@@ -95,7 +95,8 @@ export type WSClientMessage =
   | { type: "unsubscribe"; threadId: string }
   | { type: "send_message"; threadId: string; content: string }
   | { type: "stop_thread"; threadId: string }
-  | { type: "resolve_attention"; attentionId: string; resolution: AttentionResolution };
+  | { type: "resolve_attention"; attentionId: string; resolution: AttentionResolution }
+  | { type: "ping" };
 
 export type WSServerMessage =
   | { type: "message"; message: Message }

@@ -1,9 +1,15 @@
-import type { AgentAdapter, AgentProcess, AttentionEvent, ParsedMessage, ParseResult, SpawnOpts } from "./types";
-import type { StreamDelta } from "shared";
+import type {
+  AgentAdapter,
+  AgentOutputParser,
+  AgentProcess,
+  AttentionEvent,
+  ParsedMessage,
+  ParseResult,
+  SpawnOpts,
+} from "./types";
 
 /** Tool names that trigger attention events */
 const ASK_USER_TOOLS = new Set(["AskUserQuestion", "AskUserTool"]);
-const PERMISSION_TOOLS = new Set(["BashTool", "EditTool", "WriteTool"]);
 
 export class ClaudeAdapter implements AgentAdapter {
   name = "claude";
@@ -53,6 +59,28 @@ export class ClaudeAdapter implements AgentAdapter {
     return { proc };
   }
 
+  createParser(): AgentOutputParser {
+    return new ClaudeParser();
+  }
+
+  supportsResume(): boolean {
+    return true;
+  }
+
+  getBypassFlags(): string[] {
+    return ["--dangerously-skip-permissions"];
+  }
+}
+
+class ClaudeParser implements AgentOutputParser {
+  private readonly activeToolBlocks = new Map<number, ActiveToolBlock>();
+  private readonly activeTextBlocks = new Map<number, string>();
+  /** Maps tool_use_id → tool_name for pairing and deduplication */
+  private readonly toolUseNames = new Map<string, string>();
+  /** tool_use IDs already persisted via stream_events — skip in assistant summary */
+  private readonly persistedToolUseIds = new Set<string>();
+  private readonly emittedAttentionKeys = new Set<string>();
+
   parseOutput(line: string): ParseResult {
     const trimmed = line.trim();
     if (!trimmed) return { messages: [], deltas: [] };
@@ -65,55 +93,117 @@ export class ClaudeAdapter implements AgentAdapter {
       return { messages: [{ role: "assistant", content: trimmed }], deltas: [] };
     }
 
-    return this.handleEvent(data);
+    const result = this.handleEvent(data);
+    if (typeof data.session_id === "string" && data.session_id) {
+      result.sessionId ??= data.session_id;
+    }
+    return result;
   }
-
-  supportsResume(): boolean {
-    return true;
-  }
-
-  getBypassFlags(): string[] {
-    return ["--dangerously-skip-permissions"];
-  }
-
-  // ── Private ─────────────────────────────────────────
 
   private handleEvent(event: ClaudeStreamEvent): ParseResult {
     switch (event.type) {
       case "assistant": {
-        const textParts = (event.message?.content ?? [])
-          .filter((b): b is { type: "text"; text: string } => b.type === "text")
-          .map((b) => b.text);
-        if (textParts.length === 0) return { messages: [], deltas: [] };
-        return { messages: [{ role: "assistant", content: textParts.join("") }], deltas: [] };
+        // Text is already persisted via stream_event content_block_stop.
+        // Only extract tool_use blocks here — these may not arrive via
+        // stream_events in multi-turn conversations (e.g., after subagent execution).
+        const blocks = event.message?.content ?? [];
+        const messages: ParsedMessage[] = [];
+        let attention: AttentionEvent | undefined;
+
+        for (const block of blocks) {
+          if (block.type === "tool_use" && block.name) {
+            // Skip if already persisted via stream_event content_block_stop
+            if (block.id && this.persistedToolUseIds.has(block.id)) {
+              continue;
+            }
+            const toolInput = serializeToolInput(block.input);
+            messages.push({
+              role: "tool",
+              content: "",
+              toolName: block.name,
+              toolInput,
+            });
+            if (block.id) this.toolUseNames.set(block.id, block.name);
+            if (!attention) {
+              const parsedInput = safeParseObject(toolInput);
+              if (parsedInput) {
+                attention = this.maybeExtractAskUserAttention(
+                  block.name,
+                  parsedInput,
+                  block.id,
+                  toolInput,
+                );
+              }
+            }
+          }
+        }
+
+        if (messages.length === 0) return { messages: [], deltas: [] };
+        const result: ParseResult = { messages, deltas: [] };
+        if (attention) result.attention = attention;
+        return result;
       }
 
-      case "user":
-        return { messages: [], deltas: [] }; // Echo of our own input — skip
+      case "user": {
+        // Extract tool_result blocks — Claude wraps tool outputs in user events.
+        // Pair each result with its tool_use via tool_use_id → toolName lookup.
+        const userBlocks = event.message?.content ?? [];
+        const userMessages: ParsedMessage[] = [];
+
+        for (const block of userBlocks) {
+          if (block.type === "tool_result") {
+            const outputContent = typeof block.content === "string"
+              ? block.content
+              : Array.isArray(block.content)
+                ? block.content.filter(b => b.type === "text").map(b => b.text ?? "").join("")
+                : "";
+            // Look up the tool name from the corresponding tool_use
+            const toolName = block.tool_use_id
+              ? this.toolUseNames.get(block.tool_use_id)
+              : undefined;
+            userMessages.push({
+              role: "tool",
+              content: outputContent,
+              toolName,
+              toolOutput: outputContent || undefined,
+            });
+          }
+        }
+
+        return { messages: userMessages, deltas: [] };
+      }
 
       case "result": {
         // Don't persist text — the `assistant` event already captured it.
         // Emit metrics delta with cost/duration, then turn_end with session_id.
         const deltas: Array<{ deltaType: string; text?: string; costUsd?: number; durationMs?: number }> = [];
-        if (event.cost_usd !== undefined || event.duration_ms !== undefined) {
+        const costUsd = event.cost_usd ?? event.total_cost_usd;
+        if (costUsd !== undefined || event.duration_ms !== undefined) {
           deltas.push({
             deltaType: "metrics",
-            costUsd: event.cost_usd,
+            costUsd,
             durationMs: event.duration_ms,
           });
         }
+        // Always emit turn_end on result — don't gate on session_id presence.
+        // session_id is piggybacked when available, but the turn is over regardless.
         deltas.push({
           deltaType: "turn_end",
-          text: event.session_id,  // Piggyback session_id on turn_end delta
+          text: event.session_id || undefined,
         });
 
         const resultParse: ParseResult = { messages: [], deltas };
 
-        // Check permission_denials for AskUserQuestion (in -p mode, it gets denied)
+        // Fallback: some AskUserQuestion calls only surface in permission_denials.
         if (event.permission_denials && Array.isArray(event.permission_denials)) {
           for (const denial of event.permission_denials) {
-            if (ASK_USER_TOOLS.has(denial.tool_name) && denial.tool_input) {
-              resultParse.attention = this.extractAskUserAttention(denial.tool_input);
+            const attention = this.maybeExtractAskUserAttention(
+              denial.tool_name,
+              denial.tool_input,
+              denial.tool_use_id,
+            );
+            if (attention) {
+              resultParse.attention = attention;
               break;
             }
           }
@@ -123,7 +213,8 @@ export class ClaudeAdapter implements AgentAdapter {
       }
 
       case "system": {
-        // Surface system messages as assistant messages
+        // Surface user-facing system messages, but ignore init envelopes that only
+        // carry metadata like tools/session_id.
         const sysContent = typeof event.content === "string"
           ? event.content
           : event.content ? JSON.stringify(event.content) : "";
@@ -137,21 +228,27 @@ export class ClaudeAdapter implements AgentAdapter {
       case "tool_use": {
         const toolName = event.tool?.name ?? "unknown";
         const toolInput = event.tool?.input as Record<string, unknown> | undefined;
+        const serializedInput = serializeToolInput(toolInput);
         const result: ParseResult = {
           messages: [
             {
               role: "tool",
               content: "",
               toolName,
-              toolInput: JSON.stringify(toolInput ?? {}),
+              toolInput: serializedInput,
             },
           ],
           deltas: [],
         };
 
-        // Detect AskUserQuestion → attention event
-        if (ASK_USER_TOOLS.has(toolName) && toolInput) {
-          result.attention = this.extractAskUserAttention(toolInput);
+        const attention = this.maybeExtractAskUserAttention(
+          toolName,
+          toolInput,
+          event.tool?.id,
+          serializedInput,
+        );
+        if (attention) {
+          result.attention = attention;
         }
 
         return result;
@@ -174,6 +271,10 @@ export class ClaudeAdapter implements AgentAdapter {
       case "stream_event":
         return this.handleStreamEvent(event);
 
+      // Known event types that carry no user-visible content
+      case "rate_limit_event":
+        return { messages: [], deltas: [] };
+
       default:
         if (event.type) {
           console.warn(`[claude] Unknown event type: ${event.type}`, JSON.stringify(event).slice(0, 200));
@@ -182,7 +283,18 @@ export class ClaudeAdapter implements AgentAdapter {
     }
   }
 
-  private extractAskUserAttention(toolInput: Record<string, unknown>): AttentionEvent {
+  private maybeExtractAskUserAttention(
+    toolName: string,
+    toolInput: Record<string, unknown> | undefined,
+    toolUseId?: string,
+    serializedInput?: string,
+  ): AttentionEvent | undefined {
+    if (!ASK_USER_TOOLS.has(toolName) || !toolInput) return undefined;
+
+    const dedupeKey = toolUseId || `${toolName}:${serializedInput ?? serializeToolInput(toolInput)}`;
+    if (this.emittedAttentionKeys.has(dedupeKey)) return undefined;
+    this.emittedAttentionKeys.add(dedupeKey);
+
     const questions = toolInput.questions as Array<{
       question?: string;
       header?: string;
@@ -191,7 +303,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
     const firstQ = questions?.[0];
     const prompt = firstQ?.question ?? "Agent needs your input";
-    const options = firstQ?.options?.map((o) => o.label ?? "") ?? [];
+    const options = firstQ?.options?.map((o) => o.label ?? "").filter(Boolean) ?? [];
 
     return {
       kind: "ask_user",
@@ -201,22 +313,27 @@ export class ClaudeAdapter implements AgentAdapter {
     };
   }
 
-  private currentBlockType: string | null = null;
-  private currentToolName: string | null = null;
-  private currentToolInput = "";
-
   private handleStreamEvent(event: ClaudeStreamEvent): ParseResult {
     const inner = event.event;
     if (!inner || !inner.type) return { messages: [], deltas: [] };
+    const blockKey = inner.index ?? -1;
 
     switch (inner.type) {
       case "content_block_start": {
         const block = inner.content_block;
-        this.currentBlockType = block?.type ?? null;
         if (block?.type === "tool_use" && block.name) {
-          this.currentToolName = block.name;
-          this.currentToolInput = "";
+          this.activeToolBlocks.set(blockKey, {
+            id: block.id,
+            name: block.name,
+            initialInput: serializeToolInput(block.input),
+            streamedInput: "",
+          });
+          // Track tool_use_id → name so user-event tool_results can be paired
+          if (block.id) this.toolUseNames.set(block.id, block.name);
           return { messages: [], deltas: [{ deltaType: "tool_start", toolName: block.name }] };
+        }
+        if (block?.type === "text") {
+          this.activeTextBlocks.set(blockKey, "");
         }
         return { messages: [], deltas: [] };
       }
@@ -225,40 +342,74 @@ export class ClaudeAdapter implements AgentAdapter {
         const delta = inner.delta;
         if (!delta) return { messages: [], deltas: [] };
         if (delta.type === "text_delta" && delta.text) {
+          // Accumulate text for persistence on content_block_stop
+          const existing = this.activeTextBlocks.get(blockKey);
+          if (existing !== undefined) {
+            this.activeTextBlocks.set(blockKey, existing + delta.text);
+          }
           return { messages: [], deltas: [{ deltaType: "text", text: delta.text }] };
         }
         if (delta.type === "input_json_delta" && delta.partial_json) {
-          this.currentToolInput += delta.partial_json;
+          const toolBlock = this.activeToolBlocks.get(blockKey);
+          if (toolBlock) {
+            toolBlock.streamedInput += delta.partial_json;
+          }
           return { messages: [], deltas: [{ deltaType: "tool_input", toolInput: delta.partial_json }] };
+        }
+        if (delta.type === "thinking_delta" || delta.type === "signature_delta") {
+          return { messages: [], deltas: [] };
         }
         return { messages: [], deltas: [] };
       }
 
       case "content_block_stop": {
-        if (this.currentBlockType === "tool_use") {
-          // Persist tool_use as a message AND emit delta
+        // Handle completed tool blocks
+        const toolBlock = this.activeToolBlocks.get(blockKey);
+        if (toolBlock) {
+          const toolInput = finalizeToolInput(toolBlock);
           const msg: ParsedMessage = {
             role: "tool",
             content: "",
-            toolName: this.currentToolName || "unknown",
-            toolInput: this.currentToolInput,
+            toolName: toolBlock.name,
+            toolInput,
           };
-          this.currentBlockType = null;
-          this.currentToolName = null;
-          this.currentToolInput = "";
-          return { messages: [msg], deltas: [{ deltaType: "tool_end" }] };
+          this.activeToolBlocks.delete(blockKey);
+          if (toolBlock.id) this.persistedToolUseIds.add(toolBlock.id);
+
+          let attention: AttentionEvent | undefined;
+          const parsedToolInput = safeParseObject(toolInput);
+          if (parsedToolInput) {
+            attention = this.maybeExtractAskUserAttention(
+              toolBlock.name,
+              parsedToolInput,
+              toolBlock.id,
+              toolInput,
+            );
+          }
+
+          return {
+            messages: [msg],
+            deltas: [{ deltaType: "tool_end" }],
+            attention,
+          };
         }
-        this.currentBlockType = null;
+
+        // Handle completed text blocks — persist accumulated text
+        const textContent = this.activeTextBlocks.get(blockKey);
+        if (textContent !== undefined) {
+          this.activeTextBlocks.delete(blockKey);
+          if (textContent.trim()) {
+            return {
+              messages: [{ role: "assistant", content: textContent }],
+              deltas: [],
+            };
+          }
+        }
+
         return { messages: [], deltas: [] };
       }
 
       case "message_stop":
-        // Don't emit turn_end here — the top-level `result` event handles it
-        // with the session_id attached, preventing a race where the client
-        // sees "turn ended" before the session_id is captured.
-        return { messages: [], deltas: [] };
-
-      // Standard Anthropic API envelope events — no content to render
       case "message_start":
       case "message_delta":
         return { messages: [], deltas: [] };
@@ -276,14 +427,28 @@ export class ClaudeAdapter implements AgentAdapter {
 
 interface ClaudeStreamEvent {
   type: string;
+  subtype?: string;
   message?: {
-    content: Array<{ type: string; text?: string }>;
+    role?: string;
+    content: Array<{
+      type: string;
+      text?: string;
+      // tool_use fields
+      id?: string;
+      name?: string;
+      input?: unknown;
+      // tool_result fields
+      tool_use_id?: string;
+      content?: string | Array<{ type: string; text?: string }>;
+      is_error?: boolean;
+    }>;
   };
   result?: string | { text?: string };
   cost_usd?: number;
+  total_cost_usd?: number;
   duration_ms?: number;
   session_id?: string;
-  tool?: { name?: string; input?: unknown };
+  tool?: { id?: string; name?: string; input?: unknown };
   tool_name?: string;
   content?: unknown;
   // permission_denials from result event (AskUserQuestion gets denied in -p mode)
@@ -295,7 +460,73 @@ interface ClaudeStreamEvent {
   // For stream_event wrapper
   event?: {
     type: string;
-    content_block?: { type: string; name?: string };
-    delta?: { type: string; text?: string; partial_json?: string };
+    index?: number;
+    content_block?: { type: string; id?: string; name?: string; input?: unknown };
+    delta?: {
+      type: string;
+      text?: string;
+      partial_json?: string;
+      thinking?: string;
+      signature?: string;
+    };
   };
+}
+
+interface ActiveToolBlock {
+  id?: string;
+  name: string;
+  initialInput: string;
+  streamedInput: string;
+}
+
+function serializeToolInput(input: unknown): string {
+  if (typeof input === "string") return input;
+  if (!input || typeof input !== "object") return "{}";
+
+  try {
+    return JSON.stringify(input);
+  } catch {
+    return "{}";
+  }
+}
+
+function finalizeToolInput(block: ActiveToolBlock): string {
+  const initial = block.initialInput.trim();
+  const streamed = block.streamedInput.trim();
+  const candidates: string[] = [];
+
+  if (initial && streamed) {
+    candidates.push(initial + streamed);
+
+    if (initial.endsWith("}") && streamed.startsWith(",")) {
+      candidates.push(initial.slice(0, -1) + streamed);
+    }
+
+    if (initial === "{}" && streamed.startsWith(",")) {
+      candidates.push(`{${streamed.slice(1)}`);
+    }
+  }
+
+  if (streamed) candidates.push(streamed);
+  if (initial) candidates.push(initial);
+
+  for (const candidate of candidates) {
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // Try the next reconstruction candidate.
+    }
+  }
+
+  return streamed || initial || "{}";
+}
+
+function safeParseObject(value: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : undefined;
+  } catch {
+    return undefined;
+  }
 }

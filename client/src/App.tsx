@@ -16,7 +16,7 @@ import { AttentionInbox } from "./components/AttentionInbox";
 import { MobileSessions } from "./components/MobileSessions";
 import { MobileNewSession } from "./components/MobileNewSession";
 import { usePushNotifications } from "./hooks/usePushNotifications";
-import { WorktreePathInput } from "./components/WorktreePathInput";
+import { isAskUserTool } from "./lib/askUser";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -199,6 +199,7 @@ function AppInner() {
   const [streaming, dispatchStreaming] = useReducer(streamingReducer, initialStreamingState);
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
+  const wasConnectedRef = useRef<boolean | null>(null);
 
   // Attention system — cross-thread pending questions/permissions
   const attention = useAttention();
@@ -229,14 +230,14 @@ function AppInner() {
   const activeTurnEnded = activeThreadId ? streaming.turnEnded.has(activeThreadId) : false;
   const activeTodos = activeThreadId ? latestTodos.get(activeThreadId) ?? null : null;
 
-  // Detect unanswered AskUserQuestion — check if there's one after the last user message
+  // Detect unanswered ask-user tool calls — check if there's one after the last user message
   const pendingQuestion = useMemo(() => {
     if (!activeMessages.length) return null;
     let foundAsk = false;
     for (let i = activeMessages.length - 1; i >= 0; i--) {
       const msg = activeMessages[i];
       if (msg.role === "user") return foundAsk ? true : null;
-      if (msg.toolName === "AskUserQuestion" && msg.toolInput && !msg.toolOutput) {
+      if (isAskUserTool(msg.toolName) && msg.toolInput && !msg.toolOutput) {
         foundAsk = true;
       }
     }
@@ -338,6 +339,18 @@ function AppInner() {
     api.listAgents().then(setAgents).catch(console.error);
     api.listCommands().then(setCommands).catch(console.error);
   }, []);
+
+  // Re-fetch thread list on WS reconnection so sidebar statuses are fresh.
+  // Without this, threads that changed status while disconnected appear "stuck".
+  useEffect(() => {
+    // null = never connected yet (initial load handles it)
+    // false = was connected, then disconnected → next true is a reconnect
+    if (connected && wasConnectedRef.current === false) {
+      api.listProjects().then(setProjects).catch(console.error);
+      api.listThreads().then(setThreads).catch(console.error);
+    }
+    wasConnectedRef.current = connected;
+  }, [connected]);
 
   // Load messages for active thread
   useEffect(() => {
