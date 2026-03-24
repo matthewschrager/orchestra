@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { AttentionResolution, Message, ProjectWithStatus, SlashCommand, StreamDelta, Thread, TurnMetrics, WSServerMessage } from "shared";
+import type { AttentionResolution, Message, ProjectWithStatus, SlashCommand, StreamDelta, Thread, TodoItem, TurnMetrics, WSServerMessage } from "shared";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { api } from "./hooks/useApi";
 import { useAttention } from "./hooks/useAttention";
@@ -190,6 +190,7 @@ function AppInner() {
   const [error, setError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
   const [desktopDrawerOpen, setDesktopDrawerOpen] = useState(false);
+  const [latestTodos, setLatestTodos] = useState<Map<string, TodoItem[]>>(new Map());
   const [pushBannerDismissed, setPushBannerDismissed] = useState(
     () => localStorage.getItem("orchestra_push_dismissed") === "1",
   );
@@ -225,6 +226,7 @@ function AppInner() {
   const activeStreamingToolInput = activeThreadId ? streaming.toolInput.get(activeThreadId) : undefined;
   const activeMetrics = activeThreadId ? streaming.metrics.get(activeThreadId) ?? EMPTY_METRICS : EMPTY_METRICS;
   const activeTurnEnded = activeThreadId ? streaming.turnEnded.has(activeThreadId) : false;
+  const activeTodos = activeThreadId ? latestTodos.get(activeThreadId) ?? null : null;
 
   // Detect unanswered AskUserQuestion — check if there's one after the last user message
   const pendingQuestion = useMemo(() => {
@@ -257,6 +259,19 @@ function AppInner() {
       }
       if (msg.role === "tool") {
         dispatchStreaming({ type: "clear_tool", threadId: msg.threadId });
+        // Track latest TodoWrite state per thread
+        if (msg.toolName === "TodoWrite" && msg.toolInput) {
+          try {
+            const parsed = JSON.parse(msg.toolInput);
+            if (Array.isArray(parsed.todos)) {
+              setLatestTodos((prev) => {
+                const next = new Map(prev);
+                next.set(msg.threadId, parsed.todos as TodoItem[]);
+                return next;
+              });
+            }
+          } catch { /* ignore malformed input */ }
+        }
       }
     }, []),
     onThreadUpdate: useCallback((thread: Thread) => {
@@ -579,6 +594,7 @@ function AppInner() {
                 metrics={activeMetrics}
                 elapsedMs={activelyWorking ? Date.now() - (turnStartRef.current || Date.now()) : activeMetrics.durationMs}
                 onInterrupt={handleStopThread}
+                todos={activeTodos}
               />
               <InputBar
                 agents={agents}

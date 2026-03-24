@@ -4,6 +4,7 @@ import { parseBash } from "../BashRenderer";
 import { parseRead } from "../ReadRenderer";
 import { parseSearch, searchSummary } from "../SearchRenderer";
 import { parseAgentPrompt } from "../SubAgentCard";
+import { parseTodos } from "../TodoRenderer";
 
 // ── DiffRenderer ─────────────────────────────────────
 
@@ -244,5 +245,77 @@ describe("parseAgentPrompt", () => {
 
   test("handles null input", () => {
     expect(parseAgentPrompt(null)).toBeNull();
+  });
+});
+
+// ── TodoRenderer ─────────────────────────────────────
+
+describe("parseTodos", () => {
+  test("parses valid todo list", () => {
+    const input = JSON.stringify({
+      todos: [
+        { content: "Set up schema", status: "completed", activeForm: "Setting up schema" },
+        { content: "Write API endpoints", status: "in_progress", activeForm: "Writing API endpoints" },
+        { content: "Run tests", status: "pending", activeForm: "Running tests" },
+      ],
+    });
+    const result = parseTodos(input);
+    expect(result).not.toBeNull();
+    expect(result!.items).toHaveLength(3);
+    expect(result!.completed).toBe(1);
+    expect(result!.total).toBe(3);
+    expect(result!.items[0].status).toBe("completed");
+    expect(result!.items[1].status).toBe("in_progress");
+    expect(result!.items[2].status).toBe("pending");
+  });
+
+  test("returns null for null input", () => {
+    expect(parseTodos(null)).toBeNull();
+  });
+
+  test("returns null for malformed JSON", () => {
+    expect(parseTodos("not json")).toBeNull();
+  });
+
+  test("returns null for empty todos array", () => {
+    const input = JSON.stringify({ todos: [] });
+    expect(parseTodos(input)).toBeNull();
+  });
+
+  test("returns null for missing todos field", () => {
+    const input = JSON.stringify({ items: [{ content: "test" }] });
+    expect(parseTodos(input)).toBeNull();
+  });
+
+  test("defaults missing fields gracefully", () => {
+    const input = JSON.stringify({
+      todos: [{ content: "Do something" }],
+    });
+    const result = parseTodos(input);
+    expect(result).not.toBeNull();
+    expect(result!.items[0].status).toBe("pending");
+    expect(result!.items[0].activeForm).toBe("Do something");
+  });
+
+  test("handles all-completed state", () => {
+    const input = JSON.stringify({
+      todos: [
+        { content: "Task 1", status: "completed", activeForm: "Doing task 1" },
+        { content: "Task 2", status: "completed", activeForm: "Doing task 2" },
+      ],
+    });
+    const result = parseTodos(input);
+    expect(result).not.toBeNull();
+    expect(result!.completed).toBe(2);
+    expect(result!.total).toBe(2);
+  });
+
+  test("handles unknown status as pending", () => {
+    const input = JSON.stringify({
+      todos: [{ content: "Task", status: "unknown_status", activeForm: "Doing task" }],
+    });
+    const result = parseTodos(input);
+    expect(result).not.toBeNull();
+    expect(result!.items[0].status).toBe("pending");
   });
 });

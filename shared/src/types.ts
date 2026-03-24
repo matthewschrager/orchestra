@@ -129,6 +129,16 @@ export type AttentionResolution =
   | { type: "orphaned"; reason: string }
   | { type: "expired" };
 
+// ── Todo Items ────────────────────────────────────────
+
+export type TodoStatus = "pending" | "in_progress" | "completed";
+
+export interface TodoItem {
+  content: string;
+  status: TodoStatus;
+  activeForm: string;
+}
+
 // ── Slash Commands ─────────────────────────────────────
 
 export interface SlashCommand {

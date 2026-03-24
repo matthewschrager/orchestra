@@ -1,4 +1,4 @@
-import type { TurnMetrics } from "shared";
+import type { TodoItem, TurnMetrics } from "shared";
 
 interface Props {
   isRunning: boolean;
@@ -8,9 +8,10 @@ interface Props {
   metrics: TurnMetrics;
   elapsedMs: number;
   onInterrupt: () => void;
+  todos: TodoItem[] | null;
 }
 
-export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool, metrics, elapsedMs, onInterrupt }: Props) {
+export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool, metrics, elapsedMs, onInterrupt, todos }: Props) {
   // Treat "process still running but turn ended" as idle — agent is just cleaning up
   const activelyWorking = isRunning && !turnEnded;
   if (!activelyWorking && metrics.turnCount === 0) return null;
@@ -61,6 +62,11 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
             ? formatToolAction(currentTool, currentAction)
             : "Thinking…"}
         </span>
+        {todos && todos.length > 0 && (
+          <span className="text-[10px] text-accent/70 shrink-0">
+            {todos.filter((t) => t.status === "completed").length}/{todos.length} tasks
+          </span>
+        )}
       </div>
 
       {/* Metrics */}
@@ -90,6 +96,7 @@ const TOOL_ACTION_MAP: Record<string, string> = {
   WebSearch: "Searching web",
   WebFetch: "Fetching",
   AskUserQuestion: "Asking…",
+  TodoWrite: "Updating tasks",
 };
 
 function formatToolAction(tool: string, context: string | null): string {
