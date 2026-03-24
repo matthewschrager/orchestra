@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.1.8.0] - 2026-03-24
+
+### Fixed
+
+- **Remove 30s stall timer** — killed agent processes during long operations (thinking, tool calls). Processes in `-p` mode exit on their own; the timer was always counterproductive
+- **Deduplicate turn_end signal** — only the `result` event emits `turn_end` (with session_id), preventing a race where the client saw "turn ended" before session_id was captured
+- **Attention continuationToken fallback** — falls back to DB-persisted session_id when in-memory value is null (first-turn race)
+- **Skip buffer flush for superseded processes** — killed processes no longer persist truncated JSON as assistant messages
+- **Health check races with handleExit** — health check now skips threads with pending stream drain, preventing clean exits from being marked as errors
+- **Recovery TOCTOU** — `isAgentProcess` check runs before `getParentPid` to guard against PID recycling
+- **Port hash collision space** — expanded worktree port hash from 999 to 9999 slots; EADDRINUSE error now explains worktree collision
+- **Archived projects reappear after restart** — restored `archived_at IS NULL` filter in `backfillProjects()` (accidental revert)
+
+### Added
+
+- **AskUserQuestion inline rendering** — agent questions render as interactive cards in chat with answer buttons instead of raw tool JSON
+- **WebSocket heartbeat** — client sends periodic pings to prevent idle disconnection
+- **Stream drain timeout with cancel** — Bun's ReadableStream gets cancelled after 2s timeout on process exit, with line buffer flush for any remaining data
+- **message_stop regression test** — verifies `message_stop` returns empty deltas
+
+### Changed
+
+- **Claude parser rewrite** — event handling extracted into focused methods (`handleTextDelta`, `handleToolUse`, `handleResult`, etc.) with proper tool input finalization from streamed JSON deltas
+- **Thread updates broadcast to all WS clients** — enables cross-thread status updates for attention inbox
+- **Worktree detection** — `detectWorktree` returns the worktree name (not just boolean) for port/data isolation
+
+### Removed
+
+- **TodoRenderer** — removed in favor of native task list rendering
+- **WorktreePathInput** — simplified worktree UI
+
 ## [0.1.7.1] - 2026-03-23
 
 ### Fixed
