@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.7.1] - 2026-03-23
+
+### Fixed
+
+- **Archived projects reappear after restart** — `backfillProjects()` now excludes archived threads (`archived_at IS NULL`) so deleting a project no longer causes it to be recreated on next server start
+
 ## [0.1.7.0] - 2026-03-23
 
 ### Added
