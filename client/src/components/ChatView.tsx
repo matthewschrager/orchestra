@@ -6,7 +6,7 @@ import { BashRenderer } from "./renderers/BashRenderer";
 import { ReadRenderer } from "./renderers/ReadRenderer";
 import { SearchRenderer, searchSummary } from "./renderers/SearchRenderer";
 import { SubAgentCard } from "./renderers/SubAgentCard";
-import { TodoRenderer } from "./renderers/TodoRenderer";
+import { extractQuestionPreview, formatAnswers, isAskUserTool, parseQuestions, type ParsedQuestion } from "../lib/askUser";
 
 interface Props {
   messages: Message[];
@@ -25,7 +25,7 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
 
   const grouped = useMemo(() => groupMessages(messages), [messages]);
 
-  // Detect which AskUserQuestion messages have been answered (user replied after them)
+  // Detect which ask-user tool messages have been answered (user replied after them)
   const answeredQuestionIds = useMemo(() => {
     const ids = new Set<string>();
     let lastUserSeq = -1;
@@ -33,7 +33,7 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
       if (msg.role === "user") lastUserSeq = msg.seq;
     }
     for (const msg of messages) {
-      if (msg.toolName === "AskUserQuestion" && msg.toolInput && !msg.toolOutput && msg.seq < lastUserSeq) {
+      if (isAskUserTool(msg.toolName) && msg.toolInput && !msg.toolOutput && msg.seq < lastUserSeq) {
         ids.add(msg.id);
       }
     }
@@ -101,8 +101,8 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
       {/* Streaming status — active tool + text */}
       {thread.status === "running" && !turnEnded && (
         <div className="py-1">
-          {/* Active tool — special handling for AskUserQuestion */}
-          {streamingTool === "AskUserQuestion" ? (
+          {/* Active ask-user tool — show the question inline while streaming */}
+          {isAskUserTool(streamingTool) ? (
             <div className="my-2 max-w-[80%] rounded-lg border border-sky-500/20 bg-sky-950/20 px-4 py-3">
               <div className="flex items-center gap-2 mb-1.5 text-xs text-sky-400/80 font-medium">
                 <EqBars />
@@ -295,8 +295,8 @@ function groupConsecutiveTools(pairs: ToolPair[]): ToolPair[][] {
   let current: ToolPair[] = [];
 
   for (const pair of pairs) {
-    // AskUserQuestion and TodoWrite always get their own group
-    if (pair.name === "AskUserQuestion" || pair.name === "TodoWrite") {
+    // Ask-user tools always get their own group
+    if (isAskUserTool(pair.name)) {
       if (current.length > 0) groups.push(current);
       groups.push([pair]);
       current = [];
@@ -318,8 +318,8 @@ function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false }: { 
   const hasDetails = pair.input || pair.output;
   const isOpen = expanded || forceExpand;
 
-  // Render AskUserQuestion as a prominent question card
-  if (pair.name === "AskUserQuestion") {
+  // Render ask-user tools as prominent question cards
+  if (isAskUserTool(pair.name)) {
     return <QuestionCard pair={pair} isAnswered={isAnswered} onSubmitAnswers={onSubmitAnswers} />;
   }
 
@@ -427,13 +427,6 @@ function ToolIcon({ name }: { name: string }) {
     default:
       return <span className="w-3 h-3 shrink-0 text-accent/50 text-[10px] leading-3 text-center">&#10003;</span>;
   }
-}
-
-interface ParsedQuestion {
-  question: string;
-  header?: string;
-  options?: Array<{ label: string; description?: string }>;
-  multiSelect?: boolean;
 }
 
 function QuestionCard({ pair, isAnswered, onSubmitAnswers }: { pair: ToolPair; isAnswered: boolean; onSubmitAnswers?: (text: string) => void }) {
@@ -647,7 +640,7 @@ const TOOL_VERBS: Record<string, [string, string]> = {
   WebFetch: ["Fetching", "Fetched"],
   NotebookEdit: ["Editing notebook", "Edited notebook"],
   AskUserQuestion: ["Asking", "Asked"],
-  TodoWrite: ["Updating tasks", "Updated tasks"],
+  AskUserTool: ["Asking", "Asked"],
 };
 
 function formatToolLabel(name: string, context: string, active: boolean): string {
@@ -688,46 +681,6 @@ function extractToolContext(toolName: string, input: string): string {
     if (cmdMatch) return cmdMatch[1];
     return "";
   }
-}
-
-function parseQuestions(input: string | null): ParsedQuestion[] {
-  if (!input) return [];
-  try {
-    const parsed = JSON.parse(input);
-    // Array format: {"questions": [{question, header, options}, ...]}
-    if (Array.isArray(parsed.questions)) return parsed.questions;
-    // Single question format: {"question": "..."}
-    if (parsed.question) return [{ question: parsed.question }];
-    return [];
-  } catch {
-    // Partial JSON — try to extract first question text
-    const match = input.match(/"question"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-    if (match) {
-      return [{ question: match[1].replace(/\\"/g, '"').replace(/\\n/g, "\n") }];
-    }
-    return [];
-  }
-}
-
-function formatAnswers(questions: ParsedQuestion[], selections: Map<number, string[]>, customInputs: Map<number, string>): string {
-  const parts: string[] = [];
-  for (let i = 0; i < questions.length; i++) {
-    const q = questions[i];
-    const selected = selections.get(i) ?? [];
-    const custom = customInputs.get(i)?.trim() ?? "";
-    const answer = selected.length > 0 ? selected.join(", ") : custom;
-    if (!answer) continue;
-    if (questions.length === 1) return answer;
-    const prefix = q.header || `Q${i + 1}`;
-    parts.push(`${prefix}: ${answer}`);
-  }
-  return parts.join("\n");
-}
-
-function extractQuestionPreview(input: string | null): string {
-  const questions = parseQuestions(input);
-  if (questions.length === 0) return "";
-  return questions[0].question;
 }
 
 function formatJson(s: string): string {

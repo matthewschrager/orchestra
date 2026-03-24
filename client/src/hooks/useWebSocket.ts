@@ -30,12 +30,22 @@ export function useWebSocket(opts: UseWebSocketOpts = {}) {
       ws = new WebSocket(url);
       wsRef.current = ws;
 
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
+
       ws.onopen = () => {
         setConnected(true);
         retryDelay = 1000;
+        // Send periodic pings to prevent idle timeout (Bun default: 120s,
+        // Cloudflare tunnel may be lower). 30s interval keeps it well under.
+        heartbeat = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "ping" }));
+          }
+        }, 30_000);
       };
 
       ws.onclose = () => {
+        if (heartbeat) clearInterval(heartbeat);
         setConnected(false);
         wsRef.current = null;
         if (!closed) {

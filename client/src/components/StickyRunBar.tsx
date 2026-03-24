@@ -96,7 +96,7 @@ const TOOL_ACTION_MAP: Record<string, string> = {
   WebSearch: "Searching web",
   WebFetch: "Fetching",
   AskUserQuestion: "Asking…",
-  TodoWrite: "Updating tasks",
+  AskUserTool: "Asking…",
 };
 
 function formatToolAction(tool: string, context: string | null): string {

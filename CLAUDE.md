@@ -48,14 +48,14 @@ orchestra/
 │       │       ├── BashRenderer.tsx    Bash → terminal block
 │       │       ├── ReadRenderer.tsx    Read → syntax-highlighted file
 │       │       ├── SearchRenderer.tsx  Grep/Glob → match list
-│       │       ├── SubAgentCard.tsx    Agent → status card
-│       │       └── TodoRenderer.tsx    TodoWrite → checklist
+│       │       └── SubAgentCard.tsx    Agent → status card
 │       │   ├── AttentionInbox.tsx  Attention queue inbox
 │       │   ├── MobileNav.tsx      Bottom tab navigation
 │       │   ├── MobileSessions.tsx Thread list for mobile
 │       │   ├── MobileNewSession.tsx New session form for mobile
-│       │   ├── SlashCommandInput.tsx Textarea with slash command autocomplete
-│       │   └── WorktreePathInput.tsx Worktree path input with directory browser
+│       │   └── SlashCommandInput.tsx Textarea with slash command autocomplete
+│       ├── lib/             Shared utilities
+│       │   └── askUser.ts   AskUserQuestion parsing + inline rendering helpers
 │       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications
 └── shared/          Shared TypeScript types
 ```
@@ -88,14 +88,16 @@ cd server && bun run src/index.ts  # Production server
 - Session IDs persisted to `session_id` column on threads table (survives server restart)
 - Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
 - Push notifications: VAPID keys auto-generated, Web Push dispatch on attention events
-- Mobile UI: bottom tab navigation (Inbox/Sessions/New), attention inbox with interactive cards, worktree path picker with directory browser
+- Mobile UI: bottom tab navigation (Inbox/Sessions/New), attention inbox with interactive cards
 - Input: Enter sends, Shift+Enter for newline (with IME composition guard for CJK input)
-- Worktrees default to `orchestra/` subdirectory; WorktreeManager accepts absolute paths from directory picker
+- AskUserQuestion rendered inline as interactive cards with answer buttons
+- WebSocket heartbeat prevents idle disconnection
+- Worktree isolation: detectWorktree returns name for port/data separation, expanded port hash range (9999 slots)
 
 ## Testing
 
 ```bash
-bun test                        # Run all tests (73 tests across 5 files)
+bun test                        # Run all tests (94 tests across 8 files)
 ```
 
 Tests cover renderer parsing functions, server-side Claude adapter event handling, filesystem route behavior, and attention queue CRUD operations.

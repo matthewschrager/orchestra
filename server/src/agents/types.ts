@@ -32,6 +32,11 @@ export interface ParseResult {
   messages: ParsedMessage[];
   deltas: Omit<StreamDelta, "threadId">[];
   attention?: AttentionEvent;
+  sessionId?: string;
+}
+
+export interface AgentOutputParser {
+  parseOutput(line: string): ParseResult;
 }
 
 export interface AgentAdapter {
@@ -39,7 +44,7 @@ export interface AgentAdapter {
   detect(): Promise<boolean>;
   getVersion(): Promise<string | null>;
   spawn(opts: SpawnOpts): AgentProcess;
-  parseOutput(line: string): ParseResult;
+  createParser(): AgentOutputParser;
   supportsResume(): boolean;
   getBypassFlags(): string[];
 }

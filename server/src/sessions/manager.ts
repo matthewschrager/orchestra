@@ -11,13 +11,14 @@ import {
   attentionRowToApi,
 } from "../db";
 import type { AgentRegistry } from "../agents/registry";
-import type { AgentAdapter, AgentProcess, AttentionEvent, ParsedMessage } from "../agents/types";
+import type { AgentAdapter, AgentOutputParser, AgentProcess, AttentionEvent, ParsedMessage } from "../agents/types";
 import type { WorktreeManager } from "../worktrees/manager";
 import type { AttentionItem, StreamDelta } from "shared";
 
 export interface ActiveSession {
   threadId: string;
   agentProc: AgentProcess;
+  parser: AgentOutputParser;
   lineBuffer: string;
   stderrBuffer: string;
   sessionId: string | null;
@@ -32,13 +33,16 @@ type AttentionResolvedListener = (attentionId: string, threadId: string) => void
 
 export class SessionManager {
   private sessions: Map<string, ActiveSession> = new Map();
+  private streamDonePromises: Map<string, Promise<void>> = new Map();
   private messageListeners: Set<MessageListener> = new Set();
   private threadListeners: Set<ThreadListener> = new Set();
   private streamDeltaListeners: Set<StreamDeltaListener> = new Set();
-  private shuttingDown = false;
+  shuttingDown = false;
   private attentionListeners: Set<AttentionListener> = new Set();
   private attentionResolvedListeners: Set<AttentionResolvedListener> = new Set();
   private mainWorktreeLocks: Map<string, string> = new Map();
+
+  private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private db: DB,
@@ -46,6 +50,7 @@ export class SessionManager {
     private worktreeManager: WorktreeManager,
   ) {
     this.recoverOrphanedThreads();
+    this.startHealthCheck();
   }
 
   // ── Lifecycle ─────────────────────────────────────────
@@ -113,6 +118,7 @@ export class SessionManager {
 
   stopAll(): void {
     this.shuttingDown = true;
+    if (this.healthCheckInterval) clearInterval(this.healthCheckInterval);
     for (const [id] of this.sessions) {
       this.stopThread(id);
     }
@@ -237,6 +243,7 @@ export class SessionManager {
       prompt,
       resumeSessionId: resumeSessionId ?? undefined,
     });
+    const parser = adapter.createParser();
 
     const pid = agentProc.proc.pid;
     updateThread(this.db, threadId, { pid, status: "running" });
@@ -244,6 +251,7 @@ export class SessionManager {
     const session: ActiveSession = {
       threadId,
       agentProc,
+      parser,
       lineBuffer: "",
       stderrBuffer: "",
       sessionId: resumeSessionId,
@@ -251,35 +259,94 @@ export class SessionManager {
     };
     this.sessions.set(threadId, session);
 
-    // Start reading stdout
-    this.readStream(session, adapter);
+    // Start reading stdout — capture promise so handleExit can wait for it
+    const streamDone = this.readStream(session);
+    this.streamDonePromises.set(threadId, streamDone);
 
     // Collect stderr for error reporting
     this.collectStderr(session);
 
-    // Watch for exit — pass PID to distinguish from superseded processes
-    agentProc.proc.exited.then((exitCode) => {
+    // Wait for stream to finish BEFORE running exit handler.
+    // This prevents a race where handleExit deletes the session from the map
+    // before readStream has processed all output (including the result event
+    // that carries session_id).
+    //
+    // Bun's ReadableStream from proc.stdout sometimes doesn't close promptly
+    // when the process exits. After a short grace period, we cancel the stream
+    // to unblock the for-await loop, then flush any remaining buffered data.
+    agentProc.proc.exited.then(async (exitCode) => {
+      const STREAM_DRAIN_TIMEOUT_MS = 2_000;
+      const settled = await Promise.race([
+        streamDone.then(() => "done" as const),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), STREAM_DRAIN_TIMEOUT_MS)),
+      ]);
+
+      if (settled === "timeout") {
+        console.warn(`[session] Stream drain timeout (${STREAM_DRAIN_TIMEOUT_MS}ms) for thread ${threadId} — cancelling stream and flushing buffer`);
+        // Cancel the ReadableStream to unblock the for-await loop
+        try {
+          const stdout = agentProc.proc.stdout;
+          if (stdout && typeof stdout.cancel === "function") {
+            await stdout.cancel();
+          }
+        } catch { /* already closed */ }
+        // readStream will now exit (for-await breaks on cancel).
+        // Wait briefly for it to finish its catch/finally.
+        await Promise.race([
+          streamDone,
+          new Promise<void>((resolve) => setTimeout(resolve, 500)),
+        ]);
+        // Flush any remaining line buffer data that readStream didn't process
+        this.flushLineBuffer(session);
+      }
+
+      this.streamDonePromises.delete(threadId);
       this.handleExit(threadId, exitCode, pid);
     });
   }
 
-  private async readStream(session: ActiveSession, adapter: AgentAdapter) {
+  private async readStream(session: ActiveSession) {
     const stdout = session.agentProc.proc.stdout;
     const decoder = new TextDecoder();
     const pid = session.agentProc.proc.pid;
+    let chunkCount = 0;
+    let lineCount = 0;
+    let lastChunkTime = Date.now();
+
+    console.log(`[stream] Thread ${session.threadId} PID ${pid} — readStream started`);
 
     try {
       for await (const chunk of stdout) {
-        // Check if this session was superseded by a new spawn
+        chunkCount++;
+        const now = Date.now();
+        const gap = now - lastChunkTime;
+        lastChunkTime = now;
+
+        // Log long gaps — helps diagnose subagent stalls
+        if (gap > 5000) {
+          console.log(`[stream] Thread ${session.threadId} — chunk ${chunkCount} after ${gap}ms gap (${chunk.length} bytes)`);
+        }
+
+        // Bail if session was stopped (deleted from map) or superseded by a new
+        // spawn with a different PID. With handleExit awaiting readStream,
+        // !current here means stopThread/sendMessage explicitly removed the session.
         const current = this.sessions.get(session.threadId);
-        if (!current || current.agentProc.proc.pid !== pid) return;
+        if (!current || current.agentProc.proc.pid !== pid) {
+          console.log(`[stream] Thread ${session.threadId} PID ${pid} — session ${!current ? "deleted" : "superseded"}, exiting readStream after ${chunkCount} chunks, ${lineCount} lines`);
+          return;
+        }
 
         session.lineBuffer += decoder.decode(chunk, { stream: true });
         const lines = session.lineBuffer.split("\n");
         session.lineBuffer = lines.pop() || "";
 
         for (const line of lines) {
-          const { messages, deltas, attention } = adapter.parseOutput(line);
+          lineCount++;
+          const { messages, deltas, attention, sessionId } = session.parser.parseOutput(line);
+          if (sessionId) {
+            session.sessionId = sessionId;
+            this.persistSessionId(session.threadId, sessionId);
+          }
           for (const msg of messages) {
             this.persistMessage(session.threadId, msg);
           }
@@ -299,41 +366,50 @@ export class SessionManager {
         }
       }
 
-      // Flush remaining buffer — even if superseded, persist messages so
-      // no data is silently lost. Skip session_id updates if superseded
-      // since the new process owns the session now.
+      console.log(`[stream] Thread ${session.threadId} PID ${pid} — stdout closed after ${chunkCount} chunks, ${lineCount} lines`);
+
+      // Flush remaining buffer. Skip if stopped or superseded.
       const isSuperseded = (() => {
         const current = this.sessions.get(session.threadId);
         return !current || current.agentProc.proc.pid !== pid;
       })();
 
-      if (session.lineBuffer.trim() && !isSuperseded) {
-        const { messages, deltas, attention } = adapter.parseOutput(session.lineBuffer);
-        for (const msg of messages) {
-          this.persistMessage(session.threadId, msg);
-        }
-        {
-          for (const delta of deltas) {
-            if (delta.deltaType === "turn_end" && delta.text) {
-              session.sessionId = delta.text;
-              this.persistSessionId(session.threadId, delta.text);
-            }
-            this.notifyStreamDelta(session.threadId, {
-              ...delta,
-              threadId: session.threadId,
-            });
-          }
-          if (attention) {
-            this.handleAttentionEvent(session, attention);
-          }
-        }
+      if (!isSuperseded) {
+        this.flushLineBuffer(session);
       }
     } catch (err) {
-      console.error(`Stream read error for thread ${session.threadId}:`, err);
+      console.error(`[stream] Thread ${session.threadId} PID ${pid} — stream read error after ${chunkCount} chunks, ${lineCount} lines:`, err);
       const errMsg = err instanceof Error ? err.message : String(err);
       updateThread(this.db, session.threadId, {
         error_message: `Stream read error: ${errMsg.slice(0, 200)}`,
       });
+    }
+  }
+
+  /** Process any remaining data in the session's line buffer. */
+  private flushLineBuffer(session: ActiveSession): void {
+    if (!session.lineBuffer.trim()) return;
+    const { messages, deltas, attention, sessionId } = session.parser.parseOutput(session.lineBuffer);
+    session.lineBuffer = "";
+    if (sessionId) {
+      session.sessionId = sessionId;
+      this.persistSessionId(session.threadId, sessionId);
+    }
+    for (const msg of messages) {
+      this.persistMessage(session.threadId, msg);
+    }
+    for (const delta of deltas) {
+      if (delta.deltaType === "turn_end" && delta.text) {
+        session.sessionId = delta.text;
+        this.persistSessionId(session.threadId, delta.text);
+      }
+      this.notifyStreamDelta(session.threadId, {
+        ...delta,
+        threadId: session.threadId,
+      });
+    }
+    if (attention) {
+      this.handleAttentionEvent(session, attention);
     }
   }
 
@@ -521,16 +597,64 @@ export class SessionManager {
     }
   }
 
+  /** Periodically verify running threads' PIDs are still alive.
+   *  Catches cases where handleExit never ran (stream drain timeout, Bun bug, etc.). */
+  private startHealthCheck(): void {
+    const HEALTH_CHECK_INTERVAL_MS = 30_000;
+    this.healthCheckInterval = setInterval(() => {
+      for (const [threadId, session] of this.sessions) {
+        const pid = session.agentProc.proc.pid;
+        if (pid && !this.isProcessAlive(pid)) {
+          // Skip if handleExit is already draining the stream for this thread
+          if (this.streamDonePromises.has(threadId)) {
+            console.log(`[health] Thread ${threadId} PID ${pid} is dead but stream drain in progress — skipping`);
+            continue;
+          }
+          console.warn(`[health] Thread ${threadId} PID ${pid} is dead but session still active — cleaning up`);
+          this.sessions.delete(threadId);
+          this.clearMainWorktreeLock(threadId);
+          orphanAttentionItems(this.db, threadId);
+          updateThread(this.db, threadId, {
+            status: "error",
+            pid: null,
+            error_message: "Agent process died unexpectedly (detected by health check)",
+          });
+          this.notifyThread(threadId);
+        }
+      }
+    }, HEALTH_CHECK_INTERVAL_MS);
+  }
+
   private recoverOrphanedThreads(): void {
     const running = this.db
       .query("SELECT * FROM threads WHERE status IN ('running', 'waiting')")
       .all() as ThreadRow[];
 
+    const myPid = process.pid;
+
     for (const thread of running) {
       if (thread.pid) {
+        // Check if the process is still alive and who owns it
         try {
           process.kill(thread.pid, 0); // Check if alive
-          if (this.isAgentProcess(thread.pid, thread.agent)) {
+
+          // Verify it's actually an agent process before doing anything else
+          // (guards against PID recycling — the PID could now belong to something else)
+          if (!this.isAgentProcess(thread.pid, thread.agent)) {
+            console.log(
+              `[recovery] Thread ${thread.id} PID ${thread.pid} is not an agent process — skipping kill`,
+            );
+          } else {
+            // If the process's parent is a DIFFERENT running server instance,
+            // leave it alone — it belongs to that server, not us.
+            const ppid = this.getParentPid(thread.pid);
+            if (ppid !== null && ppid !== myPid && this.isProcessAlive(ppid)) {
+              console.log(
+                `[recovery] Thread ${thread.id} (PID ${thread.pid}) belongs to server PID ${ppid} — skipping`,
+              );
+              continue;
+            }
+
             process.kill(thread.pid, "SIGTERM");
           }
         } catch {
@@ -544,6 +668,28 @@ export class SessionManager {
         pid: null,
         error_message: "Process was orphaned (server restarted while thread was running)",
       });
+    }
+  }
+
+  private getParentPid(pid: number): number | null {
+    try {
+      const proc = Bun.spawnSync(["ps", "-p", String(pid), "-o", "ppid="], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const ppid = parseInt(new TextDecoder().decode(proc.stdout).trim(), 10);
+      return isNaN(ppid) ? null : ppid;
+    } catch {
+      return null;
+    }
+  }
+
+  private isProcessAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
     }
   }
 

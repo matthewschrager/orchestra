@@ -1,6 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import type { DB, MessageRow, ThreadRow } from "../db";
-import { getMessages, getPendingAttention, attentionRowToApi, messageRowToApi, threadRowToApi } from "../db";
+import { getMessages, getPendingAttention, getThread, attentionRowToApi, messageRowToApi, threadRowToApi } from "../db";
 import type { SessionManager } from "../sessions/manager";
 import type { AttentionItem, StreamDelta, WSClientMessage, WSServerMessage } from "shared";
 
@@ -40,6 +40,8 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
     }
   });
 
+  // Broadcast thread status updates to ALL clients so the sidebar
+  // always reflects current state, even for non-subscribed threads.
   sessionManager.onThreadUpdate((thread: ThreadRow) => {
     const payload: WSServerMessage = {
       type: "thread_updated",
@@ -47,9 +49,7 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
     };
     const json = JSON.stringify(payload);
     for (const ws of clients) {
-      if (ws.data.subscriptions.has(thread.id)) {
-        ws.send(json);
-      }
+      ws.send(json);
     }
   });
 
@@ -100,6 +100,15 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
       switch (msg.type) {
         case "subscribe": {
           ws.data.subscriptions.add(msg.threadId);
+          const thread = getThread(db, msg.threadId);
+          if (thread) {
+            ws.send(
+              JSON.stringify({
+                type: "thread_updated",
+                thread: threadRowToApi(thread),
+              } satisfies WSServerMessage),
+            );
+          }
           // Replay missed messages
           const missed = getMessages(db, msg.threadId, msg.lastSeq ?? 0);
           for (const m of missed) {
@@ -163,6 +172,10 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
           }
           break;
         }
+
+        case "ping":
+          // Client keepalive — no response needed, the message itself resets idle timer
+          break;
       }
     },
   };
