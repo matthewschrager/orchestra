@@ -128,7 +128,7 @@ export function createDb(dbPath?: string): Database {
 
 function backfillProjects(db: Database): void {
   const orphaned = db
-    .query("SELECT DISTINCT repo_path FROM threads WHERE project_id IS NULL AND repo_path IS NOT NULL")
+    .query("SELECT DISTINCT repo_path FROM threads WHERE project_id IS NULL AND repo_path IS NOT NULL AND archived_at IS NULL")
     .all() as Array<{ repo_path: string }>;
 
   if (orphaned.length === 0) return;
@@ -163,7 +163,7 @@ function backfillProjects(db: Database): void {
 
     // Backfill all threads with this repo_path
     db.query(
-      "UPDATE threads SET project_id = ? WHERE repo_path = ? AND project_id IS NULL",
+      "UPDATE threads SET project_id = ? WHERE repo_path = ? AND project_id IS NULL AND archived_at IS NULL",
     ).run(projectId, repo_path);
   }
 }
