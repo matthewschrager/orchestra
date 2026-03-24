@@ -52,7 +52,9 @@ orchestra/
 │       │   ├── AttentionInbox.tsx  Attention queue inbox
 │       │   ├── MobileNav.tsx      Bottom tab navigation
 │       │   ├── MobileSessions.tsx Thread list for mobile
-│       │   └── MobileNewSession.tsx New session form for mobile
+│       │   ├── MobileNewSession.tsx New session form for mobile
+│       │   ├── SlashCommandInput.tsx Textarea with slash command autocomplete
+│       │   └── WorktreePathInput.tsx Worktree path input with directory browser
 │       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications
 └── shared/          Shared TypeScript types
 ```
@@ -85,12 +87,14 @@ cd server && bun run src/index.ts  # Production server
 - Session IDs persisted to `session_id` column on threads table (survives server restart)
 - Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
 - Push notifications: VAPID keys auto-generated, Web Push dispatch on attention events
-- Mobile UI: bottom tab navigation (Inbox/Sessions/New), attention inbox with interactive cards
+- Mobile UI: bottom tab navigation (Inbox/Sessions/New), attention inbox with interactive cards, worktree path picker with directory browser
+- Input: Enter sends, Shift+Enter for newline (with IME composition guard for CJK input)
+- Worktrees default to `orchestra/` subdirectory; WorktreeManager accepts absolute paths from directory picker
 
 ## Testing
 
 ```bash
-bun test                        # Run all tests (59 tests across 4 files)
+bun test                        # Run all tests (65 tests across 5 files)
 ```
 
 Tests cover renderer parsing functions, server-side Claude adapter event handling, filesystem route behavior, and attention queue CRUD operations.
