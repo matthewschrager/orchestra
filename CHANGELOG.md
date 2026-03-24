@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.7.0] - 2026-03-23
+
+### Added
+
+- **TodoWrite rich renderer** — Claude's task lists now render as visual checklists in chat (status icons: ✓ done, ▸ active, ○ pending) instead of raw JSON blobs
+- **StickyRunBar task progress** — Real-time "N/M tasks" counter in the status bar while agent is working, derived from the latest TodoWrite state per thread
+- **TodoItem shared type** — `TodoItem` and `TodoStatus` types in shared module for cross-package consistency
+
+### Changed
+
+- **Tool dispatch expanded** — `getRichRenderer()`, `TOOL_VERBS`, `ToolIcon`, and `extractToolContext` updated to handle TodoWrite tool calls
+- **TodoWrite grouping** — Each TodoWrite gets its own visual group in the chat (like AskUserQuestion) since each call replaces the full task list
+
 ## [0.1.6.0] - 2026-03-23
 
 ### Fixed
