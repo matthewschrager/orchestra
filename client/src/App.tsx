@@ -16,6 +16,7 @@ import { AttentionInbox } from "./components/AttentionInbox";
 import { MobileSessions } from "./components/MobileSessions";
 import { MobileNewSession } from "./components/MobileNewSession";
 import { usePushNotifications } from "./hooks/usePushNotifications";
+import { WorktreePathInput } from "./components/WorktreePathInput";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -483,7 +484,11 @@ function AppInner() {
           >
             <MenuIcon />
           </button>
-          <div className={`w-2 h-2 rounded-full bg-accent shrink-0 ${activelyWorking ? "animate-pulse" : ""}`} />
+          {activelyWorking && (
+            <svg className="w-4 h-4 shrink-0 text-accent animate-spin" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28 10" strokeLinecap="round" />
+            </svg>
+          )}
           <h1 className="text-sm font-semibold tracking-tight text-content-2 shrink-0">Orchestra</h1>
           {activeProject && (
             <span className="text-xs text-content-3 font-light shrink-0">
@@ -556,7 +561,7 @@ function AppInner() {
         </div>
       )}
 
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-1 min-h-0 relative">
         {/* Sidebar */}
         <ProjectSidebar
           projects={projects}
@@ -627,67 +632,64 @@ function AppInner() {
             onClose={() => setContextOpen(false)}
           />
         )}
-      </div>
 
-      {/* Mobile tab overlays — only show when NOT viewing a specific thread */}
-      {mobileTab === "inbox" && (
-        <div className="md:hidden fixed inset-0 top-0 bottom-14 z-20 bg-base overflow-y-auto"
-          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
-        >
-          <div className="sticky top-0 bg-base border-b border-edge-1 px-4 py-3 z-10">
-            <h2 className="text-lg font-semibold text-content-1">
-              Inbox {attention.pendingCount > 0 && (
-                <span className="ml-2 text-sm font-normal text-content-3">
-                  {attention.pendingCount} pending
-                </span>
-              )}
-            </h2>
+        {/* Mobile tab overlays — absolute within main content area, below header */}
+        {mobileTab === "inbox" && (
+          <div className="md:hidden absolute inset-0 z-20 bg-base overflow-y-auto"
+            style={{ bottom: "calc(3.5rem + env(safe-area-inset-bottom, 0px))" }}>
+            <div className="sticky top-0 bg-base border-b border-edge-1 px-4 py-3 z-10">
+              <h2 className="text-lg font-semibold text-content-1">
+                Inbox {attention.pendingCount > 0 && (
+                  <span className="ml-2 text-sm font-normal text-content-3">
+                    {attention.pendingCount} pending
+                  </span>
+                )}
+              </h2>
+            </div>
+            <AttentionInbox
+              items={attention.items}
+              onResolve={handleResolveAttention}
+              onNavigateToThread={handleNavigateToThread}
+            />
           </div>
-          <AttentionInbox
-            items={attention.items}
-            onResolve={handleResolveAttention}
-            onNavigateToThread={handleNavigateToThread}
-          />
-        </div>
-      )}
+        )}
 
-      {mobileTab === "sessions" && !activeThread && (
-        <div className="md:hidden fixed inset-0 top-0 bottom-14 z-20 bg-base overflow-y-auto"
-          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
-        >
-          <MobileSessions
-            projects={projects}
-            threads={threads}
-            activeThreadId={activeThreadId}
-            onSelectThread={(threadId) => {
-              handleSelectThread(threadId);
-              setMobileTab("sessions");
-            }}
-            onNewThread={(projectId) => {
-              setActiveProjectId(projectId);
-              setActiveThreadId(null);
-              setMobileTab("new");
-            }}
-          />
-        </div>
-      )}
+        {mobileTab === "sessions" && !activeThread && (
+          <div className="md:hidden absolute inset-0 z-20 bg-base overflow-y-auto"
+            style={{ bottom: "calc(3.5rem + env(safe-area-inset-bottom, 0px))" }}>
+            <MobileSessions
+              projects={projects}
+              threads={threads}
+              activeThreadId={activeThreadId}
+              onSelectThread={(threadId) => {
+                handleSelectThread(threadId);
+                setMobileTab("sessions");
+              }}
+              onNewThread={(projectId) => {
+                setActiveProjectId(projectId);
+                setActiveThreadId(null);
+                setMobileTab("new");
+              }}
+            />
+          </div>
+        )}
 
-      {mobileTab === "new" && (
-        <div className="md:hidden fixed inset-0 top-0 bottom-14 z-20 bg-base overflow-y-auto"
-          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
-        >
-          <MobileNewSession
-            projects={projects}
-            agents={agents}
-            commands={commands}
-            activeProjectId={activeProjectId}
-            onNewThread={(agent, prompt, isolate, projectId) => {
-              handleNewThread(agent, prompt, isolate, projectId);
-              setMobileTab("sessions");
-            }}
-          />
-        </div>
-      )}
+        {mobileTab === "new" && (
+          <div className="md:hidden absolute inset-0 z-20 bg-base overflow-y-auto"
+            style={{ bottom: "calc(3.5rem + env(safe-area-inset-bottom, 0px))" }}>
+            <MobileNewSession
+              projects={projects}
+              agents={agents}
+              commands={commands}
+              activeProjectId={activeProjectId}
+              onNewThread={(agent, prompt, isolate, projectId, worktreeName) => {
+                handleNewThread(agent, prompt, isolate, projectId, worktreeName);
+                setMobileTab("sessions");
+              }}
+            />
+          </div>
+        )}
+      </div>
 
       {/* Mobile Bottom Navigation */}
       <MobileNav
@@ -754,7 +756,7 @@ function ProjectEmptyState({
   const [isolate, setIsolate] = useState(false);
   const [worktreeName, setWorktreeName] = useState(() => {
     const suffix = Math.random().toString(36).slice(2, 13);
-    return `${project.name}-${suffix}`;
+    return `orchestra/${project.name}-${suffix}`;
   });
   const defaultAgent = agents.find((a) => a.detected)?.name ?? "claude";
 
@@ -797,7 +799,7 @@ function ProjectEmptyState({
                   setIsolate(e.target.checked);
                   if (e.target.checked) {
                     const suffix = Math.random().toString(36).slice(2, 13);
-                    setWorktreeName(`${project.name}-${suffix}`);
+                    setWorktreeName(`orchestra/${project.name}-${suffix}`);
                   }
                 }}
                 className="rounded"
@@ -818,13 +820,7 @@ function ProjectEmptyState({
           </button>
           </div>
           {isolate && (
-            <input
-              type="text"
-              value={worktreeName}
-              onChange={(e) => setWorktreeName(e.target.value)}
-              className="text-sm bg-surface-2 border border-edge-2 rounded-lg px-3 py-1.5 text-content-2 font-mono w-full"
-              placeholder="worktree name"
-            />
+            <WorktreePathInput value={worktreeName} onChange={setWorktreeName} />
           )}
         </div>
       </div>

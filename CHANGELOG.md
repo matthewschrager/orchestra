@@ -7,11 +7,24 @@
 - **TodoWrite rich renderer** — Claude's task lists now render as visual checklists in chat (status icons: ✓ done, ▸ active, ○ pending) instead of raw JSON blobs
 - **StickyRunBar task progress** — Real-time "N/M tasks" counter in the status bar while agent is working, derived from the latest TodoWrite state per thread
 - **TodoItem shared type** — `TodoItem` and `TodoStatus` types in shared module for cross-package consistency
+- **WorktreePathInput component** — Text input with inline directory browser for selecting worktree parent directories, used in all three worktree input locations
+- **Spinning status indicator** — Header shows a spinning accent circle when agent is actively working, no icon when idle (replaces static blue dot)
+
+### Fixed
+
+- **Mobile overlays hidden behind header** — Tab overlays (Inbox, Sessions, New) now position within the main content area using absolute positioning instead of viewport-fixed, so they start below the header bar
+- **Worktree input missing on mobile** — Mobile new session form now shows the worktree name input with directory browser when "Isolate to worktree" is checked
+- **IME composition regression** — Enter-to-send now skips during IME composition (CJK input methods) to prevent accidental submission
+- **Safe-area padding on mobile overlays** — Restored `env(safe-area-inset-bottom)` so content isn't clipped behind the home indicator on iOS devices
+- **Stale worktree name on project switch** — Worktree name now regenerates when switching projects in mobile new session form
 
 ### Changed
 
 - **Tool dispatch expanded** — `getRichRenderer()`, `TOOL_VERBS`, `ToolIcon`, and `extractToolContext` updated to handle TodoWrite tool calls
 - **TodoWrite grouping** — Each TodoWrite gets its own visual group in the chat (like AskUserQuestion) since each call replaces the full task list
+- **Enter sends, Shift+Enter for newline** — Textarea keybinding changed from Cmd/Ctrl+Enter to Enter for sending messages
+- **Worktree default path** — Worktrees now default to `orchestra/` subdirectory (e.g., `orchestra/project-abc123`) for organization
+- **Absolute path support in WorktreeManager** — Server accepts both relative names and absolute paths from the directory picker
 
 ## [0.1.6.0] - 2026-03-23
 

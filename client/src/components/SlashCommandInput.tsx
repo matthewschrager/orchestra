@@ -89,7 +89,7 @@ export function SlashCommandInput({
       }
       if (
         e.key === "Tab" ||
-        (e.key === "Enter" && !e.metaKey && !e.ctrlKey)
+        (e.key === "Enter" && !e.shiftKey)
       ) {
         e.preventDefault();
         if (filteredCommands[selectedIndex]) {
@@ -104,8 +104,8 @@ export function SlashCommandInput({
       }
     }
 
-    // Normal submit: Cmd/Ctrl + Enter
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    // Enter sends, Shift+Enter inserts newline (skip during IME composition)
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       onSubmit();
     }
