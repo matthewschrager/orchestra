@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.6.0] - 2026-03-23
+
+### Fixed
+
+- **Remove 30s stall timer** — The stall timer killed agent processes after 30 seconds of no stdout, causing sessions to die during long operations (thinking, tool calls). Processes in `-p` mode exit on their own; no timer needed.
+- **Deduplicate turn_end signal** — `message_stop` stream event no longer emits a bare `turn_end`; only the `result` event does (with session_id attached), preventing a race where the client saw "turn ended" before the session_id was captured for `--resume`.
+- **Attention continuationToken fallback** — Attention items now fall back to the DB-persisted session_id when the in-memory value is null (first-turn race).
+- **Skip buffer flush for superseded processes** — Killed processes no longer persist truncated JSON as assistant messages in the transcript.
+
+### Added
+
+- **Regression test** — `message_stop` stream event verified to return empty deltas (prevents re-introduction of the dual turn_end bug)
+
 ## [0.1.5.0] - 2026-03-23
 
 ### Added

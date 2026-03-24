@@ -93,6 +93,16 @@ describe("ClaudeAdapter.parseOutput", () => {
     expect(messages).toHaveLength(0);
   });
 
+  test("message_stop stream event does not emit turn_end (only result does)", () => {
+    const line = JSON.stringify({
+      type: "stream_event",
+      event: { type: "message_stop" },
+    });
+    const { messages, deltas } = adapter.parseOutput(line);
+    expect(messages).toHaveLength(0);
+    expect(deltas).toHaveLength(0);
+  });
+
   test("handles empty line gracefully", () => {
     const { messages, deltas } = adapter.parseOutput("");
     expect(messages).toHaveLength(0);
