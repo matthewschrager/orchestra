@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.8.1] - 2026-03-24
+
+### Fixed
+
+- **WorktreePathInput missing import in App.tsx** — clicking the "Isolate worktree" checkbox threw `ReferenceError: WorktreePathInput is not defined` because the component was used but never imported
+
 ## [0.1.8.0] - 2026-03-24
 
 ### Fixed
