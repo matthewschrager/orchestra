@@ -707,7 +707,10 @@ function AppInner() {
       {/* Mobile Bottom Navigation */}
       <MobileNav
         activeTab={mobileTab}
-        onTabChange={setMobileTab}
+        onTabChange={(tab) => {
+          if (tab === "sessions") setActiveThreadId(null);
+          setMobileTab(tab);
+        }}
         attentionCount={attention.pendingCount}
       />
 
