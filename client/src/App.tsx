@@ -17,6 +17,7 @@ import { MobileSessions } from "./components/MobileSessions";
 import { MobileNewSession } from "./components/MobileNewSession";
 import { usePushNotifications } from "./hooks/usePushNotifications";
 import { isAskUserTool } from "./lib/askUser";
+import { WorktreePathInput } from "./components/WorktreePathInput";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
