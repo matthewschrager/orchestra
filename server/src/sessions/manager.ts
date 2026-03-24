@@ -307,12 +307,12 @@ export class SessionManager {
         return !current || current.agentProc.proc.pid !== pid;
       })();
 
-      if (session.lineBuffer.trim()) {
+      if (session.lineBuffer.trim() && !isSuperseded) {
         const { messages, deltas, attention } = adapter.parseOutput(session.lineBuffer);
         for (const msg of messages) {
           this.persistMessage(session.threadId, msg);
         }
-        if (!isSuperseded) {
+        {
           for (const delta of deltas) {
             if (delta.deltaType === "turn_end" && delta.text) {
               session.sessionId = delta.text;
