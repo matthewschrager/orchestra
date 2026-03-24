@@ -91,7 +91,7 @@ cd server && bun run src/index.ts  # Production server
 ## Testing
 
 ```bash
-bun test                        # Run all tests (71 tests across 5 files)
+bun test                        # Run all tests (72 tests across 5 files)
 ```
 
 Tests cover renderer parsing functions, server-side Claude adapter event handling, filesystem route behavior, and attention queue CRUD operations.
