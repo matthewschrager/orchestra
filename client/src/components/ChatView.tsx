@@ -6,6 +6,7 @@ import { BashRenderer } from "./renderers/BashRenderer";
 import { ReadRenderer } from "./renderers/ReadRenderer";
 import { SearchRenderer, searchSummary } from "./renderers/SearchRenderer";
 import { SubAgentCard } from "./renderers/SubAgentCard";
+import { TodoRenderer } from "./renderers/TodoRenderer";
 
 interface Props {
   messages: Message[];
@@ -294,8 +295,8 @@ function groupConsecutiveTools(pairs: ToolPair[]): ToolPair[][] {
   let current: ToolPair[] = [];
 
   for (const pair of pairs) {
-    // AskUserQuestion always gets its own group
-    if (pair.name === "AskUserQuestion") {
+    // AskUserQuestion and TodoWrite always get their own group
+    if (pair.name === "AskUserQuestion" || pair.name === "TodoWrite") {
       if (current.length > 0) groups.push(current);
       groups.push([pair]);
       current = [];
@@ -389,6 +390,8 @@ function getRichRenderer(pair: ToolPair): React.ReactNode | null {
     case "Grep":
     case "Glob":
       return <SearchRenderer input={pair.input} output={pair.output} />;
+    case "TodoWrite":
+      return <TodoRenderer input={pair.input} />;
     default:
       return null;
   }
@@ -419,6 +422,8 @@ function ToolIcon({ name }: { name: string }) {
     case "Glob":
     case "WebSearch":
       return <svg className={cls} viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zm-1.1 3.8l3.3 3.3-1.4 1.4-3.3-3.3a5.5 5.5 0 111.4-1.4z"/></svg>;
+    case "TodoWrite":
+      return <svg className={cls} viewBox="0 0 16 16" fill="currentColor"><path d="M3 1h10a1 1 0 011 1v12a1 1 0 01-1 1H3a1 1 0 01-1-1V2a1 1 0 011-1zm1 3v1h1.5l.5-.5.5.5H8V4H4zm0 3v1h1.5l.5-.5.5.5H8V7H4zm0 3v1h1.5l.5-.5.5.5H8v-1H4zm5-6v1h3V4H9zm0 3v1h3V7H9zm0 3v1h3v-1H9z"/></svg>;
     default:
       return <span className="w-3 h-3 shrink-0 text-accent/50 text-[10px] leading-3 text-center">&#10003;</span>;
   }
@@ -642,6 +647,7 @@ const TOOL_VERBS: Record<string, [string, string]> = {
   WebFetch: ["Fetching", "Fetched"],
   NotebookEdit: ["Editing notebook", "Edited notebook"],
   AskUserQuestion: ["Asking", "Asked"],
+  TodoWrite: ["Updating tasks", "Updated tasks"],
 };
 
 function formatToolLabel(name: string, context: string, active: boolean): string {
@@ -667,6 +673,12 @@ function extractToolContext(toolName: string, input: string): string {
     if (parsed.pattern) return parsed.pattern;
     if (parsed.query) return parsed.query.slice(0, 80);
     if (parsed.url) return parsed.url;
+    if (Array.isArray(parsed.todos)) {
+      const active = parsed.todos.find((t: Record<string, unknown>) => t.status === "in_progress");
+      if (active) return (active.activeForm as string) || (active.content as string) || "";
+      const done = parsed.todos.filter((t: Record<string, unknown>) => t.status === "completed").length;
+      return `${done}/${parsed.todos.length} tasks`;
+    }
     return "";
   } catch {
     // Input is still streaming (partial JSON) — try to extract file_path
