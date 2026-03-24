@@ -27,13 +27,6 @@
   --color-accent-dim: #155e75;
   --color-accent-glow: rgba(34, 211, 238, 0.15);
 
-  /* Equalizer animation */
-  --animate-eq: eq 0.8s ease-in-out infinite;
-}
-
-@keyframes eq {
-  0%, 100% { transform: scaleY(0.25); }
-  50% { transform: scaleY(1); }
 }
 
 @keyframes stop-pulse {
