@@ -22,7 +22,6 @@ export interface ActiveSession {
   stderrBuffer: string;
   sessionId: string | null;
   cwd: string;
-  stallTimer: ReturnType<typeof setTimeout> | null;
 }
 
 type MessageListener = (threadId: string, message: MessageRow) => void;
@@ -30,8 +29,6 @@ type ThreadListener = (thread: ThreadRow) => void;
 type StreamDeltaListener = (threadId: string, delta: StreamDelta) => void;
 type AttentionListener = (threadId: string, attention: AttentionItem) => void;
 type AttentionResolvedListener = (attentionId: string, threadId: string) => void;
-
-const STALL_TIMEOUT_MS = Number(process.env.ORCHESTRA_STALL_TIMEOUT ?? 30_000);
 
 export class SessionManager {
   private sessions: Map<string, ActiveSession> = new Map();
@@ -101,7 +98,6 @@ export class SessionManager {
   stopThread(threadId: string): void {
     const session = this.sessions.get(threadId);
     if (!session) return;
-    this.clearStallTimer(session);
     // Delete from map BEFORE killing so handleExit can't race and find the session
     this.sessions.delete(threadId);
     try {
@@ -252,7 +248,6 @@ export class SessionManager {
       stderrBuffer: "",
       sessionId: resumeSessionId,
       cwd,
-      stallTimer: null,
     };
     this.sessions.set(threadId, session);
 
@@ -284,9 +279,6 @@ export class SessionManager {
         session.lineBuffer = lines.pop() || "";
 
         for (const line of lines) {
-          // Any output resets stall timer
-          this.clearStallTimer(session);
-
           const { messages, deltas, attention } = adapter.parseOutput(line);
           for (const msg of messages) {
             this.persistMessage(session.threadId, msg);
@@ -307,27 +299,33 @@ export class SessionManager {
         }
       }
 
-      // Flush remaining buffer
-      const current = this.sessions.get(session.threadId);
-      if (!current || current.agentProc.proc.pid !== pid) return;
+      // Flush remaining buffer — even if superseded, persist messages so
+      // no data is silently lost. Skip session_id updates if superseded
+      // since the new process owns the session now.
+      const isSuperseded = (() => {
+        const current = this.sessions.get(session.threadId);
+        return !current || current.agentProc.proc.pid !== pid;
+      })();
 
-      if (session.lineBuffer.trim()) {
+      if (session.lineBuffer.trim() && !isSuperseded) {
         const { messages, deltas, attention } = adapter.parseOutput(session.lineBuffer);
         for (const msg of messages) {
           this.persistMessage(session.threadId, msg);
         }
-        for (const delta of deltas) {
-          if (delta.deltaType === "turn_end" && delta.text) {
-            session.sessionId = delta.text;
-            this.persistSessionId(session.threadId, delta.text);
+        {
+          for (const delta of deltas) {
+            if (delta.deltaType === "turn_end" && delta.text) {
+              session.sessionId = delta.text;
+              this.persistSessionId(session.threadId, delta.text);
+            }
+            this.notifyStreamDelta(session.threadId, {
+              ...delta,
+              threadId: session.threadId,
+            });
           }
-          this.notifyStreamDelta(session.threadId, {
-            ...delta,
-            threadId: session.threadId,
-          });
-        }
-        if (attention) {
-          this.handleAttentionEvent(session, attention);
+          if (attention) {
+            this.handleAttentionEvent(session, attention);
+          }
         }
       }
     } catch (err) {
@@ -396,7 +394,6 @@ export class SessionManager {
     const current = this.sessions.get(threadId);
     if (!current || current.agentProc.proc.pid !== pid) return;
 
-    this.clearStallTimer(current);
     this.sessions.delete(threadId);
     this.clearMainWorktreeLock(threadId);
 
@@ -452,13 +449,18 @@ export class SessionManager {
 
   private handleAttentionEvent(session: ActiveSession, event: AttentionEvent): void {
     try {
+      // Use in-memory sessionId, falling back to DB (covers first-turn race
+      // where result event with session_id hasn't arrived yet)
+      const continuationToken = session.sessionId
+        ?? this.getPersistedSessionId(session.threadId);
+
       const row = createAttentionItem(this.db, {
         threadId: session.threadId,
         kind: event.kind,
         prompt: event.prompt,
         options: event.options ?? null,
         metadata: event.metadata ?? null,
-        continuationToken: session.sessionId,
+        continuationToken,
       });
 
       // Update thread status to "waiting"
@@ -468,31 +470,10 @@ export class SessionManager {
       // Notify attention listeners
       const item = attentionRowToApi(row);
       this.notifyAttention(session.threadId, item);
-
-      // Start stall timer — if no more output, kill the process
-      this.startStallTimer(session);
     } catch (err) {
       console.error(`Failed to create attention item for thread ${session.threadId}:`, err);
       updateThread(this.db, session.threadId, { status: "error" });
       this.notifyThread(session.threadId);
-    }
-  }
-
-  private startStallTimer(session: ActiveSession): void {
-    this.clearStallTimer(session);
-    session.stallTimer = setTimeout(() => {
-      console.log(`Stall timeout (${STALL_TIMEOUT_MS}ms) for thread ${session.threadId} — killing process`);
-      const current = this.sessions.get(session.threadId);
-      if (current && current.agentProc.proc.pid === session.agentProc.proc.pid) {
-        session.agentProc.proc.kill();
-      }
-    }, STALL_TIMEOUT_MS);
-  }
-
-  private clearStallTimer(session: ActiveSession): void {
-    if (session.stallTimer) {
-      clearTimeout(session.stallTimer);
-      session.stallTimer = null;
     }
   }
 
