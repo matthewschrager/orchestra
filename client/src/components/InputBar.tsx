@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Thread, SlashCommand } from "shared";
 import { SlashCommandInput } from "./SlashCommandInput";
+import { WorktreePathInput } from "./WorktreePathInput";
 
 interface Props {
   agents: Array<{ name: string; detected: boolean }>;
@@ -17,7 +18,7 @@ interface Props {
 function generateDefaultWorktreeName(projectName: string | null): string {
   const base = projectName || "project";
   const suffix = Math.random().toString(36).slice(2, 13);
-  return `${base}-${suffix}`;
+  return `orchestra/${base}-${suffix}`;
 }
 
 export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, pendingQuestion, onSend, onNewThread, onStop }: Props) {
@@ -119,7 +120,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
             onClick={handleSubmit}
             disabled={!input.trim()}
             className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base shrink-0"
-            title={`${navigator.platform.includes("Mac") ? "Cmd" : "Ctrl"}+Enter to send`}
+            title="Enter to send, Shift+Enter for newline"
           >
             {mode === "new" && thread ? "New" : "Send"}
           </button>
@@ -178,13 +179,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
             Isolate to worktree
           </label>
           {isolate && (
-            <input
-              type="text"
-              value={worktreeName}
-              onChange={(e) => setWorktreeName(e.target.value)}
-              className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2 font-mono flex-1 min-w-0"
-              placeholder="worktree name"
-            />
+            <WorktreePathInput value={worktreeName} onChange={setWorktreeName} compact />
           )}
         </div>
       )}

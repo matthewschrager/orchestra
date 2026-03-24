@@ -1,13 +1,14 @@
 import { useState } from "react";
 import type { ProjectWithStatus, SlashCommand } from "shared";
 import { SlashCommandInput } from "./SlashCommandInput";
+import { WorktreePathInput } from "./WorktreePathInput";
 
 interface MobileNewSessionProps {
   projects: ProjectWithStatus[];
   agents: Array<{ name: string; detected: boolean }>;
   commands: SlashCommand[];
   activeProjectId: string | null;
-  onNewThread: (agent: string, prompt: string, isolate: boolean, projectId: string) => void;
+  onNewThread: (agent: string, prompt: string, isolate: boolean, projectId: string, worktreeName?: string) => void;
 }
 
 export function MobileNewSession({
@@ -20,6 +21,11 @@ export function MobileNewSession({
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(activeProjectId);
   const [prompt, setPrompt] = useState("");
   const [isolate, setIsolate] = useState(false);
+  const [worktreeName, setWorktreeName] = useState(() => {
+    const project = projects.find((p) => p.id === activeProjectId);
+    const suffix = Math.random().toString(36).slice(2, 13);
+    return `orchestra/${project?.name ?? "project"}-${suffix}`;
+  });
   const defaultAgent = agents.find((a) => a.detected)?.name ?? "claude";
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
 
@@ -37,7 +43,7 @@ export function MobileNewSession({
 
   const handleSubmit = () => {
     if (!prompt.trim() || !selectedProjectId) return;
-    onNewThread(defaultAgent, prompt.trim(), isolate, selectedProjectId);
+    onNewThread(defaultAgent, prompt.trim(), isolate, selectedProjectId, isolate ? worktreeName : undefined);
     setPrompt("");
   };
 
@@ -54,7 +60,13 @@ export function MobileNewSession({
           {projects.map((project) => (
             <button
               key={project.id}
-              onClick={() => setSelectedProjectId(project.id)}
+              onClick={() => {
+                setSelectedProjectId(project.id);
+                if (isolate) {
+                  const suffix = Math.random().toString(36).slice(2, 13);
+                  setWorktreeName(`orchestra/${project.name}-${suffix}`);
+                }
+              }}
               className={`w-full text-left px-3 py-2.5 rounded-lg border transition-colors min-h-[44px] ${
                 selectedProjectId === project.id
                   ? "border-accent bg-accent/10 text-content-1"
@@ -90,23 +102,34 @@ export function MobileNewSession({
             />
           </div>
 
-          <div className="flex items-center justify-between mt-3">
-            <label className="flex items-center gap-2 text-sm text-content-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isolate}
-                onChange={(e) => setIsolate(e.target.checked)}
-                className="rounded"
-              />
-              Worktree
-            </label>
-            <button
-              onClick={handleSubmit}
-              disabled={!prompt.trim() || !selectedProjectId}
-              className="px-5 py-2.5 bg-accent hover:bg-accent/80 disabled:opacity-40 rounded-lg text-sm font-medium text-white min-h-[44px]"
-            >
-              Start Session
-            </button>
+          <div className="flex flex-col gap-2 mt-3">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-sm text-content-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isolate}
+                  onChange={(e) => {
+                    setIsolate(e.target.checked);
+                    if (e.target.checked) {
+                      const suffix = Math.random().toString(36).slice(2, 13);
+                      setWorktreeName(`orchestra/${selectedProject?.name ?? "project"}-${suffix}`);
+                    }
+                  }}
+                  className="rounded"
+                />
+                Isolate to worktree
+              </label>
+              <button
+                onClick={handleSubmit}
+                disabled={!prompt.trim() || !selectedProjectId}
+                className="px-5 py-2.5 bg-accent hover:bg-accent/80 disabled:opacity-40 rounded-lg text-sm font-medium text-white min-h-[44px]"
+              >
+                Start Session
+              </button>
+            </div>
+            {isolate && (
+              <WorktreePathInput value={worktreeName} onChange={setWorktreeName} />
+            )}
           </div>
         </div>
       )}
