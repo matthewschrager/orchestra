@@ -141,4 +141,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(settings),
     }),
+
+  // Tailscale
+  getTailscaleStatus: (refresh = false) =>
+    request<import("shared").TailscaleStatus>(`/tailscale/status${refresh ? "?refresh=1" : ""}`),
 };

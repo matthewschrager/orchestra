@@ -164,6 +164,25 @@ export interface Settings {
   worktreeRoot: string;
   /** Inactivity timeout in minutes — abort sessions with no SDK messages for this long (default: 30) */
   inactivityTimeoutMinutes: number;
+  /** Display-only remote URL (Tailscale HTTPS, VPN, tunnel, etc.) — shown in Settings panel */
+  remoteUrl: string;
+}
+
+// ── Tailscale Detection ─────────────────────────────────
+
+export interface TailscaleStatus {
+  installed: boolean;
+  running: boolean;
+  ip: string | null;
+  hostname: string | null;
+  httpsAvailable: boolean;
+  httpsUrl: string | null;
+  /** Whether tailscale serve maps to this Orchestra instance's port */
+  portMatch: boolean;
+  /** Orchestra server port (for generating correct tailscale serve command) */
+  orchestraPort: number;
+  /** Current remoteUrl setting value */
+  remoteUrl: string;
 }
 
 // ── API Types ───────────────────────────────────────────

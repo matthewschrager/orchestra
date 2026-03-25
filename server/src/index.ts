@@ -24,6 +24,8 @@ import {
 } from "./auth";
 
 import { TunnelManager, generateQRCodeAscii } from "./tunnel/manager";
+import { TailscaleDetector } from "./tailscale/detector";
+import { createTailscaleRoutes } from "./routes/tailscale";
 import { detectWorktree } from "./utils/git";
 import { join } from "path";
 import { homedir } from "os";
@@ -66,6 +68,7 @@ const worktreeManager = new WorktreeManager(db, getWorktreeRoot(db));
 const uploadsDir = join(DATA_DIR || join(homedir(), ".orchestra"), "uploads");
 const sessionManager = new SessionManager(db, registry, worktreeManager, uploadsDir);
 const pushManager = new PushManager(db);
+const tailscaleDetector = new TailscaleDetector(PORT);
 
 // Wire push notifications to attention events
 sessionManager.onAttention((_threadId, attention) => {
@@ -111,6 +114,7 @@ app.route("/api/attention", createAttentionRoutes(db, sessionManager));
 app.route("/api/push", createPushRoutes(pushManager));
 app.route("/api/uploads", createUploadRoutes(uploadsDir));
 app.route("/api/settings", createSettingsRoutes(db, worktreeManager));
+app.route("/api/tailscale", createTailscaleRoutes(tailscaleDetector, db));
 
 // Static frontend (production)
 app.use("/*", serveStatic({ root: "./static" }));
@@ -203,6 +207,34 @@ if (useTunnel) {
       `  SSH:       ssh -L ${PORT}:localhost:${PORT} <host>\n`,
   );
 }
+
+// ── Tailscale detection (runs regardless of isExternal) ──────
+tailscaleDetector.detect().then((ts) => {
+  if (!ts.installed) return;
+  if (!ts.running) {
+    console.log(`\n[tailscale] Installed but not running. Start with: tailscale up`);
+    return;
+  }
+
+  console.log(`\n[tailscale] Detected: ${ts.hostname || ts.ip || "unknown"}`);
+
+  if (ts.httpsAvailable && ts.portMatch && ts.httpsUrl) {
+    console.log(`[tailscale] HTTPS active: ${ts.httpsUrl}`);
+    console.log(`[tailscale] Remote access ready — open this URL on your phone.`);
+    console.log(`[tailscale] ⚠ Any device on your tailnet can access Orchestra without a token.`);
+  } else if (ts.httpsAvailable && !ts.portMatch) {
+    console.log(`[tailscale] ⚠ tailscale serve is active but not mapped to port ${PORT}.`);
+    console.log(`[tailscale] Fix: tailscale serve --bg https / http://localhost:${PORT}`);
+  } else {
+    console.log(`[tailscale] Enable remote access with push notifications:`);
+    console.log(`  tailscale serve --bg https / http://localhost:${PORT}`);
+    if (ts.hostname) {
+      console.log(`  Then access via: https://${ts.hostname}/`);
+    }
+  }
+}).catch(() => {
+  // Tailscale detection is best-effort — never block startup
+});
 
 // ── Periodic attention expiry ─────────────────────────────
 const EXPIRY_INTERVAL_MS = 60 * 60 * 1000; // every hour
