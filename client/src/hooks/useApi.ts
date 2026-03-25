@@ -102,8 +102,11 @@ export const api = {
       body: JSON.stringify(fields),
     }),
 
-  archiveThread: (id: string) =>
-    request<{ ok: boolean }>(`/threads/${id}`, { method: "DELETE" }),
+  archiveThread: (id: string, opts?: { cleanupWorktree?: boolean }) =>
+    request<{ ok: boolean; cleanupFailed?: boolean }>(
+      `/threads/${id}${opts?.cleanupWorktree ? "?cleanup_worktree=true" : ""}`,
+      { method: "DELETE" },
+    ),
 
   // Attention
   listAttention: (threadId?: string) =>

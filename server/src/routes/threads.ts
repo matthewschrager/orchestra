@@ -188,20 +188,33 @@ export function createThreadRoutes(
   });
 
   // Archive (soft-delete) thread
-  app.delete("/:id", (c) => {
+  app.delete("/:id", async (c) => {
     const threadId = c.req.param("id");
-    const thread = getThread(db, threadId);
+    const thread = getThread(db, threadId) as ThreadRow | null;
     if (!thread) return c.json({ error: "Not found" }, 404);
 
     // Stop the thread if it's running
     sessionManager.stopThread(threadId);
+
+    // Optionally cleanup worktree before archiving
+    const cleanupWorktree = c.req.query("cleanup_worktree") === "true";
+    let cleanupFailed = false;
+    if (cleanupWorktree && thread.worktree) {
+      try {
+        await worktreeManager.cleanup(threadId, thread.repo_path);
+      } catch (err) {
+        // Still archive the thread even if worktree cleanup fails
+        cleanupFailed = true;
+        console.error(`Worktree cleanup failed for thread ${threadId}:`, err);
+      }
+    }
 
     // Soft-delete by setting archived_at
     db.query(
       "UPDATE threads SET archived_at = datetime('now') WHERE id = ?",
     ).run(threadId);
 
-    return c.json({ ok: true });
+    return c.json({ ok: true, cleanupFailed });
   });
 
   return app;

@@ -425,10 +425,13 @@ function AppInner() {
     }
   };
 
-  const handleArchiveThread = async (threadId: string) => {
+  const handleArchiveThread = async (threadId: string, opts?: { cleanupWorktree?: boolean }) => {
     try {
       setError(null);
-      await api.archiveThread(threadId);
+      const result = await api.archiveThread(threadId, opts);
+      if (result.cleanupFailed) {
+        setError("Thread archived, but worktree cleanup failed — the worktree may still exist on disk.");
+      }
       setThreads((prev) => prev.filter((t) => t.id !== threadId));
       if (activeThreadId === threadId) {
         setActiveThreadId(null);
