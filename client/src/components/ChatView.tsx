@@ -99,6 +99,7 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
 
   const scrollToTop = useCallback(() => {
     isProgrammaticScroll.current = true;
+    setAutoScroll(false); // Disable auto-scroll so streaming doesn't fight the scroll-to-top
     containerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     setTimeout(() => { isProgrammaticScroll.current = false; }, 500);
   }, []);
