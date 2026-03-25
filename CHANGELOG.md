@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.13.0] - 2026-03-25
+
+### Changed
+
+- **Inactivity timeout raised to 30 minutes** — default increased from 5 min to 30 min to prevent premature termination of long-running sub-agent tasks
+- **Inactivity timeout now configurable** — new "Inactivity timeout (minutes)" setting in Settings panel; persisted to SQLite; validated between 1–1440 min; read dynamically each check interval (no restart needed)
+- **Timeout errors surfaced clearly** — timed-out sessions now show a visible error message in chat with guidance to increase the setting, status badge shows "error" (was silently "done"), and `error_message` field includes timeout details
+- **Atomic settings validation** — PATCH `/api/settings` now validates all fields before writing any, preventing partial updates on validation failure
+
+### Added
+
+- **Timeout settings tests** — 6 new tests covering valid update, lower/upper bound rejection, non-numeric rejection, atomicity with bad worktreeRoot, and default value
+
 ## [0.1.12.0] - 2026-03-25
 
 ### Added
