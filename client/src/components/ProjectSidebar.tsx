@@ -12,6 +12,7 @@ interface Props {
   onArchiveThread: (id: string, opts?: { cleanupWorktree?: boolean }) => void;
   onRemoveProject: (id: string) => void;
   onAddProject: () => void;
+  onOpenSettings: () => void;
   open: boolean;
   onClose: () => void;
 }
@@ -43,6 +44,7 @@ export function ProjectSidebar({
   onArchiveThread,
   onRemoveProject,
   onAddProject,
+  onOpenSettings,
   open,
   onClose,
 }: Props) {
@@ -246,13 +248,25 @@ export function ProjectSidebar({
           })}
         </div>
 
-        {/* Add project button */}
-        <button
-          onClick={onAddProject}
-          className="px-3 py-3 text-sm text-content-3 hover:text-content-2 hover:bg-surface-2 border-t border-edge-1 flex items-center gap-2"
-        >
-          + Add project
-        </button>
+        {/* Bottom actions */}
+        <div className="border-t border-edge-1 flex items-center">
+          <button
+            onClick={onAddProject}
+            className="flex-1 px-3 py-3 text-sm text-content-3 hover:text-content-2 hover:bg-surface-2 flex items-center gap-2"
+          >
+            + Add project
+          </button>
+          <button
+            onClick={onOpenSettings}
+            className="px-3 py-3 text-content-3 hover:text-content-2 hover:bg-surface-2 shrink-0"
+            title="Settings"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="8" cy="8" r="2.5" />
+              <path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85" />
+            </svg>
+          </button>
+        </div>
       </aside>
     </>
   );

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.12.0] - 2026-03-25
+
+### Added
+
+- **Settings menu** — new key-value settings system with SQLite `settings` table, `GET/PATCH /api/settings` REST API, and modal UI accessible via gear icon in sidebar footer and header bar
+- **Configurable worktree directory root** — first setting allows users to choose where new worktrees are created; defaults to `~/projects/worktrees`; includes input validation (type guard, absolute path enforcement, tilde expansion, directory auto-creation), error/retry state in UI, and live sync to WorktreeManager
+- **Settings tests** — 9 new tests covering defaults, persistence, tilde resolution, type validation, directory creation, and error cases
+
 ## [0.1.11.0] - 2026-03-24
 
 ### Changed
