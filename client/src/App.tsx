@@ -317,8 +317,9 @@ function AppInner() {
 
   // Fetch terminal enabled status
   useEffect(() => {
-    api<{ terminalEnabled: boolean }>("/api/status")
-      .then((s) => setTerminalEnabled(s.terminalEnabled))
+    fetch("/api/status")
+      .then((r) => r.ok ? r.json() : null)
+      .then((s) => { if (s?.terminalEnabled !== undefined) setTerminalEnabled(s.terminalEnabled); })
       .catch(() => {}); // Ignore — old server without /api/status
   }, []);
 
