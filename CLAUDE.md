@@ -33,9 +33,11 @@ orchestra/
 │       │   └── uploads.ts  File upload + serve API
 │       ├── push/           Web Push notification management
 │       │   └── manager.ts  VAPID keys, subscriptions, dispatch
+│       ├── terminal/       Integrated terminal (PTY management)
+│       │   └── manager.ts  PTY lifecycle, replay buffer, output batching
 │       ├── tunnel/         Cloudflare Tunnel integration
 │       │   └── manager.ts  Tunnel lifecycle, URL capture
-│       └── ws/handler.ts   WebSocket handler + attention events
+│       └── ws/handler.ts   WebSocket handler + attention events + terminal routing
 ├── client/          Vite + React + Tailwind frontend
 │   └── src/
 │       ├── App.tsx         Root component with auth gate + streaming reducer
@@ -55,10 +57,11 @@ orchestra/
 │       │   ├── MobileSessions.tsx Thread list for mobile
 │       │   ├── MobileNewSession.tsx New session form for mobile
 │       │   ├── SlashCommandInput.tsx Textarea with slash command autocomplete
-│       │   └── AttachmentPreview.tsx Thumbnail previews for file attachments
+│       │   ├── AttachmentPreview.tsx Thumbnail previews for file attachments
+│       │   └── TerminalPanel.tsx  Integrated xterm.js terminal
 │       ├── lib/             Shared utilities
 │       │   └── askUser.ts   AskUserQuestion parsing + inline rendering helpers
-│       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications
+│       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications, useTerminal
 └── shared/          Shared TypeScript types
 ```
 
@@ -102,6 +105,7 @@ cd server && bun run src/index.ts  # Production server
 - Inactivity timeout (5 min) replaces PID-based health check for hung SDK iterators
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
 - File attachments: paste/drag-drop/picker in InputBar → upload to DATA_DIR/uploads/ → file paths appended to Claude prompt so it can Read them → rendered inline in chat messages
+- Integrated terminal: xterm.js v6 (client) + Bun native PTY via `Bun.spawn({ terminal })` (server); TerminalManager uses event-emitter pattern (like SessionManager) with 50KB replay buffer for reconnect viewport restore, output batching at ~60fps, 15-min idle timeout, max 20 concurrent PTYs; toggle via `Ctrl+`` or header button; terminal panel sits below InputBar; PTY persists per-thread across switches (idempotent `terminal_create` returns existing); disabled when `--tunnel` is active (security); desktop only (hidden on mobile); server-side `closeForThread()` on thread archive prevents zombie PTYs
 
 ## Testing
 
@@ -109,4 +113,4 @@ cd server && bun run src/index.ts  # Production server
 bun test                        # Run all tests
 ```
 
-Tests cover renderer parsing functions, server-side Claude SDK message parsing, SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, slash command input logic, and thread archive with worktree cleanup.
+Tests cover renderer parsing functions, server-side Claude SDK message parsing, SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, and terminal manager (PTY create/close/idempotent/limits/I/O/replay buffer).

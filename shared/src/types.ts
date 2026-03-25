@@ -96,6 +96,10 @@ export type WSClientMessage =
   | { type: "send_message"; threadId: string; content: string; attachments?: Attachment[] }
   | { type: "stop_thread"; threadId: string }
   | { type: "resolve_attention"; attentionId: string; resolution: AttentionResolution }
+  | { type: "terminal_create"; threadId: string }
+  | { type: "terminal_input"; terminalId: string; data: string }
+  | { type: "terminal_resize"; terminalId: string; cols: number; rows: number }
+  | { type: "terminal_close"; terminalId: string }
   | { type: "ping" };
 
 export type WSServerMessage =
@@ -105,7 +109,11 @@ export type WSServerMessage =
   | { type: "replay_done"; threadId: string }
   | { type: "stream_delta"; delta: StreamDelta }
   | { type: "attention_required"; attention: AttentionItem }
-  | { type: "attention_resolved"; attentionId: string; threadId: string };
+  | { type: "attention_resolved"; attentionId: string; threadId: string }
+  | { type: "terminal_created"; terminalId: string; threadId: string; reconnect?: boolean; replay?: string }
+  | { type: "terminal_output"; terminalId: string; data: string }
+  | { type: "terminal_exit"; terminalId: string; exitCode: number }
+  | { type: "terminal_error"; terminalId: string; error: string };
 
 // ── Attention ──────────────────────────────────────────
 

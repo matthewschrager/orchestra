@@ -18,6 +18,8 @@ import { MobileNewSession } from "./components/MobileNewSession";
 import { usePushNotifications } from "./hooks/usePushNotifications";
 import { isAskUserTool } from "./lib/askUser";
 import { WorktreePathInput } from "./components/WorktreePathInput";
+import { useTerminal } from "./hooks/useTerminal";
+import { TerminalPanel } from "./components/TerminalPanel";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -191,6 +193,9 @@ function AppInner() {
   const [showAddProject, setShowAddProject] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalEnabled, setTerminalEnabled] = useState(true);
+  const [lastTerminalMsg, setLastTerminalMsg] = useState<WSServerMessage | null>(null);
   const [latestTodos, setLatestTodos] = useState<Map<string, TodoItem[]>>(new Map());
   const [pushBannerDismissed, setPushBannerDismissed] = useState(
     () => localStorage.getItem("orchestra_push_dismissed") === "1",
@@ -288,8 +293,51 @@ function AppInner() {
     }, []),
     onRawMessage: useCallback((msg: WSServerMessage) => {
       attention.handleWSMessage(msg);
+      // Route terminal messages
+      if (msg.type === "terminal_output" || msg.type === "terminal_exit" ||
+          msg.type === "terminal_created" || msg.type === "terminal_error") {
+        setLastTerminalMsg(msg);
+      }
     }, []), // eslint-disable-line react-hooks/exhaustive-deps
   });
+
+  // Terminal hook
+  const terminal = useTerminal({
+    threadId: activeThreadId,
+    visible: terminalOpen,
+    send,
+  });
+
+  // Route terminal WS messages to the hook
+  useEffect(() => {
+    if (lastTerminalMsg) {
+      terminal.handleMessage(lastTerminalMsg);
+    }
+  }, [lastTerminalMsg]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch terminal enabled status
+  useEffect(() => {
+    api<{ terminalEnabled: boolean }>("/api/status")
+      .then((s) => setTerminalEnabled(s.terminalEnabled))
+      .catch(() => {}); // Ignore — old server without /api/status
+  }, []);
+
+  // Keyboard shortcut: Ctrl+` / Cmd+` to toggle terminal
+  const terminalEnabledRef = useRef(terminalEnabled);
+  terminalEnabledRef.current = terminalEnabled;
+  const activeThreadIdRef = useRef(activeThreadId);
+  activeThreadIdRef.current = activeThreadId;
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "`") {
+        e.preventDefault();
+        if (!terminalEnabledRef.current || !activeThreadIdRef.current) return;
+        setTerminalOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Subscribe to active thread
   useEffect(() => {
@@ -528,6 +576,22 @@ function AppInner() {
             }`}
             title={connected ? "Connected" : "Disconnected"}
           />
+          <button
+            onClick={() => setTerminalOpen(!terminalOpen)}
+            disabled={!activeThread || !terminalEnabled}
+            className="hidden md:block px-3 py-1.5 hover:bg-surface-3 rounded-lg text-sm text-content-2 hover:text-content-1 disabled:opacity-30 disabled:cursor-not-allowed font-mono"
+            title={
+              !terminalEnabled
+                ? "Terminal disabled in tunnel mode"
+                : !activeThread
+                  ? "Select a thread to open terminal"
+                  : terminalOpen
+                    ? "Close terminal (Ctrl+`)"
+                    : "Open terminal (Ctrl+`)"
+            }
+          >
+            &gt;_
+          </button>
           {activeThread?.worktree && (
             <button
               onClick={() => setContextOpen(!contextOpen)}
@@ -629,6 +693,22 @@ function AppInner() {
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
               />
+              {activeThread && terminalEnabled && (
+                <TerminalPanel
+                  threadId={activeThread.id}
+                  visible={terminalOpen}
+                  connected={terminal.connected}
+                  exited={terminal.exited}
+                  exitCode={terminal.exitCode}
+                  error={terminal.error}
+                  replay={terminal.replay}
+                  onInput={terminal.sendInput}
+                  onResize={terminal.resize}
+                  onRestart={terminal.restart}
+                  onClose={() => setTerminalOpen(false)}
+                  lastMessage={lastTerminalMsg}
+                />
+              )}
             </>
           ) : activeProject ? (
             <ProjectEmptyState

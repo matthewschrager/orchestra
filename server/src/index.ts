@@ -15,6 +15,7 @@ import { createWSHandler } from "./ws/handler";
 import { SessionManager } from "./sessions/manager";
 import { AgentRegistry } from "./agents/registry";
 import { WorktreeManager } from "./worktrees/manager";
+import { TerminalManager } from "./terminal/manager";
 import {
   getOrCreateToken,
   isLocalRequest,
@@ -65,6 +66,7 @@ const worktreeManager = new WorktreeManager(db);
 const uploadsDir = join(DATA_DIR || join(homedir(), ".orchestra"), "uploads");
 const sessionManager = new SessionManager(db, registry, worktreeManager, uploadsDir);
 const pushManager = new PushManager(db);
+const terminalManager = new TerminalManager();
 
 // Wire push notifications to attention events
 sessionManager.onAttention((_threadId, attention) => {
@@ -102,7 +104,7 @@ app.use("/api/*", async (c, next) => {
 
 // API routes
 app.route("/api/projects", createProjectRoutes(db));
-app.route("/api/threads", createThreadRoutes(db, sessionManager, worktreeManager));
+app.route("/api/threads", createThreadRoutes(db, sessionManager, worktreeManager, terminalManager));
 app.route("/api/agents", createAgentRoutes(registry));
 app.route("/api/commands", createCommandRoutes(db));
 app.route("/api/fs", createFilesystemRoutes());
@@ -119,7 +121,13 @@ app.get("*", async (c) => {
 
 // ── Server ──────────────────────────────────────────────
 
-const wsHandler = createWSHandler(sessionManager, db);
+const terminalEnabled = !useTunnel;
+const wsHandler = createWSHandler(sessionManager, db, terminalManager, terminalEnabled);
+
+// Expose terminal + tunnel status via API
+app.get("/api/status", (c) => {
+  return c.json({ terminalEnabled, tunnelActive: useTunnel });
+});
 
 let server: ReturnType<typeof Bun.serve>;
 try {
@@ -216,6 +224,7 @@ expireAttentionItems(db);
 // causing handleExit to record false SIGTERM errors.
 function shutdown() {
   sessionManager.shuttingDown = true;
+  terminalManager.closeAll();
   tunnelManager.stop();
   sessionManager.stopAll();
   server.stop();
