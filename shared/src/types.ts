@@ -78,6 +78,12 @@ export interface StreamDelta {
   costUsd?: number;
   durationMs?: number;
   sessionId?: string;
+  /** Aggregate input tokens (including cache reads) for this turn */
+  inputTokens?: number;
+  /** Aggregate output tokens for this turn */
+  outputTokens?: number;
+  /** Model context window size (from the primary model used) */
+  contextWindow?: number;
 }
 
 // ── Turn Metrics ──────────────────────────────────────
@@ -86,6 +92,12 @@ export interface TurnMetrics {
   costUsd: number;
   durationMs: number;
   turnCount: number;
+  /** Cumulative input tokens across all turns */
+  inputTokens: number;
+  /** Cumulative output tokens across all turns */
+  outputTokens: number;
+  /** Model context window size (latest reported) */
+  contextWindow: number;
 }
 
 // ── WebSocket Messages ──────────────────────────────────

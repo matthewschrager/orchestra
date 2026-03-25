@@ -62,7 +62,7 @@ const initialStreamingState: StreamingState = {
   turnEnded: new Set(),
 };
 
-const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0 };
+const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0 };
 
 type StreamingAction =
   | { type: "delta"; delta: StreamDelta }
@@ -118,6 +118,9 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
             costUsd: prev.costUsd + (delta.costUsd ?? 0),
             durationMs: prev.durationMs + (delta.durationMs ?? 0),
             turnCount: prev.turnCount + 1,
+            inputTokens: delta.inputTokens ?? prev.inputTokens,
+            outputTokens: delta.outputTokens ?? prev.outputTokens,
+            contextWindow: Math.max(delta.contextWindow ?? 0, prev.contextWindow),
           });
           return { ...state, metrics };
         }
