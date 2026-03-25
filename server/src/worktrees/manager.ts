@@ -3,7 +3,7 @@ import { existsSync, rmSync } from "fs";
 import type { DB, ThreadRow } from "../db";
 import { getThread, updateThread } from "../db";
 
-const DEFAULT_WORKTREE_ROOT = join(
+export const DEFAULT_WORKTREE_ROOT = join(
   process.env.HOME || "~",
   "projects",
   "worktrees",
@@ -22,6 +22,15 @@ export class WorktreeManager {
     worktreeRoot?: string,
   ) {
     this.worktreeRoot = worktreeRoot || DEFAULT_WORKTREE_ROOT;
+  }
+
+  /** Update the worktree root (e.g., when settings change) */
+  setWorktreeRoot(root: string): void {
+    this.worktreeRoot = root;
+  }
+
+  getWorktreeRoot(): string {
+    return this.worktreeRoot;
   }
 
   async create(threadId: string, repoPath: string, name?: string): Promise<WorktreeInfo> {

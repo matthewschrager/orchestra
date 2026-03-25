@@ -30,7 +30,8 @@ orchestra/
 │       │   ├── filesystem.ts Directory browser API
 │       │   ├── attention.ts Attention queue API
 │       │   ├── push.ts     Push subscription API
-│       │   └── uploads.ts  File upload + serve API
+│       │   ├── uploads.ts  File upload + serve API
+│       │   └── settings.ts Settings CRUD API
 │       ├── push/           Web Push notification management
 │       │   └── manager.ts  VAPID keys, subscriptions, dispatch
 │       ├── tunnel/         Cloudflare Tunnel integration
@@ -51,6 +52,7 @@ orchestra/
 │       │       ├── SearchRenderer.tsx  Grep/Glob → match list
 │       │       └── SubAgentCard.tsx    Agent → status card
 │       │   ├── AttentionInbox.tsx  Attention queue inbox
+│       │   ├── SettingsPanel.tsx   Settings modal dialog
 │       │   ├── MobileNav.tsx      Bottom tab navigation
 │       │   ├── MobileSessions.tsx Thread list for mobile
 │       │   ├── MobileNewSession.tsx New session form for mobile
@@ -99,6 +101,7 @@ cd server && bun run src/index.ts  # Production server
 - Session abort uses AbortController; `aborted` flag distinguishes user-stop from SDK error
 - Inactivity timeout (5 min) replaces PID-based health check for hung SDK iterators
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
+- Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings` with typed `Settings` interface; gear icon in sidebar footer + header; WorktreeManager updated live on save
 - File attachments: paste/drag-drop/picker in InputBar → upload to DATA_DIR/uploads/ → file paths appended to Claude prompt so it can Read them → rendered inline in chat messages
 
 ## Testing

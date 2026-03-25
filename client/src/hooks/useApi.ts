@@ -130,4 +130,13 @@ export const api = {
       parent: string | null;
       directories: Array<{ name: string; path: string; isGitRepo: boolean }>;
     }>(`/fs/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+
+  // Settings
+  getSettings: () => request<import("shared").Settings>("/settings"),
+
+  updateSettings: (settings: Partial<import("shared").Settings>) =>
+    request<import("shared").Settings>("/settings", {
+      method: "PATCH",
+      body: JSON.stringify(settings),
+    }),
 };

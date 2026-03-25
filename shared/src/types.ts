@@ -158,6 +158,12 @@ export interface SlashCommand {
   source: "builtin" | "plugin" | "skill";
 }
 
+// ── Settings ─────────────────────────────────────────────
+
+export interface Settings {
+  worktreeRoot: string;
+}
+
 // ── API Types ───────────────────────────────────────────
 
 export interface CreateThreadRequest {
