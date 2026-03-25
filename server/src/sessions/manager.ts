@@ -112,7 +112,12 @@ export class SessionManager {
     // Start agent session
     this.startTurn(threadId, adapter, cwd, agentPrompt, null);
 
-    return getThread(this.db, threadId)!;
+    const thread = getThread(this.db, threadId)!;
+
+    // Broadcast to all WS clients so other devices see the new thread
+    this.notifyThread(threadId);
+
+    return thread;
   }
 
   stopThread(threadId: string): void {
@@ -546,7 +551,7 @@ export class SessionManager {
     }
   }
 
-  private notifyThread(threadId: string): void {
+  notifyThread(threadId: string): void {
     const thread = getThread(this.db, threadId);
     if (!thread) return;
     for (const fn of this.threadListeners) {

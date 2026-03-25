@@ -10,6 +10,13 @@
 
 - **Command discovery tests** — 23 new tests covering settings reading, plugin path resolution, enabledPlugins merge logic, `.agents/` exclusion, deduplication, route caching, and project-scoped lookups
 
+## [0.1.10.2] - 2026-03-25
+
+### Fixed
+
+- **Cross-client thread sync** — threads created or archived on one device (mobile/desktop) now appear/disappear on all connected clients in real-time via WebSocket broadcast, without requiring a page refresh
+- **Duplicate thread race condition** — guarded against the creating client seeing a duplicate sidebar entry when the WS broadcast arrives before the HTTP response
+
 ## [0.1.10.1] - 2026-03-24
 
 ### Added

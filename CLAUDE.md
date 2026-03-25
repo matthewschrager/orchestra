@@ -96,6 +96,7 @@ cd server && bun run src/index.ts  # Production server
 - WebSocket heartbeat prevents idle disconnection
 - Slash command autocompletion: scoped per project via `installed_plugins.json` + `settings.json` (global + project-level merge); `.agents/` internal skills excluded; cached per projectId
 - Worktree isolation: detectWorktree returns name for port/data separation, expanded port hash range (9999 slots)
+- Cross-client thread sync: thread creation and archival broadcast `thread_updated` via WS to all clients; client deduplicates optimistic inserts
 - Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag
 - Session abort uses AbortController; `aborted` flag distinguishes user-stop from SDK error
 - Inactivity timeout (5 min) replaces PID-based health check for hung SDK iterators

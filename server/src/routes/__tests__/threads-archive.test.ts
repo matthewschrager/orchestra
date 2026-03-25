@@ -31,6 +31,7 @@ function createTestDb(): Database {
 function createMockSessionManager(): SessionManager {
   return {
     stopThread: () => {},
+    notifyThread: () => {},
   } as unknown as SessionManager;
 }
 
