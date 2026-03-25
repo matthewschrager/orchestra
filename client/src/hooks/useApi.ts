@@ -16,6 +16,28 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   return res.json();
 }
 
+async function uploadFile(file: File): Promise<import("shared").Attachment> {
+  const token = localStorage.getItem("orchestra_auth_token");
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${BASE}/uploads`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error || res.statusText);
+  }
+
+  return res.json();
+}
+
 export const api = {
   // Projects
   listProjects: () =>
@@ -80,8 +102,11 @@ export const api = {
       body: JSON.stringify(fields),
     }),
 
-  archiveThread: (id: string) =>
-    request<{ ok: boolean }>(`/threads/${id}`, { method: "DELETE" }),
+  archiveThread: (id: string, opts?: { cleanupWorktree?: boolean }) =>
+    request<{ ok: boolean; cleanupFailed?: boolean }>(
+      `/threads/${id}${opts?.cleanupWorktree ? "?cleanup_worktree=true" : ""}`,
+      { method: "DELETE" },
+    ),
 
   // Attention
   listAttention: (threadId?: string) =>
@@ -96,6 +121,9 @@ export const api = {
     request<import("shared").SlashCommand[]>(
       `/commands${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`,
     ),
+
+  // Uploads
+  uploadFile,
 
   // Filesystem
   browsePath: (path?: string) =>

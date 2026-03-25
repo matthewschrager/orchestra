@@ -7,6 +7,8 @@ import { ReadRenderer } from "./renderers/ReadRenderer";
 import { SearchRenderer, searchSummary } from "./renderers/SearchRenderer";
 import { SubAgentCard } from "./renderers/SubAgentCard";
 import { extractQuestionPreview, formatAnswers, isAskUserTool, parseQuestions, type ParsedQuestion } from "../lib/askUser";
+import { MessageAttachments } from "./AttachmentPreview";
+import type { Attachment } from "shared";
 
 interface Props {
   messages: Message[];
@@ -105,19 +107,19 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
           {isAskUserTool(streamingTool) ? (
             <div className="my-2 max-w-[80%] rounded-lg border border-sky-500/20 bg-sky-950/20 px-4 py-3">
               <div className="flex items-center gap-2 mb-1.5 text-xs text-sky-400/80 font-medium">
-                <EqBars />
+                <Spinner />
                 <span>Agent is asking...</span>
               </div>
               {streamingToolInput && (
-                <div className="text-sm text-content-1 whitespace-pre-wrap">
-                  {extractQuestionPreview(streamingToolInput)}
+                <div className="text-sm text-content-1">
+                  <MarkdownContent content={extractQuestionPreview(streamingToolInput)} />
                   <span className="inline-block w-0.5 h-4 bg-sky-400 ml-0.5 animate-pulse align-text-bottom" />
                 </div>
               )}
             </div>
           ) : streamingTool ? (
             <div className="flex items-center gap-2 text-xs text-content-2 py-0.5">
-              <EqBars />
+              <Spinner />
               <span className="font-mono truncate">
                 {formatToolLabel(streamingTool, extractToolContext(streamingTool, streamingToolInput ?? ""), true)}
               </span>
@@ -134,7 +136,7 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
             </div>
           ) : !streamingTool ? (
             <div className="flex items-center gap-2 text-xs text-content-3 py-1">
-              <EqBars />
+              <Spinner />
               <span>Thinking...</span>
             </div>
           ) : null}
@@ -511,7 +513,9 @@ function QuestionCard({ pair, isAnswered, onSubmitAnswers }: { pair: ToolPair; i
             {q.header && (
               <div className="text-xs text-sky-400/80 font-medium mb-1">{q.header}</div>
             )}
-            <div className="text-sm text-content-1 mb-2">{q.question}</div>
+            <div className="text-sm text-content-1 mb-2">
+              <MarkdownContent content={q.question} />
+            </div>
             {q.multiSelect && (
               <div className="text-xs text-sky-400/60 mb-1.5">(select all that apply)</div>
             )}
@@ -572,13 +576,11 @@ function QuestionCard({ pair, isAnswered, onSubmitAnswers }: { pair: ToolPair; i
   );
 }
 
-function EqBars() {
+function Spinner({ className = "w-3 h-3" }: { className?: string }) {
   return (
-    <span className="inline-flex items-end gap-[2px] h-3 shrink-0">
-      <span className="w-[2px] h-full bg-accent rounded-full origin-bottom animate-eq" />
-      <span className="w-[2px] h-full bg-accent rounded-full origin-bottom animate-eq" style={{ animationDelay: "150ms" }} />
-      <span className="w-[2px] h-full bg-accent rounded-full origin-bottom animate-eq" style={{ animationDelay: "300ms" }} />
-    </span>
+    <svg className={`shrink-0 text-accent animate-spin ${className}`} viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28 10" strokeLinecap="round" />
+    </svg>
   );
 }
 
@@ -604,13 +606,19 @@ function ThreadStatusBadge({ status, errorMessage }: { status: string; errorMess
 function MessageBubble({ message }: { message: Message }) {
   // Skip empty or artifact-only messages (e.g. '""' from JSON.stringify(""))
   const trimmed = message.content.trim();
-  if (!trimmed || trimmed === '""') return null;
+  const attachments = (message.metadata?.attachments as Attachment[] | undefined) ?? [];
+  const hasAttachments = attachments.length > 0;
+
+  if (!trimmed && !hasAttachments) return null;
+  // Skip if only artifact content like '""'
+  if (trimmed === '""' && !hasAttachments) return null;
 
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] bg-accent-dim/80 border-r-2 border-r-accent/40 rounded-lg px-4 py-3 text-sm whitespace-pre-wrap text-content-1">
-          {message.content}
+        <div className="max-w-[80%] bg-accent-dim/80 border-r-2 border-r-accent/40 rounded-lg px-4 py-3 text-sm text-content-1">
+          {trimmed && <div className="whitespace-pre-wrap">{message.content}</div>}
+          {hasAttachments && <MessageAttachments attachments={attachments} />}
         </div>
       </div>
     );

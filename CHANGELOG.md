@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.1.10.1] - 2026-03-24
+
+### Added
+
+- **Worktree cleanup on thread archive** — when archiving a thread with a worktree, a confirm dialog asks whether to also delete the worktree and branch; cleanup failures surface as a warning instead of being silently swallowed
+- **Thread archive route tests** — 5 new tests covering archive with/without worktree cleanup, cleanup failure handling, and 404 for missing threads
+
+### Fixed
+
+- **`waiting` status indicator in sidebar** — restored amber pulsing dot for threads awaiting user input (previously showed as generic gray dot)
+
+## [0.1.10.0] - 2026-03-24
+
+### Changed
+
+- **CLI-to-SDK migration** — replaced CLI subprocess spawning (`claude -p --output-format stream-json`) with `@anthropic-ai/claude-agent-sdk` `query()` API; SDK manages subprocess lifecycle internally
+- **Simplified session manager** — removed ~350 lines of process lifecycle code (readStream, collectStderr, handleExit, PID health checks, orphan process cleanup); replaced with async iterator consumption via `consumeStream()`
+- **Rewritten agent interfaces** — `AgentProcess`/`SpawnOpts` replaced with `AgentSession`/`StartOpts`; parser now stateful per-session via `parseMessage()` on `AgentSession`
+
+### Added
+
+- **SDK error detection** — surfaces SDK error results (error subtypes, zero-turn successes) as visible error messages instead of silent completion
+- **Inactivity timeout** — 5-minute watchdog replaces PID-based health check for hung SDK iterators
+- **AbortController cancellation** — `aborted` flag distinguishes user-initiated stops from SDK errors
+- **Debug logging** — gated behind `ORCHESTRA_DEBUG=1` for diagnosing SDK issues
+- **User/project settings loading** — `settingSources: ["user", "project", "local"]` ensures CLI skills and plugins are available through the SDK
+
+### Fixed
+
+- **Slash command handling in SDK** — `/autoplan` and other skills now work correctly by loading user settings (previously returned "Unknown skill" silently)
+- **Tool use deduplication** — stream_event and assistant events for the same tool_use_id no longer produce duplicate messages
+
+## [0.1.9.1] - 2026-03-24
+
+### Fixed
+
+- **WorktreePathInput missing import in App.tsx** — clicking the "Isolate worktree" checkbox threw `ReferenceError: WorktreePathInput is not defined` because the component was used but never imported
+
+## [0.1.9.0] - 2026-03-24
+
+### Changed
+
+- **Unified spinner indicators** — replaced pulsing green dots and equalizer bars with a consistent spinning circle across sidebar, chat, and status bar
+- **Idle threads show no indicator** — done/paused threads no longer display status dots in sidebars; only running/pending/waiting/error states show indicators
+- **Removed cost display** — removed `$` cost from both idle session summary and active metrics strip in StickyRunBar
+
+### Added
+
+- **Cursor-aware slash command autocomplete** — typing `/` anywhere in the input (not just at the start) triggers command autocomplete with mid-text token replacement and highlighting
+- **Slash command input tests** — 19 unit tests for `findSlashToken`, `buildHighlightSegments`, and `replaceSlashToken` pure functions
+
+### Removed
+
+- **Equalizer animation** — removed unused `animate-eq` CSS keyframes and custom property
+- **Header spinner** — removed spinning indicator next to "Orchestra" title
+
 ## [0.1.8.0] - 2026-03-24
 
 ### Fixed

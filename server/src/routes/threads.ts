@@ -49,6 +49,7 @@ export function createThreadRoutes(
       title?: string;
       isolate?: boolean;
       worktreeName?: string;
+      attachments?: import("shared").Attachment[];
     }>();
 
     if (!body.agent || !body.prompt) {
@@ -79,6 +80,7 @@ export function createThreadRoutes(
         title: body.title,
         isolate: body.isolate,
         worktreeName: body.worktreeName,
+        attachments: body.attachments,
       });
       touchProjectUpdatedAt(db, body.projectId);
       return c.json(threadRowToApi(thread), 201);
@@ -97,10 +99,13 @@ export function createThreadRoutes(
 
   // Send message to running thread
   app.post("/:id/messages", async (c) => {
-    const { content } = await c.req.json<{ content: string }>();
+    const { content, attachments } = await c.req.json<{
+      content: string;
+      attachments?: import("shared").Attachment[];
+    }>();
     if (!content) return c.json({ error: "content is required" }, 400);
     try {
-      sessionManager.sendMessage(c.req.param("id"), content);
+      sessionManager.sendMessage(c.req.param("id"), content, attachments);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 400);
@@ -183,20 +188,33 @@ export function createThreadRoutes(
   });
 
   // Archive (soft-delete) thread
-  app.delete("/:id", (c) => {
+  app.delete("/:id", async (c) => {
     const threadId = c.req.param("id");
-    const thread = getThread(db, threadId);
+    const thread = getThread(db, threadId) as ThreadRow | null;
     if (!thread) return c.json({ error: "Not found" }, 404);
 
     // Stop the thread if it's running
     sessionManager.stopThread(threadId);
+
+    // Optionally cleanup worktree before archiving
+    const cleanupWorktree = c.req.query("cleanup_worktree") === "true";
+    let cleanupFailed = false;
+    if (cleanupWorktree && thread.worktree) {
+      try {
+        await worktreeManager.cleanup(threadId, thread.repo_path);
+      } catch (err) {
+        // Still archive the thread even if worktree cleanup fails
+        cleanupFailed = true;
+        console.error(`Worktree cleanup failed for thread ${threadId}:`, err);
+      }
+    }
 
     // Soft-delete by setting archived_at
     db.query(
       "UPDATE threads SET archived_at = datetime('now') WHERE id = ?",
     ).run(threadId);
 
-    return c.json({ ok: true });
+    return c.json({ ok: true, cleanupFailed });
   });
 
   return app;

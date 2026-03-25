@@ -8,6 +8,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.81",
     "hono": "^4",
     "nanoid": "^5",
     "shared": "workspace:*",

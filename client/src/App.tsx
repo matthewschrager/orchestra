@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { AttentionResolution, Message, ProjectWithStatus, SlashCommand, StreamDelta, Thread, TodoItem, TurnMetrics, WSServerMessage } from "shared";
+import type { Attachment, AttentionResolution, Message, ProjectWithStatus, SlashCommand, StreamDelta, Thread, TodoItem, TurnMetrics, WSServerMessage } from "shared";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { api } from "./hooks/useApi";
 import { useAttention } from "./hooks/useAttention";
@@ -17,6 +17,7 @@ import { MobileSessions } from "./components/MobileSessions";
 import { MobileNewSession } from "./components/MobileNewSession";
 import { usePushNotifications } from "./hooks/usePushNotifications";
 import { isAskUserTool } from "./lib/askUser";
+import { WorktreePathInput } from "./components/WorktreePathInput";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -190,12 +191,10 @@ function AppInner() {
   const [showAddProject, setShowAddProject] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
-  const [desktopDrawerOpen, setDesktopDrawerOpen] = useState(false);
   const [latestTodos, setLatestTodos] = useState<Map<string, TodoItem[]>>(new Map());
   const [pushBannerDismissed, setPushBannerDismissed] = useState(
     () => localStorage.getItem("orchestra_push_dismissed") === "1",
   );
-  const drawerRef = useRef<HTMLDivElement>(null);
   const [streaming, dispatchStreaming] = useReducer(streamingReducer, initialStreamingState);
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
@@ -207,18 +206,6 @@ function AppInner() {
   // Push notifications
   const push = usePushNotifications();
   const showPushBanner = push.supported && push.permission === "default" && !push.subscribed && !pushBannerDismissed;
-
-  // Close desktop drawer on click outside
-  useEffect(() => {
-    if (!desktopDrawerOpen) return;
-    function handleClick(e: MouseEvent) {
-      if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
-        setDesktopDrawerOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [desktopDrawerOpen]);
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
@@ -376,7 +363,7 @@ function AppInner() {
 
   // ── Actions ───────────────────────────────────────────
 
-  const handleNewThread = async (agent: string, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string) => {
+  const handleNewThread = async (agent: string, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => {
     const pid = projectId || activeProjectId;
     if (!pid) {
       setError("Select a project first");
@@ -384,7 +371,7 @@ function AppInner() {
     }
     try {
       setError(null);
-      const thread = await api.createThread({ agent, prompt, projectId: pid, isolate, worktreeName });
+      const thread = await api.createThread({ agent, prompt, projectId: pid, isolate, worktreeName, attachments });
       setThreads((prev) => [thread, ...prev]);
       setActiveThreadId(thread.id);
       setActiveProjectId(pid);
@@ -397,12 +384,12 @@ function AppInner() {
     }
   };
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content: string, attachments?: Attachment[]) => {
     if (!activeThreadId) return;
     try {
       setError(null);
       turnStartRef.current = Date.now();
-      send({ type: "send_message", threadId: activeThreadId, content });
+      send({ type: "send_message", threadId: activeThreadId, content, attachments });
     } catch (err) {
       setError((err as Error).message);
     }
@@ -447,10 +434,13 @@ function AppInner() {
     }
   };
 
-  const handleArchiveThread = async (threadId: string) => {
+  const handleArchiveThread = async (threadId: string, opts?: { cleanupWorktree?: boolean }) => {
     try {
       setError(null);
-      await api.archiveThread(threadId);
+      const result = await api.archiveThread(threadId, opts);
+      if (result.cleanupFailed) {
+        setError("Thread archived, but worktree cleanup failed — the worktree may still exist on disk.");
+      }
       setThreads((prev) => prev.filter((t) => t.id !== threadId));
       if (activeThreadId === threadId) {
         setActiveThreadId(null);
@@ -506,11 +496,6 @@ function AppInner() {
           >
             <MenuIcon />
           </button>
-          {activelyWorking && (
-            <svg className="w-4 h-4 shrink-0 text-accent animate-spin" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28 10" strokeLinecap="round" />
-            </svg>
-          )}
           <h1 className="text-sm font-semibold tracking-tight text-content-2 shrink-0">Orchestra</h1>
           {activeProject && (
             <span className="text-xs text-content-3 font-light shrink-0">
@@ -716,39 +701,13 @@ function AppInner() {
       {/* Mobile Bottom Navigation */}
       <MobileNav
         activeTab={mobileTab}
-        onTabChange={setMobileTab}
+        onTabChange={(tab) => {
+          if (tab === "sessions") setActiveThreadId(null);
+          setMobileTab(tab);
+        }}
         attentionCount={attention.pendingCount}
       />
 
-      {/* Desktop attention drawer (top-right) */}
-      {attention.pendingCount > 0 && (
-        <div ref={drawerRef} className="hidden md:block fixed top-3 right-4 z-30">
-          <button
-            onClick={() => setDesktopDrawerOpen((o) => !o)}
-            className="relative px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-medium hover:bg-amber-500/20"
-          >
-            {attention.pendingCount} pending
-          </button>
-          {desktopDrawerOpen && (
-            <div className="absolute top-full right-0 mt-2 w-96 max-h-[70vh] overflow-y-auto rounded-xl bg-surface-1 border border-edge-1 shadow-2xl shadow-black/40">
-              <div className="sticky top-0 bg-surface-1 border-b border-edge-1 px-4 py-2.5 z-10">
-                <h3 className="text-sm font-semibold text-content-1">Attention Queue</h3>
-              </div>
-              <AttentionInbox
-                items={attention.items}
-                onResolve={(id, res) => {
-                  handleResolveAttention(id, res);
-                  if (attention.pendingCount <= 1) setDesktopDrawerOpen(false);
-                }}
-                onNavigateToThread={(threadId) => {
-                  handleNavigateToThread(threadId);
-                  setDesktopDrawerOpen(false);
-                }}
-              />
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Add Project Dialog */}
       {showAddProject && (

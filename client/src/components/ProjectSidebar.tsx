@@ -9,7 +9,7 @@ interface Props {
   onSelectProject: (id: string) => void;
   onSelectThread: (id: string) => void;
   onNewThread: (projectId: string) => void;
-  onArchiveThread: (id: string) => void;
+  onArchiveThread: (id: string, opts?: { cleanupWorktree?: boolean }) => void;
   onRemoveProject: (id: string) => void;
   onAddProject: () => void;
   open: boolean;
@@ -17,8 +17,8 @@ interface Props {
 }
 
 const STATUS_DOT: Record<string, string> = {
-  running: "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)] animate-pulse",
   pending: "bg-amber-400",
+  waiting: "bg-amber-400 animate-pulse",
   paused: "bg-content-3",
   done: "bg-accent/60",
   error: "bg-red-400 shadow-[0_0_4px_rgba(248,113,113,0.5)]",
@@ -173,9 +173,15 @@ export function ProjectSidebar({
                           >
                             {/* Line 1: title */}
                             <div className="flex items-center gap-2 min-w-0">
-                              <span
-                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[thread.status] || "bg-content-3"}`}
-                              />
+                              {thread.status === "running" ? (
+                                <svg className="w-3 h-3 shrink-0 text-accent animate-spin" viewBox="0 0 16 16" fill="none">
+                                  <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28 10" strokeLinecap="round" />
+                                </svg>
+                              ) : STATUS_DOT[thread.status] ? (
+                                <span
+                                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[thread.status]}`}
+                                />
+                              ) : null}
                               <span className={`text-sm truncate flex-1 ${isDone ? "text-content-2" : ""}`}>
                                 {thread.title}
                               </span>
@@ -200,7 +206,16 @@ export function ProjectSidebar({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              onArchiveThread(thread.id);
+                              if (thread.worktree) {
+                                const cleanup = confirm(
+                                  `This thread has a worktree. Also delete the worktree and branch?\n\n` +
+                                  `OK = archive thread + delete worktree\n` +
+                                  `Cancel = archive thread only (worktree kept)`,
+                                );
+                                onArchiveThread(thread.id, { cleanupWorktree: cleanup });
+                              } else {
+                                onArchiveThread(thread.id);
+                              }
                             }}
                             className="opacity-0 group-hover:opacity-100 px-2 py-2.5 mr-1 text-content-3 hover:text-red-400 shrink-0"
                             title="Archive thread"

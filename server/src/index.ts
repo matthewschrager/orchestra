@@ -9,6 +9,7 @@ import { createCommandRoutes } from "./routes/commands";
 import { createFilesystemRoutes } from "./routes/filesystem";
 import { createAttentionRoutes } from "./routes/attention";
 import { createPushRoutes } from "./routes/push";
+import { createUploadRoutes } from "./routes/uploads";
 import { PushManager } from "./push/manager";
 import { createWSHandler } from "./ws/handler";
 import { SessionManager } from "./sessions/manager";
@@ -61,7 +62,8 @@ const isExternal = useTunnel || HOST !== "127.0.0.1" && HOST !== "localhost";
 const db = createDb(DATA_DIR);
 const registry = new AgentRegistry();
 const worktreeManager = new WorktreeManager(db);
-const sessionManager = new SessionManager(db, registry, worktreeManager);
+const uploadsDir = join(DATA_DIR || join(homedir(), ".orchestra"), "uploads");
+const sessionManager = new SessionManager(db, registry, worktreeManager, uploadsDir);
 const pushManager = new PushManager(db);
 
 // Wire push notifications to attention events
@@ -106,6 +108,7 @@ app.route("/api/commands", createCommandRoutes(db));
 app.route("/api/fs", createFilesystemRoutes());
 app.route("/api/attention", createAttentionRoutes(db, sessionManager));
 app.route("/api/push", createPushRoutes(pushManager));
+app.route("/api/uploads", createUploadRoutes(uploadsDir));
 
 // Static frontend (production)
 app.use("/*", serveStatic({ root: "./static" }));

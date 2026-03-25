@@ -1,11 +1,11 @@
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AgentAdapter,
-  AgentOutputParser,
-  AgentProcess,
+  AgentSession,
   AttentionEvent,
   ParsedMessage,
   ParseResult,
-  SpawnOpts,
+  StartOpts,
 } from "./types";
 
 /** Tool names that trigger attention events */
@@ -16,9 +16,8 @@ export class ClaudeAdapter implements AgentAdapter {
 
   async detect(): Promise<boolean> {
     try {
-      const proc = Bun.spawn(["which", "claude"], { stdout: "pipe", stderr: "pipe" });
-      await proc.exited;
-      return proc.exitCode === 0;
+      await import("@anthropic-ai/claude-agent-sdk");
+      return true;
     } catch {
       return false;
     }
@@ -26,53 +25,50 @@ export class ClaudeAdapter implements AgentAdapter {
 
   async getVersion(): Promise<string | null> {
     try {
-      const proc = Bun.spawn(["claude", "--version"], { stdout: "pipe", stderr: "pipe" });
-      const text = await new Response(proc.stdout).text();
-      await proc.exited;
-      return text.trim() || null;
+      const { readFileSync } = await import("fs");
+      const { dirname, join } = await import("path");
+      const sdkEntry = Bun.resolveSync("@anthropic-ai/claude-agent-sdk", process.cwd());
+      const pkg = JSON.parse(readFileSync(join(dirname(sdkEntry), "package.json"), "utf-8"));
+      return pkg.version ?? null;
     } catch {
       return null;
     }
   }
 
-  spawn(opts: SpawnOpts): AgentProcess {
-    const args = [
-      "--output-format", "stream-json",
-      "--include-partial-messages",
-      ...this.getBypassFlags(),
-      "--verbose",
-      "-p", opts.prompt,
-    ];
+  start(opts: StartOpts): AgentSession {
+    const abortController = new AbortController();
 
-    if (opts.resumeSessionId) {
-      args.push("--resume", opts.resumeSessionId);
-    }
-
-    const proc = Bun.spawn(["claude", ...args], {
-      cwd: opts.cwd,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, ...opts.env },
+    const iter = query({
+      prompt: opts.prompt,
+      options: {
+        cwd: opts.cwd,
+        resume: opts.resumeSessionId,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        includePartialMessages: true,
+        settingSources: ["user", "project", "local"],
+        abortController,
+      },
     });
 
-    return { proc };
-  }
+    const parser = new ClaudeParser();
 
-  createParser(): AgentOutputParser {
-    return new ClaudeParser();
+    return {
+      messages: iter,
+      abort: () => abortController.abort(),
+      parseMessage: (msg: unknown) => parser.handleMessage(msg),
+      sessionId: opts.resumeSessionId,
+    };
   }
 
   supportsResume(): boolean {
     return true;
   }
-
-  getBypassFlags(): string[] {
-    return ["--dangerously-skip-permissions"];
-  }
 }
 
-class ClaudeParser implements AgentOutputParser {
+// ── Parser ──────────────────────────────────────────────────
+
+class ClaudeParser {
   private readonly activeToolBlocks = new Map<number, ActiveToolBlock>();
   private readonly activeTextBlocks = new Map<number, string>();
   /** Maps tool_use_id → tool_name for pairing and deduplication */
@@ -81,32 +77,38 @@ class ClaudeParser implements AgentOutputParser {
   private readonly persistedToolUseIds = new Set<string>();
   private readonly emittedAttentionKeys = new Set<string>();
 
-  parseOutput(line: string): ParseResult {
-    const trimmed = line.trim();
-    if (!trimmed) return { messages: [], deltas: [] };
+  handleMessage(msg: unknown): ParseResult {
+    // All SDK messages have a `type` field
+    const event = msg as Record<string, unknown>;
+    const type = event.type as string;
 
-    let data: ClaudeStreamEvent;
-    try {
-      data = JSON.parse(trimmed);
-    } catch {
-      // Non-JSON line — treat as raw assistant output
-      return { messages: [{ role: "assistant", content: trimmed }], deltas: [] };
-    }
+    // Extract session_id if present (most SDK messages carry it)
+    const sessionId = typeof event.session_id === "string" && event.session_id
+      ? event.session_id
+      : undefined;
 
-    const result = this.handleEvent(data);
-    if (typeof data.session_id === "string" && data.session_id) {
-      result.sessionId ??= data.session_id;
+    const result = this.handleEvent(type, event);
+    if (sessionId) {
+      result.sessionId ??= sessionId;
     }
     return result;
   }
 
-  private handleEvent(event: ClaudeStreamEvent): ParseResult {
-    switch (event.type) {
+  private handleEvent(type: string, event: Record<string, unknown>): ParseResult {
+    switch (type) {
       case "assistant": {
-        // Text is already persisted via stream_event content_block_stop.
-        // Only extract tool_use blocks here — these may not arrive via
-        // stream_events in multi-turn conversations (e.g., after subagent execution).
-        const blocks = event.message?.content ?? [];
+        // SDKAssistantMessage: { type: "assistant", message: BetaMessage, session_id }
+        const message = event.message as { content?: unknown[] } | undefined;
+        const blocks = (message?.content ?? []) as Array<{
+          type: string;
+          text?: string;
+          id?: string;
+          name?: string;
+          input?: unknown;
+          tool_use_id?: string;
+          content?: string | Array<{ type: string; text?: string }>;
+        }>;
+
         const messages: ParsedMessage[] = [];
         let attention: AttentionEvent | undefined;
 
@@ -123,7 +125,10 @@ class ClaudeParser implements AgentOutputParser {
               toolName: block.name,
               toolInput,
             });
-            if (block.id) this.toolUseNames.set(block.id, block.name);
+            if (block.id) {
+              this.persistedToolUseIds.add(block.id);
+              this.toolUseNames.set(block.id, block.name);
+            }
             if (!attention) {
               const parsedInput = safeParseObject(toolInput);
               if (parsedInput) {
@@ -145,11 +150,15 @@ class ClaudeParser implements AgentOutputParser {
       }
 
       case "user": {
-        // Extract tool_result blocks — Claude wraps tool outputs in user events.
-        // Pair each result with its tool_use via tool_use_id → toolName lookup.
-        const userBlocks = event.message?.content ?? [];
-        const userMessages: ParsedMessage[] = [];
+        // SDKUserMessage: { type: "user", message: MessageParam, session_id }
+        const message = event.message as { content?: unknown } | undefined;
+        const userBlocks = (Array.isArray(message?.content) ? message!.content : []) as Array<{
+          type: string;
+          tool_use_id?: string;
+          content?: string | Array<{ type: string; text?: string }>;
+        }>;
 
+        const userMessages: ParsedMessage[] = [];
         for (const block of userBlocks) {
           if (block.type === "tool_result") {
             const outputContent = typeof block.content === "string"
@@ -157,7 +166,6 @@ class ClaudeParser implements AgentOutputParser {
               : Array.isArray(block.content)
                 ? block.content.filter(b => b.type === "text").map(b => b.text ?? "").join("")
                 : "";
-            // Look up the tool name from the corresponding tool_use
             const toolName = block.tool_use_id
               ? this.toolUseNames.get(block.tool_use_id)
               : undefined;
@@ -174,29 +182,44 @@ class ClaudeParser implements AgentOutputParser {
       }
 
       case "result": {
-        // Don't persist text — the `assistant` event already captured it.
-        // Emit metrics delta with cost/duration, then turn_end with session_id.
-        const deltas: Array<{ deltaType: string; text?: string; costUsd?: number; durationMs?: number }> = [];
-        const costUsd = event.cost_usd ?? event.total_cost_usd;
-        if (costUsd !== undefined || event.duration_ms !== undefined) {
-          deltas.push({
-            deltaType: "metrics",
-            costUsd,
-            durationMs: event.duration_ms,
-          });
+        // SDKResultMessage: SDKResultSuccess | SDKResultError
+        // SDKResultError has subtype: "error_during_execution" | "error_max_turns" | etc.
+        const deltas: ParseResult["deltas"] = [];
+        const costUsd = event.total_cost_usd as number | undefined;
+        const durationMs = event.duration_ms as number | undefined;
+        const subtype = event.subtype as string | undefined;
+        const isError = event.is_error as boolean | undefined;
+        const errors = event.errors as string[] | undefined;
+
+        if (costUsd !== undefined || durationMs !== undefined) {
+          deltas.push({ deltaType: "metrics", costUsd, durationMs });
         }
-        // Always emit turn_end on result — don't gate on session_id presence.
-        // session_id is piggybacked when available, but the turn is over regardless.
         deltas.push({
           deltaType: "turn_end",
-          text: event.session_id || undefined,
+          text: (event.session_id as string) || undefined,
         });
 
         const resultParse: ParseResult = { messages: [], deltas };
 
-        // Fallback: some AskUserQuestion calls only surface in permission_denials.
-        if (event.permission_denials && Array.isArray(event.permission_denials)) {
-          for (const denial of event.permission_denials) {
+        // Detect SDK error results or zero-turn successes (no model interaction)
+        const numTurns = event.num_turns as number | undefined;
+        if (isError || (subtype && subtype.startsWith("error_"))) {
+          const errorDetail = errors?.join("; ") || subtype || "unknown SDK error";
+          resultParse.error = errorDetail;
+        } else if (subtype === "success" && numTurns === 0) {
+          const resultText = event.result as string | undefined;
+          resultParse.error = resultText || "SDK completed with zero model turns";
+        }
+
+        // Check permission_denials for AskUserQuestion (fallback detection)
+        const denials = event.permission_denials as Array<{
+          tool_name: string;
+          tool_use_id: string;
+          tool_input: Record<string, unknown>;
+        }> | undefined;
+
+        if (denials && Array.isArray(denials)) {
+          for (const denial of denials) {
             const attention = this.maybeExtractAskUserAttention(
               denial.tool_name,
               denial.tool_input,
@@ -213,11 +236,18 @@ class ClaudeParser implements AgentOutputParser {
       }
 
       case "system": {
-        // Surface user-facing system messages, but ignore init envelopes that only
-        // carry metadata like tools/session_id.
-        const sysContent = typeof event.content === "string"
-          ? event.content
-          : event.content ? JSON.stringify(event.content) : "";
+        // SDKSystemMessage: { type: "system", subtype: "init" | "compact_boundary", ... }
+        // Skip init envelopes — they only carry metadata (tools, session_id, etc.)
+        const subtype = event.subtype as string | undefined;
+        if (subtype === "init" || subtype === "compact_boundary") {
+          return { messages: [], deltas: [] };
+        }
+
+        // For any other system subtype, surface content if present
+        const content = event.content;
+        const sysContent = typeof content === "string"
+          ? content
+          : content ? JSON.stringify(content) : "";
         if (!sysContent) return { messages: [], deltas: [] };
         return {
           messages: [{ role: "assistant", content: sysContent }],
@@ -225,59 +255,31 @@ class ClaudeParser implements AgentOutputParser {
         };
       }
 
-      case "tool_use": {
-        const toolName = event.tool?.name ?? "unknown";
-        const toolInput = event.tool?.input as Record<string, unknown> | undefined;
-        const serializedInput = serializeToolInput(toolInput);
-        const result: ParseResult = {
-          messages: [
-            {
-              role: "tool",
-              content: "",
-              toolName,
-              toolInput: serializedInput,
-            },
-          ],
-          deltas: [],
-        };
-
-        const attention = this.maybeExtractAskUserAttention(
-          toolName,
-          toolInput,
-          event.tool?.id,
-          serializedInput,
-        );
-        if (attention) {
-          result.attention = attention;
-        }
-
-        return result;
-      }
-
-      case "tool_result":
-        return {
-          messages: [
-            {
-              role: "tool",
-              content: typeof event.content === "string" ? event.content : JSON.stringify(event.content ?? ""),
-              toolName: event.tool_name ?? undefined,
-              toolOutput: typeof event.content === "string" ? event.content : JSON.stringify(event.content ?? ""),
-            },
-          ],
-          deltas: [],
-        };
-
-      // ── Stream events (real-time deltas + tool persistence) ──
       case "stream_event":
         return this.handleStreamEvent(event);
 
       // Known event types that carry no user-visible content
       case "rate_limit_event":
+      case "auth_status":
+      case "status":
+      case "api_retry":
+      case "local_command_output":
+      case "hook_started":
+      case "hook_progress":
+      case "hook_response":
+      case "tool_progress":
+      case "task_notification":
+      case "task_started":
+      case "task_progress":
+      case "files_persisted":
+      case "tool_use_summary":
+      case "elicitation_complete":
+      case "prompt_suggestion":
         return { messages: [], deltas: [] };
 
       default:
-        if (event.type) {
-          console.warn(`[claude] Unknown event type: ${event.type}`, JSON.stringify(event).slice(0, 200));
+        if (type) {
+          console.warn(`[claude] Unknown SDK message type: ${type}`);
         }
         return { messages: [], deltas: [] };
     }
@@ -313,14 +315,19 @@ class ClaudeParser implements AgentOutputParser {
     };
   }
 
-  private handleStreamEvent(event: ClaudeStreamEvent): ParseResult {
-    const inner = event.event;
+  private handleStreamEvent(event: Record<string, unknown>): ParseResult {
+    const inner = event.event as Record<string, unknown> | undefined;
     if (!inner || !inner.type) return { messages: [], deltas: [] };
-    const blockKey = inner.index ?? -1;
+    const blockKey = (inner.index as number) ?? -1;
 
-    switch (inner.type) {
+    switch (inner.type as string) {
       case "content_block_start": {
-        const block = inner.content_block;
+        const block = inner.content_block as {
+          type: string;
+          id?: string;
+          name?: string;
+          input?: unknown;
+        } | undefined;
         if (block?.type === "tool_use" && block.name) {
           this.activeToolBlocks.set(blockKey, {
             id: block.id,
@@ -328,7 +335,6 @@ class ClaudeParser implements AgentOutputParser {
             initialInput: serializeToolInput(block.input),
             streamedInput: "",
           });
-          // Track tool_use_id → name so user-event tool_results can be paired
           if (block.id) this.toolUseNames.set(block.id, block.name);
           return { messages: [], deltas: [{ deltaType: "tool_start", toolName: block.name }] };
         }
@@ -339,10 +345,13 @@ class ClaudeParser implements AgentOutputParser {
       }
 
       case "content_block_delta": {
-        const delta = inner.delta;
+        const delta = inner.delta as {
+          type: string;
+          text?: string;
+          partial_json?: string;
+        } | undefined;
         if (!delta) return { messages: [], deltas: [] };
         if (delta.type === "text_delta" && delta.text) {
-          // Accumulate text for persistence on content_block_stop
           const existing = this.activeTextBlocks.get(blockKey);
           if (existing !== undefined) {
             this.activeTextBlocks.set(blockKey, existing + delta.text);
@@ -366,6 +375,14 @@ class ClaudeParser implements AgentOutputParser {
         // Handle completed tool blocks
         const toolBlock = this.activeToolBlocks.get(blockKey);
         if (toolBlock) {
+          this.activeToolBlocks.delete(blockKey);
+
+          // Skip if already persisted via tool_use or assistant event (reverse-order dedup)
+          if (toolBlock.id && this.persistedToolUseIds.has(toolBlock.id)) {
+            return { messages: [], deltas: [{ deltaType: "tool_end" }] };
+          }
+          if (toolBlock.id) this.persistedToolUseIds.add(toolBlock.id);
+
           const toolInput = finalizeToolInput(toolBlock);
           const msg: ParsedMessage = {
             role: "tool",
@@ -373,8 +390,6 @@ class ClaudeParser implements AgentOutputParser {
             toolName: toolBlock.name,
             toolInput,
           };
-          this.activeToolBlocks.delete(blockKey);
-          if (toolBlock.id) this.persistedToolUseIds.add(toolBlock.id);
 
           let attention: AttentionEvent | undefined;
           const parsedToolInput = safeParseObject(toolInput);
@@ -423,54 +438,7 @@ class ClaudeParser implements AgentOutputParser {
   }
 }
 
-// ── Claude stream-json event types ──────────────────────
-
-interface ClaudeStreamEvent {
-  type: string;
-  subtype?: string;
-  message?: {
-    role?: string;
-    content: Array<{
-      type: string;
-      text?: string;
-      // tool_use fields
-      id?: string;
-      name?: string;
-      input?: unknown;
-      // tool_result fields
-      tool_use_id?: string;
-      content?: string | Array<{ type: string; text?: string }>;
-      is_error?: boolean;
-    }>;
-  };
-  result?: string | { text?: string };
-  cost_usd?: number;
-  total_cost_usd?: number;
-  duration_ms?: number;
-  session_id?: string;
-  tool?: { id?: string; name?: string; input?: unknown };
-  tool_name?: string;
-  content?: unknown;
-  // permission_denials from result event (AskUserQuestion gets denied in -p mode)
-  permission_denials?: Array<{
-    tool_name: string;
-    tool_use_id: string;
-    tool_input: Record<string, unknown>;
-  }>;
-  // For stream_event wrapper
-  event?: {
-    type: string;
-    index?: number;
-    content_block?: { type: string; id?: string; name?: string; input?: unknown };
-    delta?: {
-      type: string;
-      text?: string;
-      partial_json?: string;
-      thinking?: string;
-      signature?: string;
-    };
-  };
-}
+// ── Helpers ──────────────────────────────────────────────────
 
 interface ActiveToolBlock {
   id?: string;
@@ -530,3 +498,6 @@ function safeParseObject(value: string): Record<string, unknown> | undefined {
     return undefined;
   }
 }
+
+// Export helpers for tests
+export { serializeToolInput, finalizeToolInput, safeParseObject, ClaudeParser };
