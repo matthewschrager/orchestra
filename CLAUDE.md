@@ -77,7 +77,8 @@ cd server && bun run src/index.ts  # Production server
 ## Key design decisions
 
 - Agents use `@anthropic-ai/claude-agent-sdk` (pinned v0.2.81) — SDK manages subprocess lifecycle internally
-- Claude Code sessions use `query()` with `includePartialMessages: true` for streaming, `resume` for multi-turn
+- **Persistent sessions**: Claude Code sessions use a long-lived `Query` object per thread — subprocess stays alive between turns, follow-ups injected via `streamInput()`. Eliminates MCP reconnection delay on follow-up messages. State machine: `thinking → idle/waiting → thinking`. Falls back to legacy `resume` path if subprocess crashes.
+- Legacy sessions (non-persistent adapters): `query()` with `resume` per turn
 - SDK options: `permissionMode: "bypassPermissions"`, `cwd` per-call for multi-project isolation
 - Multi-project: single server manages multiple registered git repos via `projects` table
 - Multiple threads can run concurrently on the same project's main worktree
@@ -101,7 +102,7 @@ cd server && bun run src/index.ts  # Production server
 - Worktree branching: `git worktree add` always branches from detected main/master, not HEAD — prevents inheriting polluted checkout state from non-isolated agents
 - Cross-client thread sync: thread creation and archival broadcast `thread_updated` via WS to all clients; client deduplicates optimistic inserts
 - Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag
-- Session abort uses AbortController; `aborted` flag distinguishes user-stop from SDK error
+- Session abort: persistent sessions use `Query.close()`; legacy sessions use AbortController. `aborted` flag distinguishes user-stop from SDK error
 - Inactivity timeout (default 30 min, configurable via Settings) replaces PID-based health check for hung SDK iterators
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
 - Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings` with typed `Settings` interface; gear icon in sidebar footer + header; WorktreeManager updated live on save
