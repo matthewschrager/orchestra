@@ -101,7 +101,7 @@ cd server && bun run src/index.ts  # Production server
 - Cross-client thread sync: thread creation and archival broadcast `thread_updated` via WS to all clients; client deduplicates optimistic inserts
 - Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag
 - Session abort uses AbortController; `aborted` flag distinguishes user-stop from SDK error
-- Inactivity timeout (5 min) replaces PID-based health check for hung SDK iterators
+- Inactivity timeout (default 30 min, configurable via Settings) replaces PID-based health check for hung SDK iterators
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
 - Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings` with typed `Settings` interface; gear icon in sidebar footer + header; WorktreeManager updated live on save
 - File attachments: paste/drag-drop/picker in InputBar → upload to DATA_DIR/uploads/ → file paths appended to Claude prompt so it can Read them → rendered inline in chat messages

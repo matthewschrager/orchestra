@@ -173,6 +173,79 @@ describe("PATCH /settings", () => {
     rmSync(tmp, { recursive: true });
   });
 
+  test("updates inactivityTimeoutMinutes", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inactivityTimeoutMinutes: 60 }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.inactivityTimeoutMinutes).toBe(60);
+  });
+
+  test("rejects inactivityTimeoutMinutes < 1", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inactivityTimeoutMinutes: 0 }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("between 1 and 1440");
+  });
+
+  test("rejects inactivityTimeoutMinutes > 1440", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inactivityTimeoutMinutes: 1441 }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("between 1 and 1440");
+  });
+
+  test("rejects non-numeric inactivityTimeoutMinutes", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inactivityTimeoutMinutes: "abc" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("does not apply timeout when worktreeRoot validation fails", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inactivityTimeoutMinutes: 60, worktreeRoot: "relative/bad" }),
+    });
+    expect(res.status).toBe(400);
+    // Verify timeout was NOT persisted
+    const get = await app.request("/settings");
+    const body = await get.json();
+    expect(body.inactivityTimeoutMinutes).toBe(30); // still default
+  });
+
+  test("GET returns default inactivityTimeoutMinutes", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings");
+    const body = await res.json();
+    expect(body.inactivityTimeoutMinutes).toBe(30);
+  });
+
   test("persists across requests", async () => {
     const db = createTestDb();
     const { app } = createApp(db);

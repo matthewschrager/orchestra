@@ -6,11 +6,18 @@ import { getAllSettings, getSetting, setSetting } from "../db";
 import { DEFAULT_WORKTREE_ROOT, type WorktreeManager } from "../worktrees/manager";
 import type { Settings } from "shared";
 
+const DEFAULT_INACTIVITY_TIMEOUT_MINUTES = 30;
+
 /** Resolve settings from DB with fallback defaults */
 function resolveSettings(db: DB): Settings {
   const raw = getAllSettings(db);
+  const timeoutRaw = raw.inactivityTimeoutMinutes;
+  const timeoutParsed = timeoutRaw ? Number(timeoutRaw) : NaN;
   return {
     worktreeRoot: raw.worktreeRoot || DEFAULT_WORKTREE_ROOT,
+    inactivityTimeoutMinutes: Number.isFinite(timeoutParsed) && timeoutParsed > 0
+      ? timeoutParsed
+      : DEFAULT_INACTIVITY_TIMEOUT_MINUTES,
   };
 }
 
@@ -23,9 +30,21 @@ export function createSettingsRoutes(db: DB, worktreeManager: WorktreeManager) {
   });
 
   // Update settings (partial patch)
+  // Validate ALL inputs before writing ANY to avoid partial-apply on error.
   app.patch("/", async (c) => {
     const body = await c.req.json<Partial<Settings>>();
 
+    // ── Phase 1: Validate (no writes) ─────────────────────
+    let validatedTimeout: number | undefined;
+    if (body.inactivityTimeoutMinutes !== undefined) {
+      const val = Number(body.inactivityTimeoutMinutes);
+      if (!Number.isFinite(val) || val < 1 || val > 1440) {
+        return c.json({ error: "inactivityTimeoutMinutes must be a number between 1 and 1440" }, 400);
+      }
+      validatedTimeout = val;
+    }
+
+    let resolvedWorktreeRoot: string | undefined;
     if (body.worktreeRoot !== undefined) {
       if (typeof body.worktreeRoot !== "string") {
         return c.json({ error: "worktreeRoot must be a string" }, 400);
@@ -52,8 +71,16 @@ export function createSettingsRoutes(db: DB, worktreeManager: WorktreeManager) {
         return c.json({ error: `Cannot create directory: ${resolved}` }, 400);
       }
 
-      setSetting(db, "worktreeRoot", resolved);
-      worktreeManager.setWorktreeRoot(resolved);
+      resolvedWorktreeRoot = resolved;
+    }
+
+    // ── Phase 2: Apply (all validated) ────────────────────
+    if (validatedTimeout !== undefined) {
+      setSetting(db, "inactivityTimeoutMinutes", String(validatedTimeout));
+    }
+    if (resolvedWorktreeRoot !== undefined) {
+      setSetting(db, "worktreeRoot", resolvedWorktreeRoot);
+      worktreeManager.setWorktreeRoot(resolvedWorktreeRoot);
     }
 
     return c.json(resolveSettings(db));
