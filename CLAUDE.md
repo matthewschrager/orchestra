@@ -15,7 +15,6 @@ orchestra/
 │       ├── agents/         Agent adapter interface + implementations
 │       │   ├── types.ts    AgentAdapter interface
 │       │   ├── claude.ts   Claude Code adapter
-│       │   ├── codex.ts    Codex CLI adapter
 │       │   └── registry.ts Agent registry
 │       ├── sessions/       Session lifecycle management
 │       │   └── manager.ts  SDK session orchestration, stream consumption, persistence
@@ -32,14 +31,15 @@ orchestra/
 │       │   ├── attention.ts Attention queue API
 │       │   ├── push.ts     Push subscription API
 │       │   ├── uploads.ts  File upload + serve API
-│       │   └── settings.ts Settings CRUD API
+│       │   ├── settings.ts Settings CRUD API
+│       │   └── tailscale.ts Tailscale status API
 │       ├── push/           Web Push notification management
 │       │   └── manager.ts  VAPID keys, subscriptions, dispatch
-│       ├── terminal/       Integrated terminal (PTY management)
-│       │   └── manager.ts  PTY lifecycle, replay buffer, output batching
+│       ├── tailscale/      Tailscale detection
+│       │   └── detector.ts CLI detection, IP/hostname, serve config parsing
 │       ├── tunnel/         Cloudflare Tunnel integration
 │       │   └── manager.ts  Tunnel lifecycle, URL capture
-│       └── ws/handler.ts   WebSocket handler + attention events + terminal routing
+│       └── ws/handler.ts   WebSocket handler + attention events
 ├── client/          Vite + React + Tailwind frontend
 │   └── src/
 │       ├── App.tsx         Root component with auth gate + streaming reducer
@@ -56,15 +56,15 @@ orchestra/
 │       │       └── SubAgentCard.tsx    Agent → status card
 │       │   ├── AttentionInbox.tsx  Attention queue inbox
 │       │   ├── SettingsPanel.tsx   Settings modal dialog
+│       │   ├── RemoteAccessSettings.tsx Remote Access section (Tailscale detection + guided setup)
 │       │   ├── MobileNav.tsx      Bottom tab navigation
 │       │   ├── MobileSessions.tsx Thread list for mobile
 │       │   ├── MobileNewSession.tsx New session form for mobile
 │       │   ├── SlashCommandInput.tsx Textarea with slash command autocomplete
-│       │   ├── AttachmentPreview.tsx Thumbnail previews for file attachments
-│       │   └── TerminalPanel.tsx  Integrated xterm.js terminal
+│       │   └── AttachmentPreview.tsx Thumbnail previews for file attachments
 │       ├── lib/             Shared utilities
 │       │   └── askUser.ts   AskUserQuestion parsing + inline rendering helpers
-│       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications, useTerminal
+│       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications
 └── shared/          Shared TypeScript types
 ```
 
@@ -81,13 +81,8 @@ cd server && bun run src/index.ts  # Production server
 ## Key design decisions
 
 - Agents use `@anthropic-ai/claude-agent-sdk` (pinned v0.2.81) — SDK manages subprocess lifecycle internally
-- Codex adapter uses `@openai/codex-sdk` (pinned v0.116.0) — ESM-only, loaded via `await import()` to avoid crash when not installed
-- Codex sessions use `Thread.runStreamed()` with item-based events; text deltas computed by diffing `agent_message.text` updates
-- Codex item types mapped to existing tool names: `command_execution` → Bash, `file_change` → Edit, `web_search` → WebSearch, `mcp_tool_call` → tool name, `todo_list` → TodoWrite
-- Codex runs with `sandboxMode: "workspace-write"`, `approvalPolicy: "never"` — no interactive permission events
 - Claude Code sessions use `query()` with `includePartialMessages: true` for streaming, `resume` for multi-turn
 - SDK options: `permissionMode: "bypassPermissions"`, `cwd` per-call for multi-project isolation
-- SessionManager is adapter-agnostic — uses `isAbortError()` helper instead of SDK-specific `AbortError` import
 - Multi-project: single server manages multiple registered git repos via `projects` table
 - Multiple threads can run concurrently on the same project's main worktree
 - Real-time streaming via ephemeral WebSocket deltas (not persisted to DB)
@@ -101,7 +96,10 @@ cd server && bun run src/index.ts  # Production server
 - Attention queue: AskUserQuestion/permission tool_use events detected in SDK message stream, persisted to `attention_required` table, broadcast to ALL WS clients (cross-thread), resolvable via REST or WS with first-caller-wins race guard
 - Session IDs persisted to `session_id` column on threads table (survives server restart)
 - Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
-- Push notifications: VAPID keys auto-generated, Web Push dispatch on attention events
+- Push notifications: VAPID keys auto-generated, Web Push dispatch on attention events; per-subscription `origin` column on `push_subscriptions` table enables per-sub `targetUrl` in push payloads for cross-origin notification deep-links
+- Service worker (`sw.js`): handles push display + notification click; uses server-provided `targetUrl` (per-subscription origin) with cross-origin fallback via `clients.openWindow`
+- Tailscale detection: `TailscaleDetector` checks CLI installation, `tailscale status --json` for IP/hostname, `tailscale serve status --json` for HTTPS config; cached with configurable TTL; results shown at startup and via `/api/tailscale/status` endpoint
+- Remote access settings: `RemoteAccessSettings` component in Settings panel shows Tailscale state (not detected / detected / HTTPS ready) with guided `tailscale serve` setup; `remoteUrl` setting (HTTPS-only, display-only) stored in settings table
 - Mobile UI: bottom tab navigation (Inbox/Sessions/New), attention inbox with interactive cards
 - Input: Enter sends, Shift+Enter for newline (with IME composition guard for CJK input)
 - AskUserQuestion rendered inline as interactive cards with answer buttons
@@ -116,7 +114,6 @@ cd server && bun run src/index.ts  # Production server
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
 - Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings` with typed `Settings` interface; gear icon in sidebar footer + header; WorktreeManager updated live on save
 - File attachments: paste/drag-drop/picker in InputBar → upload to DATA_DIR/uploads/ → file paths appended to Claude prompt so it can Read them → rendered inline in chat messages
-- Integrated terminal: xterm.js v6 (client) + Bun native PTY via `Bun.spawn({ terminal })` (server); TerminalManager uses event-emitter pattern (like SessionManager) with 50KB replay buffer for reconnect viewport restore, output batching at ~60fps, 15-min idle timeout, max 20 concurrent PTYs; toggle via `Ctrl+`` or header button; terminal panel sits below InputBar; PTY persists per-thread across switches (idempotent `terminal_create` returns existing); disabled when `--tunnel` is active (security); desktop only (hidden on mobile); server-side `closeForThread()` on thread archive prevents zombie PTYs
 
 ## Testing
 
@@ -124,4 +121,4 @@ cd server && bun run src/index.ts  # Production server
 bun test                        # Run all tests
 ```
 
-Tests cover renderer parsing functions, server-side Claude SDK message parsing (including token usage extraction from modelUsage), Codex SDK event parsing (text diffing, tool mapping, backtrack guard), SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, and terminal manager (PTY create/close/idempotent/limits/I/O/replay buffer).
+Tests cover renderer parsing functions, server-side Claude SDK message parsing (including token usage extraction from modelUsage), SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, and settings CRUD (worktreeRoot validation, inactivityTimeoutMinutes bounds, remoteUrl HTTPS enforcement).
