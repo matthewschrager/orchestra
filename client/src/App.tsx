@@ -17,6 +17,7 @@ import { MobileSessions } from "./components/MobileSessions";
 import { MobileNewSession } from "./components/MobileNewSession";
 import { usePushNotifications } from "./hooks/usePushNotifications";
 import { isAskUserTool } from "./lib/askUser";
+import { WorktreePathInput } from "./components/WorktreePathInput";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -707,7 +708,10 @@ function AppInner() {
       {/* Mobile Bottom Navigation */}
       <MobileNav
         activeTab={mobileTab}
-        onTabChange={setMobileTab}
+        onTabChange={(tab) => {
+          if (tab === "sessions") setActiveThreadId(null);
+          setMobileTab(tab);
+        }}
         attentionCount={attention.pendingCount}
       />
 

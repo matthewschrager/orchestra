@@ -109,8 +109,8 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
                 <span>Agent is asking...</span>
               </div>
               {streamingToolInput && (
-                <div className="text-sm text-content-1 whitespace-pre-wrap">
-                  {extractQuestionPreview(streamingToolInput)}
+                <div className="text-sm text-content-1">
+                  <MarkdownContent content={extractQuestionPreview(streamingToolInput)} />
                   <span className="inline-block w-0.5 h-4 bg-sky-400 ml-0.5 animate-pulse align-text-bottom" />
                 </div>
               )}
@@ -511,7 +511,9 @@ function QuestionCard({ pair, isAnswered, onSubmitAnswers }: { pair: ToolPair; i
             {q.header && (
               <div className="text-xs text-sky-400/80 font-medium mb-1">{q.header}</div>
             )}
-            <div className="text-sm text-content-1 mb-2">{q.question}</div>
+            <div className="text-sm text-content-1 mb-2">
+              <MarkdownContent content={q.question} />
+            </div>
             {q.multiSelect && (
               <div className="text-xs text-sky-400/60 mb-1.5">(select all that apply)</div>
             )}
