@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.11.1] - 2026-03-25
+
+### Changed
+
+- **Empty state reuses InputBar** — project empty state now renders the shared InputBar component instead of a standalone textarea, bringing file attachment support (paste, drag-drop, file picker) to the initial thread creation screen with zero code duplication
+
 ## [0.1.11.0] - 2026-03-24
 
 ### Changed
