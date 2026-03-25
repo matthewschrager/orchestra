@@ -14,7 +14,8 @@ import {
 import type { AgentRegistry } from "../agents/registry";
 import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage } from "../agents/types";
 import type { WorktreeManager } from "../worktrees/manager";
-import type { AttentionItem, StreamDelta } from "shared";
+import type { Attachment, AttentionItem, StreamDelta } from "shared";
+import { resolveAttachmentPaths } from "../routes/uploads";
 
 export interface ActiveSession {
   threadId: string;
@@ -55,6 +56,7 @@ export class SessionManager {
     private db: DB,
     private registry: AgentRegistry,
     private worktreeManager: WorktreeManager,
+    private uploadsDir: string,
   ) {
     this.recoverOrphanedThreads();
     this.startInactivityCheck();
@@ -70,6 +72,7 @@ export class SessionManager {
     title?: string;
     isolate?: boolean;
     worktreeName?: string;
+    attachments?: Attachment[];
   }): Promise<ThreadRow> {
     const adapter = this.registry.get(opts.agent);
     if (!adapter) throw new Error(`Unknown agent: ${opts.agent}`);
@@ -95,14 +98,19 @@ export class SessionManager {
       )
       .run(threadId, title, opts.agent, opts.repoPath, opts.projectId, worktree, branch);
 
-    // Persist user prompt as first message
+    // Validate and build prompt with attachment references
+    const validAttachments = this.validateAttachments(opts.attachments);
+    const agentPrompt = this.buildPromptWithAttachments(opts.prompt, validAttachments);
+
+    // Persist user prompt as first message (with attachment metadata)
     this.persistMessage(threadId, {
       role: "user",
       content: opts.prompt,
+      metadata: validAttachments?.length ? { attachments: validAttachments } : undefined,
     });
 
     // Start agent session
-    this.startTurn(threadId, adapter, cwd, opts.prompt, null);
+    this.startTurn(threadId, adapter, cwd, agentPrompt, null);
 
     return getThread(this.db, threadId)!;
   }
@@ -135,7 +143,7 @@ export class SessionManager {
     }
   }
 
-  sendMessage(threadId: string, content: string): void {
+  sendMessage(threadId: string, content: string, attachments?: Attachment[]): void {
     if (DEBUG) console.log(`[session] sendMessage thread=${threadId} content=${content.slice(0, 60)}`);
     const thread = getThread(this.db, threadId) as ThreadRow | null;
     if (!thread) throw new Error(`Thread ${threadId} not found`);
@@ -156,8 +164,16 @@ export class SessionManager {
       }
     }
 
-    // Persist user message
-    this.persistMessage(threadId, { role: "user", content });
+    // Validate attachments and persist user message
+    const validAttachments = this.validateAttachments(attachments);
+    this.persistMessage(threadId, {
+      role: "user",
+      content,
+      metadata: validAttachments?.length ? { attachments: validAttachments } : undefined,
+    });
+
+    // Build prompt with attachment references
+    const agentPrompt = this.buildPromptWithAttachments(content, validAttachments);
 
     // Get the cwd — use worktree if isolated, otherwise repo_path
     const cwd = thread.worktree || thread.repo_path;
@@ -170,7 +186,7 @@ export class SessionManager {
     // Start a new turn with resume
     updateThread(this.db, threadId, { status: "running", error_message: null });
     this.notifyThread(threadId);
-    this.startTurn(threadId, adapter, cwd, content, sessionId);
+    this.startTurn(threadId, adapter, cwd, agentPrompt, sessionId);
   }
 
   isRunning(threadId: string): boolean {
@@ -243,6 +259,31 @@ export class SessionManager {
   }
 
   // ── Private ───────────────────────────────────────────
+
+  private static readonly NANOID_RE = /^[a-zA-Z0-9_-]{8,24}$/;
+
+  /** Filter out attachments with invalid/suspicious IDs */
+  private validateAttachments(attachments?: Attachment[]): Attachment[] | undefined {
+    if (!attachments?.length) return attachments;
+    return attachments.filter((a) => SessionManager.NANOID_RE.test(a.id));
+  }
+
+  /** Build prompt text with file path references for attachments */
+  private buildPromptWithAttachments(prompt: string, attachments?: Attachment[]): string {
+    if (!attachments?.length) return prompt;
+
+    const resolved = resolveAttachmentPaths(attachments, this.uploadsDir);
+    if (resolved.length === 0) return prompt;
+
+    const fileLines = resolved.map(({ attachment, absolutePath }) => {
+      const isImage = attachment.mimeType.startsWith("image/");
+      // Sanitize filename to prevent prompt injection — strip control chars and limit length
+      const safeName = attachment.filename.replace(/[\n\r\t]/g, "_").slice(0, 100);
+      return `- ${absolutePath} (${safeName}, ${attachment.mimeType})${isImage ? " — use Read tool to view this image" : ""}`;
+    });
+
+    return `${prompt}\n\n[The user has attached the following file(s):]\n${fileLines.join("\n")}`;
+  }
 
   private startTurn(
     threadId: string,

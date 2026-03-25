@@ -145,7 +145,7 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
 
         case "send_message":
           try {
-            sessionManager.sendMessage(msg.threadId, msg.content);
+            sessionManager.sendMessage(msg.threadId, msg.content, msg.attachments);
           } catch (err) {
             ws.send(
               JSON.stringify({

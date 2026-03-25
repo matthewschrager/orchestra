@@ -57,6 +57,7 @@ interface Props {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
+  onPaste?: (e: React.ClipboardEvent) => void;
   commands: SlashCommand[];
   placeholder?: string;
   rows?: number;
@@ -66,6 +67,7 @@ export function SlashCommandInput({
   value,
   onChange,
   onSubmit,
+  onPaste,
   commands,
   placeholder,
   rows = 2,
@@ -244,6 +246,7 @@ export function SlashCommandInput({
             setSelectedIndex(0);
             setDismissed(false);
           }}
+          onPaste={onPaste}
           placeholder={placeholder}
           rows={rows}
           className={[

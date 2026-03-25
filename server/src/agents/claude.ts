@@ -125,7 +125,10 @@ class ClaudeParser {
               toolName: block.name,
               toolInput,
             });
-            if (block.id) this.toolUseNames.set(block.id, block.name);
+            if (block.id) {
+              this.persistedToolUseIds.add(block.id);
+              this.toolUseNames.set(block.id, block.name);
+            }
             if (!attention) {
               const parsedInput = safeParseObject(toolInput);
               if (parsedInput) {
@@ -372,6 +375,14 @@ class ClaudeParser {
         // Handle completed tool blocks
         const toolBlock = this.activeToolBlocks.get(blockKey);
         if (toolBlock) {
+          this.activeToolBlocks.delete(blockKey);
+
+          // Skip if already persisted via tool_use or assistant event (reverse-order dedup)
+          if (toolBlock.id && this.persistedToolUseIds.has(toolBlock.id)) {
+            return { messages: [], deltas: [{ deltaType: "tool_end" }] };
+          }
+          if (toolBlock.id) this.persistedToolUseIds.add(toolBlock.id);
+
           const toolInput = finalizeToolInput(toolBlock);
           const msg: ParsedMessage = {
             role: "tool",
@@ -379,8 +390,6 @@ class ClaudeParser {
             toolName: toolBlock.name,
             toolInput,
           };
-          this.activeToolBlocks.delete(blockKey);
-          if (toolBlock.id) this.persistedToolUseIds.add(toolBlock.id);
 
           let attention: AttentionEvent | undefined;
           const parsedToolInput = safeParseObject(toolInput);

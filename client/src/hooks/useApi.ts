@@ -16,6 +16,28 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   return res.json();
 }
 
+async function uploadFile(file: File): Promise<import("shared").Attachment> {
+  const token = localStorage.getItem("orchestra_auth_token");
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${BASE}/uploads`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error || res.statusText);
+  }
+
+  return res.json();
+}
+
 export const api = {
   // Projects
   listProjects: () =>
@@ -94,6 +116,9 @@ export const api = {
 
   listCommands: () =>
     request<import("shared").SlashCommand[]>("/commands"),
+
+  // Uploads
+  uploadFile,
 
   // Filesystem
   browsePath: (path?: string) =>

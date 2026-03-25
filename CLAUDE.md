@@ -29,7 +29,8 @@ orchestra/
 │       │   ├── commands.ts Slash command listing
 │       │   ├── filesystem.ts Directory browser API
 │       │   ├── attention.ts Attention queue API
-│       │   └── push.ts     Push subscription API
+│       │   ├── push.ts     Push subscription API
+│       │   └── uploads.ts  File upload + serve API
 │       ├── push/           Web Push notification management
 │       │   └── manager.ts  VAPID keys, subscriptions, dispatch
 │       ├── tunnel/         Cloudflare Tunnel integration
@@ -53,7 +54,8 @@ orchestra/
 │       │   ├── MobileNav.tsx      Bottom tab navigation
 │       │   ├── MobileSessions.tsx Thread list for mobile
 │       │   ├── MobileNewSession.tsx New session form for mobile
-│       │   └── SlashCommandInput.tsx Textarea with slash command autocomplete
+│       │   ├── SlashCommandInput.tsx Textarea with slash command autocomplete
+│       │   └── AttachmentPreview.tsx Thumbnail previews for file attachments
 │       ├── lib/             Shared utilities
 │       │   └── askUser.ts   AskUserQuestion parsing + inline rendering helpers
 │       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications
@@ -96,6 +98,7 @@ cd server && bun run src/index.ts  # Production server
 - Session abort uses AbortController; `aborted` flag distinguishes user-stop from SDK error
 - Inactivity timeout (5 min) replaces PID-based health check for hung SDK iterators
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
+- File attachments: paste/drag-drop/picker in InputBar → upload to DATA_DIR/uploads/ → file paths appended to Claude prompt so it can Read them → rendered inline in chat messages
 
 ## Testing
 

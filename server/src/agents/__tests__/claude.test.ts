@@ -435,6 +435,85 @@ describe("ClaudeParser", () => {
     expect(messages[0].toolOutput).toBe("Subagent completed successfully.");
   });
 
+  // ── Deduplication across event types ──────────────────
+
+  // Note: top-level "tool_use" events don't exist in the SDK — only in CLI stream-json.
+  // Dedup between stream_event and assistant is the relevant SDK scenario.
+
+  test("stream_event + assistant event for same tool_use_id does not produce duplicate messages", () => {
+    const parser = createParser();
+
+    // Stream the tool via stream_event flow
+    parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_dup2", name: "Bash" } },
+    });
+    parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"command\":\"ls\"}" } },
+    });
+    parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 0 },
+    });
+
+    // Same tool in assistant summary — should be deduped
+    const assistantResult = parser.handleMessage({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "toolu_dup2", name: "Bash", input: { command: "ls" } }] },
+    });
+    expect(assistantResult.messages).toHaveLength(0);
+  });
+
+  test("multiple assistant events for same tool_use_id does not produce duplicate messages", () => {
+    const parser = createParser();
+
+    // First assistant event processes the tool_use
+    const first = parser.handleMessage({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "toolu_dup4", name: "Read", input: { file_path: "/foo.ts" } }] },
+    });
+    expect(first.messages).toHaveLength(1);
+
+    // Second assistant event (e.g. from --include-partial-messages) — should be deduped
+    const second = parser.handleMessage({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "toolu_dup4", name: "Read", input: { file_path: "/foo.ts" } }] },
+    });
+    expect(second.messages).toHaveLength(0);
+  });
+
+  // ── Reverse-order deduplication (tool_use/assistant BEFORE stream_event stop) ──
+
+  test("assistant event before stream_event stop does not produce duplicate (reverse order)", () => {
+    const parser = createParser();
+
+    // Assistant summary arrives first
+    const assistantResult = parser.handleMessage({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "toolu_rev2", name: "Bash", input: { command: "ls" } }] },
+    });
+    expect(assistantResult.messages).toHaveLength(1);
+
+    // Then the same tool streams via stream_event flow
+    parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_rev2", name: "Bash" } },
+    });
+    parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"command\":\"ls\"}" } },
+    });
+    const stopResult = parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 0 },
+    });
+
+    // content_block_stop should be deduped
+    expect(stopResult.messages).toHaveLength(0);
+    expect(stopResult.deltas).toEqual([{ deltaType: "tool_end" }]);
+  });
+
   test("handles user event with no tool_result blocks (echo of user prompt)", () => {
     const parser = createParser();
     const { messages } = parser.handleMessage({
