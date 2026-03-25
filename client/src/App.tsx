@@ -191,12 +191,10 @@ function AppInner() {
   const [showAddProject, setShowAddProject] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
-  const [desktopDrawerOpen, setDesktopDrawerOpen] = useState(false);
   const [latestTodos, setLatestTodos] = useState<Map<string, TodoItem[]>>(new Map());
   const [pushBannerDismissed, setPushBannerDismissed] = useState(
     () => localStorage.getItem("orchestra_push_dismissed") === "1",
   );
-  const drawerRef = useRef<HTMLDivElement>(null);
   const [streaming, dispatchStreaming] = useReducer(streamingReducer, initialStreamingState);
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
@@ -208,18 +206,6 @@ function AppInner() {
   // Push notifications
   const push = usePushNotifications();
   const showPushBanner = push.supported && push.permission === "default" && !push.subscribed && !pushBannerDismissed;
-
-  // Close desktop drawer on click outside
-  useEffect(() => {
-    if (!desktopDrawerOpen) return;
-    function handleClick(e: MouseEvent) {
-      if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
-        setDesktopDrawerOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [desktopDrawerOpen]);
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
@@ -710,35 +696,6 @@ function AppInner() {
         attentionCount={attention.pendingCount}
       />
 
-      {/* Desktop attention drawer (top-right) */}
-      {attention.pendingCount > 0 && (
-        <div ref={drawerRef} className="hidden md:block fixed top-3 right-4 z-30">
-          <button
-            onClick={() => setDesktopDrawerOpen((o) => !o)}
-            className="relative px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-medium hover:bg-amber-500/20"
-          >
-            {attention.pendingCount} pending
-          </button>
-          {desktopDrawerOpen && (
-            <div className="absolute top-full right-0 mt-2 w-96 max-h-[70vh] overflow-y-auto rounded-xl bg-surface-1 border border-edge-1 shadow-2xl shadow-black/40">
-              <div className="sticky top-0 bg-surface-1 border-b border-edge-1 px-4 py-2.5 z-10">
-                <h3 className="text-sm font-semibold text-content-1">Attention Queue</h3>
-              </div>
-              <AttentionInbox
-                items={attention.items}
-                onResolve={(id, res) => {
-                  handleResolveAttention(id, res);
-                  if (attention.pendingCount <= 1) setDesktopDrawerOpen(false);
-                }}
-                onNavigateToThread={(threadId) => {
-                  handleNavigateToThread(threadId);
-                  setDesktopDrawerOpen(false);
-                }}
-              />
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Add Project Dialog */}
       {showAddProject && (
