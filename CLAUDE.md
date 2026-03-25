@@ -94,6 +94,7 @@ cd server && bun run src/index.ts  # Production server
 - Input: Enter sends, Shift+Enter for newline (with IME composition guard for CJK input)
 - AskUserQuestion rendered inline as interactive cards with answer buttons
 - WebSocket heartbeat prevents idle disconnection
+- Slash command autocompletion: scoped per project via `installed_plugins.json` + `settings.json` (global + project-level merge); `.agents/` internal skills excluded; cached per projectId
 - Worktree isolation: detectWorktree returns name for port/data separation, expanded port hash range (9999 slots)
 - Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag
 - Session abort uses AbortController; `aborted` flag distinguishes user-stop from SDK error
