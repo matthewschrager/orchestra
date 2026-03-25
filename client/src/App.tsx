@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { AttentionResolution, Message, ProjectWithStatus, SlashCommand, StreamDelta, Thread, TodoItem, TurnMetrics, WSServerMessage } from "shared";
+import type { Attachment, AttentionResolution, Message, ProjectWithStatus, SlashCommand, StreamDelta, Thread, TodoItem, TurnMetrics, WSServerMessage } from "shared";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { api } from "./hooks/useApi";
 import { useAttention } from "./hooks/useAttention";
@@ -367,7 +367,7 @@ function AppInner() {
 
   // ── Actions ───────────────────────────────────────────
 
-  const handleNewThread = async (agent: string, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string) => {
+  const handleNewThread = async (agent: string, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => {
     const pid = projectId || activeProjectId;
     if (!pid) {
       setError("Select a project first");
@@ -375,7 +375,7 @@ function AppInner() {
     }
     try {
       setError(null);
-      const thread = await api.createThread({ agent, prompt, projectId: pid, isolate, worktreeName });
+      const thread = await api.createThread({ agent, prompt, projectId: pid, isolate, worktreeName, attachments });
       setThreads((prev) => [thread, ...prev]);
       setActiveThreadId(thread.id);
       setActiveProjectId(pid);
@@ -388,12 +388,12 @@ function AppInner() {
     }
   };
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content: string, attachments?: Attachment[]) => {
     if (!activeThreadId) return;
     try {
       setError(null);
       turnStartRef.current = Date.now();
-      send({ type: "send_message", threadId: activeThreadId, content });
+      send({ type: "send_message", threadId: activeThreadId, content, attachments });
     } catch (err) {
       setError((err as Error).message);
     }

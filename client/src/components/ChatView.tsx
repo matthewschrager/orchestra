@@ -7,6 +7,8 @@ import { ReadRenderer } from "./renderers/ReadRenderer";
 import { SearchRenderer, searchSummary } from "./renderers/SearchRenderer";
 import { SubAgentCard } from "./renderers/SubAgentCard";
 import { extractQuestionPreview, formatAnswers, isAskUserTool, parseQuestions, type ParsedQuestion } from "../lib/askUser";
+import { MessageAttachments } from "./AttachmentPreview";
+import type { Attachment } from "shared";
 
 interface Props {
   messages: Message[];
@@ -604,13 +606,19 @@ function ThreadStatusBadge({ status, errorMessage }: { status: string; errorMess
 function MessageBubble({ message }: { message: Message }) {
   // Skip empty or artifact-only messages (e.g. '""' from JSON.stringify(""))
   const trimmed = message.content.trim();
-  if (!trimmed || trimmed === '""') return null;
+  const attachments = (message.metadata?.attachments as Attachment[] | undefined) ?? [];
+  const hasAttachments = attachments.length > 0;
+
+  if (!trimmed && !hasAttachments) return null;
+  // Skip if only artifact content like '""'
+  if (trimmed === '""' && !hasAttachments) return null;
 
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] bg-accent-dim/80 border-r-2 border-r-accent/40 rounded-lg px-4 py-3 text-sm whitespace-pre-wrap text-content-1">
-          {message.content}
+        <div className="max-w-[80%] bg-accent-dim/80 border-r-2 border-r-accent/40 rounded-lg px-4 py-3 text-sm text-content-1">
+          {trimmed && <div className="whitespace-pre-wrap">{message.content}</div>}
+          {hasAttachments && <MessageAttachments attachments={attachments} />}
         </div>
       </div>
     );

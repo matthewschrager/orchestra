@@ -19,6 +19,7 @@ interface Props {
 const STATUS_DOT: Record<string, string> = {
   running: "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)] animate-pulse",
   pending: "bg-amber-400",
+  waiting: "bg-amber-400 animate-pulse",
   paused: "bg-content-3",
   done: "bg-accent/60",
   error: "bg-red-400 shadow-[0_0_4px_rgba(248,113,113,0.5)]",

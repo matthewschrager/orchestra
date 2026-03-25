@@ -89,7 +89,7 @@ describe("stream-exit race condition", () => {
     const registry = new AgentRegistry();
     registry.register(adapter);
     const worktreeManager = new WorktreeManager(db);
-    const mgr = new SessionManager(db, registry, worktreeManager);
+    const mgr = new SessionManager(db, registry, worktreeManager, "/tmp/orchestra-test-uploads");
 
     const thread = await mgr.startThread({
       agent: "mock",
