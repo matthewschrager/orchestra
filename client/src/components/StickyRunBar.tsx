@@ -16,12 +16,6 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
   const activelyWorking = isRunning && !turnEnded;
   if (!activelyWorking && metrics.turnCount === 0) return null;
 
-  const formatCost = (usd: number) => {
-    if (usd === 0) return "—";
-    if (usd < 0.01) return `$${usd.toFixed(4)}`;
-    return `$${usd.toFixed(2)}`;
-  };
-
   const formatDuration = (ms: number) => {
     if (ms === 0) return "—";
     const s = Math.floor(ms / 1000);
@@ -37,7 +31,6 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
         <div className="flex items-center gap-3 text-content-3">
           <span className="text-[11px]">
             Session: {metrics.turnCount} turn{metrics.turnCount !== 1 ? "s" : ""}
-            {" · "}{formatCost(metrics.costUsd)}
             {" · "}{formatDuration(metrics.durationMs)}
           </span>
         </div>
@@ -49,12 +42,10 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
   return (
     <div className="sticky-run-bar sticky-run-bar-active" role="status" aria-live="polite">
       <div className="flex items-center gap-3 flex-1 min-w-0">
-        {/* Equalizer animation */}
-        <span className="inline-flex items-end gap-[2px] h-3 shrink-0">
-          <span className="w-[2px] h-full bg-accent rounded-full origin-bottom animate-eq" />
-          <span className="w-[2px] h-full bg-accent rounded-full origin-bottom animate-eq" style={{ animationDelay: "150ms" }} />
-          <span className="w-[2px] h-full bg-accent rounded-full origin-bottom animate-eq" style={{ animationDelay: "300ms" }} />
-        </span>
+        {/* Spinner */}
+        <svg className="w-3 h-3 shrink-0 text-accent animate-spin" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28 10" strokeLinecap="round" />
+        </svg>
 
         {/* Current action */}
         <span className="text-[11px] text-content-2 font-mono truncate">
@@ -72,7 +63,6 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
       {/* Metrics */}
       <div className="flex items-center gap-3 shrink-0 text-[11px] text-content-3">
         <span>{formatDuration(elapsedMs)}</span>
-        <span className="hidden md:inline">{formatCost(metrics.costUsd)}</span>
         <button
           onClick={onInterrupt}
           className="px-2 py-0.5 text-red-400 hover:text-red-300 hover:bg-red-950/40 rounded text-[11px] font-medium border border-red-900/20"

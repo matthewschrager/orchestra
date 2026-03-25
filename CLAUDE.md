@@ -83,7 +83,7 @@ cd server && bun run src/index.ts  # Production server
 - Rich tool renderers parse stream-json tool data into visual components (diffs, terminal blocks, search results)
 - Shiki syntax highlighting lazy-loaded via module-level singleton with DOMPurify sanitization
 - Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
-- Cost/duration metrics extracted from Claude result events and displayed in StickyRunBar
+- Duration metrics extracted from Claude result events and displayed in StickyRunBar
 - Attention queue: AskUserQuestion/permission tool_use events detected in stream-json, persisted to `attention_required` table, broadcast to ALL WS clients (cross-thread), resolvable via REST or WS with first-caller-wins race guard
 - Session IDs persisted to `session_id` column on threads table (survives server restart)
 - Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
@@ -97,7 +97,7 @@ cd server && bun run src/index.ts  # Production server
 ## Testing
 
 ```bash
-bun test                        # Run all tests (94 tests across 8 files)
+bun test                        # Run all tests (113 tests across 9 files)
 ```
 
-Tests cover renderer parsing functions, server-side Claude adapter event handling, filesystem route behavior, and attention queue CRUD operations.
+Tests cover renderer parsing functions, server-side Claude adapter event handling, filesystem route behavior, attention queue CRUD operations, and slash command input logic.

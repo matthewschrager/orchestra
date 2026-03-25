@@ -1,6 +1,58 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { SlashCommand } from "shared";
 
+/** Find the slash token at the given cursor position within text. */
+export function findSlashToken(value: string, cursorPos: number): { token: string; start: number; end: number } | null {
+  const before = value.slice(0, cursorPos);
+  const match = before.match(/(^|[\s])(\/[\w-]*)$/);
+  if (!match) return null;
+  const token = match[2];
+  const start = before.length - token.length;
+  // Extend end past cursor to cover the full word (handles cursor mid-token)
+  const afterCursor = value.slice(cursorPos);
+  const trailingMatch = afterCursor.match(/^[\w-]*/);
+  const end = cursorPos + (trailingMatch ? trailingMatch[0].length : 0);
+  const fullToken = value.slice(start, end);
+  return { token: fullToken, start, end };
+}
+
+/** Build highlighted segments for the overlay — marks recognized/partial command tokens. */
+export function buildHighlightSegments(value: string, commands: SlashCommand[]): { text: string; highlight: boolean }[] {
+  const segments: { text: string; highlight: boolean }[] = [];
+  const regex = /\/[\w-]+/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = regex.exec(value)) !== null) {
+    const token = match[0];
+    const isKnown = commands.some((c) => c.name === token);
+    const isPartial = commands.some((c) => c.name.startsWith(token) && c.name !== token);
+    if (isKnown || isPartial) {
+      if (match.index > lastIndex) {
+        segments.push({ text: value.slice(lastIndex, match.index), highlight: false });
+      }
+      segments.push({ text: token, highlight: true });
+      lastIndex = match.index + token.length;
+    }
+  }
+  if (lastIndex < value.length) {
+    segments.push({ text: value.slice(lastIndex), highlight: false });
+  }
+  return segments;
+}
+
+/** Compute the new value and cursor position after selecting a command. */
+export function replaceSlashToken(
+  value: string,
+  slashToken: { start: number; end: number },
+  commandName: string,
+): { newValue: string; newCursorPos: number } {
+  const before = value.slice(0, slashToken.start);
+  const after = value.slice(slashToken.end);
+  const newValue = before + commandName + " " + after;
+  const newCursorPos = slashToken.start + commandName.length + 1;
+  return { newValue, newCursorPos };
+}
+
 interface Props {
   value: string;
   onChange: (value: string) => void;
@@ -22,38 +74,38 @@ export function SlashCommandInput({
   const backdropRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [cursorPos, setCursorPos] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
 
-  // Parse slash command from start of input
-  const parsedCommand = useMemo(() => {
-    const match = value.match(/^(\/[\w-]*)([\s\S]*)/);
-    if (!match) return null;
-    return { token: match[1], rest: match[2] };
-  }, [value]);
-
-  // Still typing the command name (no space after it yet)?
-  const isTypingCommand =
-    parsedCommand !== null && parsedCommand.rest === "";
+  // Find the slash token at the cursor position
+  const slashToken = useMemo(() => findSlashToken(value, cursorPos), [value, cursorPos]);
 
   // Exact match against a known command
   const isRecognizedCommand =
-    parsedCommand !== null &&
-    commands.some((c) => c.name === parsedCommand.token);
+    slashToken !== null &&
+    commands.some((c) => c.name === slashToken.token);
 
   // Autocomplete candidates
   const filteredCommands = useMemo(() => {
-    if (!isTypingCommand || !parsedCommand) return [];
-    return commands.filter((c) => c.name.startsWith(parsedCommand.token));
-  }, [isTypingCommand, parsedCommand, commands]);
+    if (!slashToken) return [];
+    return commands.filter((c) => c.name.startsWith(slashToken.token));
+  }, [slashToken, commands]);
 
-  // Show dropdown while typing prefix, hide once exact-matched
+  // Show dropdown while typing prefix, hide once exact-matched or dismissed
   const showAutocomplete =
-    isTypingCommand && filteredCommands.length > 0 && !isRecognizedCommand;
+    !dismissed && slashToken !== null && filteredCommands.length > 0 && !isRecognizedCommand;
 
-  // Highlight command token when it's recognized OR partially matches
-  const shouldHighlight =
-    parsedCommand !== null &&
-    (isRecognizedCommand ||
-      (isTypingCommand && filteredCommands.length > 0));
+  // Build highlighted segments for the overlay
+  const highlightSegments = useMemo(() => buildHighlightSegments(value, commands), [value, commands]);
+
+  const hasHighlights = highlightSegments.some((s) => s.highlight);
+
+  // Clamp selectedIndex when filtered list shrinks
+  useEffect(() => {
+    if (filteredCommands.length > 0 && selectedIndex >= filteredCommands.length) {
+      setSelectedIndex(filteredCommands.length - 1);
+    }
+  }, [filteredCommands.length, selectedIndex]);
 
   // Scroll selected item into view within the dropdown
   useEffect(() => {
@@ -66,11 +118,20 @@ export function SlashCommandInput({
 
   const selectCommand = useCallback(
     (cmd: SlashCommand) => {
-      onChange(cmd.name + " ");
+      if (!slashToken) return;
+      const { newValue, newCursorPos } = replaceSlashToken(value, slashToken, cmd.name);
+      onChange(newValue);
+      setCursorPos(newCursorPos);
       setSelectedIndex(0);
-      textareaRef.current?.focus();
+      setTimeout(() => {
+        const ta = textareaRef.current;
+        if (ta) {
+          ta.focus();
+          ta.setSelectionRange(newCursorPos, newCursorPos);
+        }
+      }, 0);
     },
-    [onChange],
+    [onChange, value, slashToken],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -99,7 +160,7 @@ export function SlashCommandInput({
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        onChange("");
+        setDismissed(true);
         return;
       }
     }
@@ -109,6 +170,11 @@ export function SlashCommandInput({
       e.preventDefault();
       onSubmit();
     }
+  };
+
+  const updateCursor = () => {
+    const ta = textareaRef.current;
+    if (ta) setCursorPos(ta.selectionStart);
   };
 
   const handleScroll = () => {
@@ -150,16 +216,21 @@ export function SlashCommandInput({
       {/* Overlay container */}
       <div className="relative">
         {/* Backdrop: styled text visible through the transparent textarea */}
-        {shouldHighlight && parsedCommand && (
+        {hasHighlights && (
           <div
             ref={backdropRef}
             className="absolute inset-0 px-3 py-2 text-sm whitespace-pre-wrap break-words overflow-hidden pointer-events-none border border-transparent rounded-lg"
             aria-hidden="true"
           >
-            <span className="text-accent underline decoration-accent/50 underline-offset-2">
-              {parsedCommand.token}
-            </span>
-            <span className="text-content-1">{parsedCommand.rest}</span>
+            {highlightSegments.map((seg, i) =>
+              seg.highlight ? (
+                <span key={i} className="text-accent underline decoration-accent/50 underline-offset-2">
+                  {seg.text}
+                </span>
+              ) : (
+                <span key={i} className="text-content-1">{seg.text}</span>
+              ),
+            )}
           </div>
         )}
 
@@ -169,7 +240,9 @@ export function SlashCommandInput({
           value={value}
           onChange={(e) => {
             onChange(e.target.value);
+            setCursorPos(e.target.selectionStart);
             setSelectedIndex(0);
+            setDismissed(false);
           }}
           placeholder={placeholder}
           rows={rows}
@@ -177,12 +250,13 @@ export function SlashCommandInput({
             "w-full bg-surface-2 border border-edge-2 rounded-lg px-3 py-2 text-sm",
             "resize-none focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent",
             "placeholder:text-content-3",
-            shouldHighlight
+            hasHighlights
               ? "text-transparent selection:bg-accent/20"
               : "",
           ].join(" ")}
-          style={shouldHighlight ? { caretColor: "var(--color-content-1)" } : undefined}
+          style={hasHighlights ? { caretColor: "var(--color-content-1)" } : undefined}
           onKeyDown={handleKeyDown}
+          onSelect={updateCursor}
           onScroll={handleScroll}
         />
       </div>

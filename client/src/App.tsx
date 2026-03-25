@@ -17,6 +17,7 @@ import { MobileSessions } from "./components/MobileSessions";
 import { MobileNewSession } from "./components/MobileNewSession";
 import { usePushNotifications } from "./hooks/usePushNotifications";
 import { isAskUserTool } from "./lib/askUser";
+import { WorktreePathInput } from "./components/WorktreePathInput";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -497,11 +498,6 @@ function AppInner() {
           >
             <MenuIcon />
           </button>
-          {activelyWorking && (
-            <svg className="w-4 h-4 shrink-0 text-accent animate-spin" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28 10" strokeLinecap="round" />
-            </svg>
-          )}
           <h1 className="text-sm font-semibold tracking-tight text-content-2 shrink-0">Orchestra</h1>
           {activeProject && (
             <span className="text-xs text-content-3 font-light shrink-0">
@@ -707,7 +703,10 @@ function AppInner() {
       {/* Mobile Bottom Navigation */}
       <MobileNav
         activeTab={mobileTab}
-        onTabChange={setMobileTab}
+        onTabChange={(tab) => {
+          if (tab === "sessions") setActiveThreadId(null);
+          setMobileTab(tab);
+        }}
         attentionCount={attention.pendingCount}
       />
 
