@@ -87,7 +87,8 @@ cd server && bun run src/index.ts  # Production server
 - Rich tool renderers parse stream-json tool data into visual components (diffs, terminal blocks, search results)
 - Shiki syntax highlighting lazy-loaded via module-level singleton with DOMPurify sanitization
 - Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
-- Cost/duration metrics extracted from Claude result events and displayed in StickyRunBar
+- Cost/duration/token metrics extracted from Claude result events and displayed in StickyRunBar
+- Context window indicator: token usage (input+output) vs model context window shown as color-coded progress bar; uses replacement semantics (SDK reports cumulative totals); `Math.max` for contextWindow to prevent sub-agent regression
 - Attention queue: AskUserQuestion/permission tool_use events detected in SDK message stream, persisted to `attention_required` table, broadcast to ALL WS clients (cross-thread), resolvable via REST or WS with first-caller-wins race guard
 - Session IDs persisted to `session_id` column on threads table (survives server restart)
 - Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
@@ -113,4 +114,4 @@ cd server && bun run src/index.ts  # Production server
 bun test                        # Run all tests
 ```
 
-Tests cover renderer parsing functions, server-side Claude SDK message parsing, SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, slash command input logic, and thread archive with worktree cleanup.
+Tests cover renderer parsing functions, server-side Claude SDK message parsing (including token usage extraction from modelUsage), SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, slash command input logic, and thread archive with worktree cleanup.
