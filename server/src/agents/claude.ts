@@ -123,7 +123,10 @@ class ClaudeParser implements AgentOutputParser {
               toolName: block.name,
               toolInput,
             });
-            if (block.id) this.toolUseNames.set(block.id, block.name);
+            if (block.id) {
+              this.persistedToolUseIds.add(block.id);
+              this.toolUseNames.set(block.id, block.name);
+            }
             if (!attention) {
               const parsedInput = safeParseObject(toolInput);
               if (parsedInput) {
@@ -227,6 +230,14 @@ class ClaudeParser implements AgentOutputParser {
 
       case "tool_use": {
         const toolName = event.tool?.name ?? "unknown";
+        const toolId = event.tool?.id;
+
+        // Skip if already persisted via stream_event content_block_stop or assistant event
+        if (toolId && this.persistedToolUseIds.has(toolId)) {
+          return { messages: [], deltas: [] };
+        }
+        if (toolId) this.persistedToolUseIds.add(toolId);
+
         const toolInput = event.tool?.input as Record<string, unknown> | undefined;
         const serializedInput = serializeToolInput(toolInput);
         const result: ParseResult = {
@@ -241,10 +252,12 @@ class ClaudeParser implements AgentOutputParser {
           deltas: [],
         };
 
+        if (toolId) this.toolUseNames.set(toolId, toolName);
+
         const attention = this.maybeExtractAskUserAttention(
           toolName,
           toolInput,
-          event.tool?.id,
+          toolId,
           serializedInput,
         );
         if (attention) {
@@ -366,6 +379,14 @@ class ClaudeParser implements AgentOutputParser {
         // Handle completed tool blocks
         const toolBlock = this.activeToolBlocks.get(blockKey);
         if (toolBlock) {
+          this.activeToolBlocks.delete(blockKey);
+
+          // Skip if already persisted via tool_use or assistant event (reverse-order dedup)
+          if (toolBlock.id && this.persistedToolUseIds.has(toolBlock.id)) {
+            return { messages: [], deltas: [{ deltaType: "tool_end" }] };
+          }
+          if (toolBlock.id) this.persistedToolUseIds.add(toolBlock.id);
+
           const toolInput = finalizeToolInput(toolBlock);
           const msg: ParsedMessage = {
             role: "tool",
@@ -373,8 +394,6 @@ class ClaudeParser implements AgentOutputParser {
             toolName: toolBlock.name,
             toolInput,
           };
-          this.activeToolBlocks.delete(blockKey);
-          if (toolBlock.id) this.persistedToolUseIds.add(toolBlock.id);
 
           let attention: AttentionEvent | undefined;
           const parsedToolInput = safeParseObject(toolInput);
