@@ -8,10 +8,11 @@ interface Props {
   metrics: TurnMetrics;
   elapsedMs: number;
   onInterrupt: () => void;
+  onScrollToBottom?: () => void;
   todos: TodoItem[] | null;
 }
 
-export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool, metrics, elapsedMs, onInterrupt, todos }: Props) {
+export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool, metrics, elapsedMs, onInterrupt, onScrollToBottom, todos }: Props) {
   // Treat "process still running but turn ended" as idle — agent is just cleaning up
   const activelyWorking = isRunning && !turnEnded;
   if (!activelyWorking && metrics.turnCount === 0) return null;
@@ -25,9 +26,15 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
   };
 
   if (!activelyWorking) {
-    // Idle state — session summary
+    // Idle state — session summary (tap to scroll to bottom)
     return (
-      <div className="sticky-run-bar" role="status" aria-live="polite">
+      <div
+        className="sticky-run-bar cursor-pointer hover:bg-surface-2 transition-colors"
+        role="status"
+        aria-live="polite"
+        onClick={onScrollToBottom}
+        title="Jump to bottom"
+      >
         <div className="flex items-center gap-3 text-content-3">
           <span className="text-[11px]">
             Session: {metrics.turnCount} turn{metrics.turnCount !== 1 ? "s" : ""}
@@ -38,10 +45,14 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
     );
   }
 
-  // Active state — full metrics strip
+  // Active state — full metrics strip (tap bar body to scroll to bottom)
   return (
     <div className="sticky-run-bar sticky-run-bar-active" role="status" aria-live="polite">
-      <div className="flex items-center gap-3 flex-1 min-w-0">
+      <div
+        className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
+        onClick={onScrollToBottom}
+        title="Jump to bottom"
+      >
         {/* Spinner */}
         <svg className="w-3 h-3 shrink-0 text-accent animate-spin" viewBox="0 0 16 16" fill="none">
           <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28 10" strokeLinecap="round" />
