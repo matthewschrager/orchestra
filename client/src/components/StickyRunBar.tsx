@@ -40,6 +40,7 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
             Session: {metrics.turnCount} turn{metrics.turnCount !== 1 ? "s" : ""}
             {" · "}{formatDuration(metrics.durationMs)}
           </span>
+          <ContextWindowIndicator metrics={metrics} />
         </div>
       </div>
     );
@@ -73,6 +74,7 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
 
       {/* Metrics */}
       <div className="flex items-center gap-3 shrink-0 text-[11px] text-content-3">
+        <ContextWindowIndicator metrics={metrics} />
         <span>{formatDuration(elapsedMs)}</span>
         <button
           onClick={onInterrupt}
@@ -85,6 +87,51 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
     </div>
   );
 }
+
+// ── Context Window Indicator ──────────────────────────────
+
+function ContextWindowIndicator({ metrics }: { metrics: TurnMetrics }) {
+  const { inputTokens, outputTokens, contextWindow } = metrics;
+  if (!contextWindow || contextWindow <= 0) return null;
+
+  const totalTokens = inputTokens + outputTokens;
+  const pct = Math.min((totalTokens / contextWindow) * 100, 100);
+
+  // Color thresholds: green → yellow → orange → red
+  const barColor =
+    pct >= 90 ? "bg-red-500" :
+    pct >= 75 ? "bg-orange-400" :
+    pct >= 50 ? "bg-yellow-400" :
+    "bg-accent";
+
+  const textColor =
+    pct >= 90 ? "text-red-400" :
+    pct >= 75 ? "text-orange-400" :
+    "text-content-3";
+
+  return (
+    <div className="flex items-center gap-1.5" title={`${formatTokenCount(totalTokens)} / ${formatTokenCount(contextWindow)} tokens (${Math.round(pct)}%)`}>
+      {/* Mini progress bar */}
+      <div className="w-12 h-1.5 rounded-full bg-surface-2 overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-300 ${barColor}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className={`text-[10px] tabular-nums ${textColor}`}>
+        {formatTokenCount(totalTokens)}
+      </span>
+    </div>
+  );
+}
+
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
+  return String(n);
+}
+
+// ── Tool Action Formatting ──────────────────────────────
 
 const TOOL_ACTION_MAP: Record<string, string> = {
   Read: "Reading",
