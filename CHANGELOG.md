@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.17.0] - 2026-03-25
+
+### Added
+
+- **Always-on remote access via Tailscale** — TailscaleDetector class detects Tailscale installation, IP, hostname, and `tailscale serve` HTTPS configuration with multi-platform CLI detection and 10s cache
+- **Remote Access section in Settings panel** — 3-state UI (Not Detected → Detected → HTTPS Ready) with guided setup instructions, copy buttons, and manual URL fallback
+- **`/api/tailscale/status` endpoint** — exposes Tailscale detection status for the Settings panel with refresh support
+- **Per-subscription push notification origins** — each push subscription stores the browser origin it was created from; deep-link URLs are computed per-subscription so each device gets links to its own URL
+- **Cross-origin notification clicks** — service worker handles `targetUrl` from push payload, correctly opening new windows for cross-origin clicks
+- **`remoteUrl` setting** — display-only HTTPS URL in Settings, validated to HTTPS-only scheme
+- **Tailnet ACL warning** — Settings panel and startup output warn that any device on the tailnet can access Orchestra without a token when using `tailscale serve`
+
+### Changed
+
+- **Push notification payloads** now include per-subscription `targetUrl` in the `data` field
+- **Push subscription API** accepts optional `origin` field from clients
+- **`push_subscriptions` table** gains `origin` column (auto-migrated)
+
 ## [0.1.16.0] - 2026-03-25
 
 ### Added
