@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.10.1] - 2026-03-24
+
+### Added
+
+- **Worktree cleanup on thread archive** — when archiving a thread with a worktree, a confirm dialog asks whether to also delete the worktree and branch; cleanup failures surface as a warning instead of being silently swallowed
+- **Thread archive route tests** — 5 new tests covering archive with/without worktree cleanup, cleanup failure handling, and 404 for missing threads
+
+### Fixed
+
+- **`waiting` status indicator in sidebar** — restored amber pulsing dot for threads awaiting user input (previously showed as generic gray dot)
+
 ## [0.1.10.0] - 2026-03-24
 
 ### Changed
