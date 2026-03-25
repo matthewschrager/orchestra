@@ -1,14 +1,96 @@
 import { Hono } from "hono";
-import { readFileSync, readdirSync, statSync } from "fs";
-import { join, basename } from "path";
+import { readFileSync, readdirSync, statSync, existsSync } from "fs";
+import { join } from "path";
 import { homedir } from "os";
 import type { SlashCommand } from "shared";
+import type { DB } from "../db";
+import { getProject } from "../db";
 
 /** Built-in Orchestra commands handled by the UI itself. */
 const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/new", description: "Start a new thread", source: "builtin" },
   { name: "/stop", description: "Stop the running thread", source: "builtin" },
 ];
+
+// ── Settings / Plugin Config Readers ────────────────────
+
+interface InstalledPlugin {
+  scope: string;
+  installPath: string;
+  version: string;
+}
+
+interface InstalledPluginsFile {
+  version: number;
+  plugins: Record<string, InstalledPlugin[]>;
+}
+
+/** Read enabledPlugins from a Claude settings.json file. Returns null if unreadable. */
+function readEnabledPlugins(
+  settingsPath: string,
+): Record<string, boolean> | null {
+  try {
+    const data = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    return data.enabledPlugins ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Read installed_plugins.json and return a map of plugin key → installPath. */
+function readInstalledPlugins(): Map<string, string> {
+  const result = new Map<string, string>();
+  try {
+    const filePath = join(homedir(), ".claude", "plugins", "installed_plugins.json");
+    const data: InstalledPluginsFile = JSON.parse(readFileSync(filePath, "utf-8"));
+    for (const [key, entries] of Object.entries(data.plugins)) {
+      // Use the first (most recent) entry
+      if (entries.length > 0) {
+        result.set(key, entries[0].installPath);
+      }
+    }
+  } catch {
+    // File missing or unreadable — will fall back to full scan
+  }
+  return result;
+}
+
+/**
+ * Resolve which plugin installPaths to scan, based on global + project enabledPlugins.
+ *
+ * Merge logic: project-level values override global values. A plugin is enabled if:
+ *   - It's explicitly `true` in either layer, OR
+ *   - It's in installed_plugins.json but not mentioned in enabledPlugins at all
+ *     (i.e., only an explicit `false` disables)
+ *
+ * Returns null if we can't determine installed plugins (triggers full-scan fallback).
+ */
+function resolveEnabledPluginPaths(
+  projectPath: string | null,
+): string[] | null {
+  const home = homedir();
+  const installed = readInstalledPlugins();
+  if (installed.size === 0) return null; // No installed_plugins.json → fall back
+
+  const globalEnabled = readEnabledPlugins(join(home, ".claude", "settings.json"));
+  const projectEnabled = projectPath
+    ? readEnabledPlugins(join(projectPath, ".claude", "settings.json"))
+    : null;
+
+  // Merge: project overrides global
+  const merged: Record<string, boolean> = { ...globalEnabled, ...projectEnabled };
+
+  const paths: string[] = [];
+  for (const [pluginKey, installPath] of installed) {
+    // Only an explicit `false` disables a plugin
+    if (merged[pluginKey] === false) continue;
+    paths.push(installPath);
+  }
+
+  return paths;
+}
+
+// ── SKILL.md Discovery ──────────────────────────────────
 
 /** Parse a YAML value that may be single-line or multiline (| or > block). */
 function parseYamlValue(fm: string, key: string): string | null {
@@ -54,11 +136,14 @@ function parseSkillFrontmatter(
   }
 }
 
-/** Recursively find all SKILL.md files under a directory. */
+/** Recursively find all SKILL.md files under a directory, skipping .agents/ dirs. */
 function findSkillFiles(dir: string): string[] {
   const results: string[] = [];
   try {
     for (const entry of readdirSync(dir)) {
+      // Skip internal agent skill directories
+      if (entry === ".agents") continue;
+
       const full = join(dir, entry);
       try {
         const stat = statSync(full);
@@ -77,53 +162,96 @@ function findSkillFiles(dir: string): string[] {
   return results;
 }
 
-/** Discover slash commands from Claude Code plugins and user skills. */
-function discoverPluginCommands(): SlashCommand[] {
-  const home = homedir();
-  const searchDirs = [
-    join(home, ".claude", "plugins", "cache"),
-    join(home, ".claude", "skills"),
-  ];
+/** Collect SlashCommands from a list of SKILL.md files, deduplicating by name. */
+function collectCommands(
+  skillFiles: string[],
+  seen: Set<string>,
+  source: "plugin" | "skill",
+): SlashCommand[] {
+  const commands: SlashCommand[] = [];
+  for (const skillFile of skillFiles) {
+    const parsed = parseSkillFrontmatter(skillFile);
+    if (!parsed) continue;
 
+    const cmdName = parsed.name.startsWith("/")
+      ? parsed.name
+      : `/${parsed.name}`;
+
+    if (seen.has(cmdName)) continue;
+    seen.add(cmdName);
+
+    commands.push({
+      name: cmdName,
+      description: parsed.description,
+      source,
+    });
+  }
+  return commands;
+}
+
+/**
+ * Discover slash commands from Claude Code plugins and user skills.
+ *
+ * When projectPath is provided, the enabled plugin set is scoped to that project's
+ * settings (merged with global). When null, only global settings are used.
+ */
+function discoverPluginCommands(projectPath: string | null): SlashCommand[] {
+  const home = homedir();
   const seen = new Set<string>();
   const commands: SlashCommand[] = [];
 
-  for (const dir of searchDirs) {
-    for (const skillFile of findSkillFiles(dir)) {
-      const parsed = parseSkillFrontmatter(skillFile);
-      if (!parsed) continue;
+  // 1. Scan enabled plugin installPaths (or full cache as fallback)
+  const enabledPaths = resolveEnabledPluginPaths(projectPath);
 
-      // Normalize: skill names use ":" separator, convert to slash command format
-      // e.g. "ce:ideate" → "/ce:ideate", "browse" → "/browse"
-      const cmdName = parsed.name.startsWith("/")
-        ? parsed.name
-        : `/${parsed.name}`;
-
-      if (seen.has(cmdName)) continue;
-      seen.add(cmdName);
-
-      commands.push({
-        name: cmdName,
-        description: parsed.description,
-        source: "plugin",
-      });
+  if (enabledPaths) {
+    // Scoped scan: only installed + enabled plugins
+    for (const installPath of enabledPaths) {
+      if (!existsSync(installPath)) continue;
+      const files = findSkillFiles(installPath);
+      commands.push(...collectCommands(files, seen, "plugin"));
     }
+  } else {
+    // Fallback: no installed_plugins.json → scan entire cache (old behavior, minus .agents/)
+    const cacheDir = join(home, ".claude", "plugins", "cache");
+    const files = findSkillFiles(cacheDir);
+    commands.push(...collectCommands(files, seen, "plugin"));
   }
+
+  // 2. Always scan user skills directory
+  const skillsDir = join(home, ".claude", "skills");
+  const skillFiles = findSkillFiles(skillsDir);
+  commands.push(...collectCommands(skillFiles, seen, "skill"));
 
   return commands.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function createCommandRoutes() {
+// ── Route ────────────────────────────────────────────────
+
+export function createCommandRoutes(db: DB) {
   const app = new Hono();
 
-  // Cache discovered commands (rescan on server restart)
-  let cachedCommands: SlashCommand[] | null = null;
+  // Cache per project (projectId → commands). null key = no project context.
+  const cache = new Map<string | null, SlashCommand[]>();
 
   app.get("/", (c) => {
-    if (!cachedCommands) {
-      cachedCommands = [...BUILTIN_COMMANDS, ...discoverPluginCommands()];
+    const projectId = c.req.query("projectId") ?? null;
+
+    // Resolve project path from DB if projectId is provided
+    let projectPath: string | null = null;
+    if (projectId) {
+      const project = getProject(db, projectId);
+      if (project) projectPath = project.path;
     }
-    return c.json(cachedCommands);
+
+    // Check cache (keyed by projectId, since same project = same settings)
+    if (!cache.has(projectId)) {
+      cache.set(projectId, [
+        ...BUILTIN_COMMANDS,
+        ...discoverPluginCommands(projectPath),
+      ]);
+    }
+
+    return c.json(cache.get(projectId)!);
   });
 
   return app;

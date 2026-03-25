@@ -117,8 +117,10 @@ export const api = {
   listAgents: () =>
     request<Array<{ name: string; detected: boolean; version: string | null }>>("/agents"),
 
-  listCommands: () =>
-    request<import("shared").SlashCommand[]>("/commands"),
+  listCommands: (projectId?: string) =>
+    request<import("shared").SlashCommand[]>(
+      `/commands${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`,
+    ),
 
   // Uploads
   uploadFile,
