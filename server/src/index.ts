@@ -112,6 +112,12 @@ app.route("/api/attention", createAttentionRoutes(db, sessionManager));
 app.route("/api/push", createPushRoutes(pushManager));
 app.route("/api/uploads", createUploadRoutes(uploadsDir));
 
+// Terminal + tunnel status (must be before static/SPA fallback)
+const terminalEnabled = !useTunnel;
+app.get("/api/status", (c) => {
+  return c.json({ terminalEnabled, tunnelActive: useTunnel });
+});
+
 // Static frontend (production)
 app.use("/*", serveStatic({ root: "./static" }));
 // SPA fallback
@@ -121,13 +127,7 @@ app.get("*", async (c) => {
 
 // ── Server ──────────────────────────────────────────────
 
-const terminalEnabled = !useTunnel;
 const wsHandler = createWSHandler(sessionManager, db, terminalManager, terminalEnabled);
-
-// Expose terminal + tunnel status via API
-app.get("/api/status", (c) => {
-  return c.json({ terminalEnabled, tunnelActive: useTunnel });
-});
 
 let server: ReturnType<typeof Bun.serve>;
 try {
