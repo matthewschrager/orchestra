@@ -2,13 +2,19 @@ import type { ServerWebSocket } from "bun";
 import type { DB, MessageRow, ThreadRow } from "../db";
 import { getMessages, getPendingAttention, getThread, attentionRowToApi, messageRowToApi, threadRowToApi } from "../db";
 import type { SessionManager } from "../sessions/manager";
+import type { TerminalManager } from "../terminal/manager";
 import type { AttentionItem, StreamDelta, WSClientMessage, WSServerMessage } from "shared";
 
 interface WSData {
   subscriptions: Set<string>;
 }
 
-export function createWSHandler(sessionManager: SessionManager, db: DB) {
+export function createWSHandler(
+  sessionManager: SessionManager,
+  db: DB,
+  terminalManager?: TerminalManager,
+  terminalEnabled: boolean = true,
+) {
   const clients = new Set<ServerWebSocket<WSData>>();
 
   // Forward messages from session manager to subscribed WS clients
@@ -77,6 +83,99 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
       ws.send(json);
     }
   });
+
+  // Forward terminal output to subscribed WS clients
+  if (terminalManager) {
+    terminalManager.onData((terminalId: string, data: string) => {
+      const payload: WSServerMessage = { type: "terminal_output", terminalId, data };
+      const json = JSON.stringify(payload);
+      for (const ws of clients) {
+        if (ws.data.subscriptions.has(terminalId)) {
+          ws.send(json);
+        }
+      }
+    });
+
+    terminalManager.onExit((terminalId: string, exitCode: number) => {
+      const payload: WSServerMessage = { type: "terminal_exit", terminalId, exitCode };
+      const json = JSON.stringify(payload);
+      for (const ws of clients) {
+        if (ws.data.subscriptions.has(terminalId)) {
+          ws.send(json);
+        }
+      }
+    });
+  }
+
+  // Handle terminal WS messages (delegated from main switch)
+  function handleTerminalMessage(
+    ws: ServerWebSocket<WSData>,
+    msg: WSClientMessage,
+  ): void {
+    if (!terminalManager) return;
+
+    if (!terminalEnabled) {
+      if ("threadId" in msg || "terminalId" in msg) {
+        const id = "terminalId" in msg ? (msg as { terminalId: string }).terminalId : (msg as { threadId: string }).threadId;
+        ws.send(JSON.stringify({
+          type: "terminal_error",
+          terminalId: id,
+          error: "Terminal disabled in tunnel mode",
+        } satisfies WSServerMessage));
+      }
+      return;
+    }
+
+    switch (msg.type) {
+      case "terminal_create": {
+        const thread = getThread(db, msg.threadId) as ThreadRow | null;
+        if (!thread) {
+          ws.send(JSON.stringify({
+            type: "terminal_error",
+            terminalId: msg.threadId,
+            error: "Thread not found",
+          } satisfies WSServerMessage));
+          return;
+        }
+        const cwd = thread.worktree || thread.repo_path;
+        try {
+          const result = terminalManager.create(msg.threadId, cwd);
+          // Subscribe this WS client to terminal output for this thread
+          ws.data.subscriptions.add(msg.threadId);
+          const replay = result.reconnect
+            ? terminalManager.getReplayBuffer(msg.threadId) ?? undefined
+            : undefined;
+          ws.send(JSON.stringify({
+            type: "terminal_created",
+            terminalId: msg.threadId,
+            threadId: msg.threadId,
+            reconnect: result.reconnect || undefined,
+            replay,
+          } satisfies WSServerMessage));
+        } catch (err) {
+          ws.send(JSON.stringify({
+            type: "terminal_error",
+            terminalId: msg.threadId,
+            error: (err as Error).message,
+          } satisfies WSServerMessage));
+        }
+        break;
+      }
+      case "terminal_input":
+        if (!ws.data.subscriptions.has(msg.terminalId)) return;
+        terminalManager.write(msg.terminalId, msg.data);
+        break;
+      case "terminal_resize":
+        if (!ws.data.subscriptions.has(msg.terminalId)) return;
+        terminalManager.resize(msg.terminalId, msg.cols, msg.rows);
+        break;
+      case "terminal_close":
+        if (!ws.data.subscriptions.has(msg.terminalId)) return;
+        terminalManager.close(msg.terminalId);
+        ws.data.subscriptions.delete(msg.terminalId);
+        break;
+    }
+  }
 
   return {
     open(ws: ServerWebSocket<WSData>) {
@@ -175,6 +274,13 @@ export function createWSHandler(sessionManager: SessionManager, db: DB) {
 
         case "ping":
           // Client keepalive — no response needed, the message itself resets idle timer
+          break;
+
+        case "terminal_create":
+        case "terminal_input":
+        case "terminal_resize":
+        case "terminal_close":
+          handleTerminalMessage(ws, msg);
           break;
       }
     },

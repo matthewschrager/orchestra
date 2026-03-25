@@ -1,5 +1,4 @@
 import { nanoid } from "nanoid";
-import { AbortError } from "@anthropic-ai/claude-agent-sdk";
 import type { DB, MessageRow, ThreadRow, AttentionRow } from "../db";
 import {
   getThread,
@@ -436,7 +435,7 @@ export class SessionManager {
     } catch (err) {
       // Check if this was a user-initiated abort or session superseded
       if (this.sessions.get(threadId) !== activeSession) return;
-      if (activeSession.aborted || err instanceof AbortError) {
+      if (activeSession.aborted || isAbortError(err)) {
         if (DEBUG) console.log(`[stream] Thread ${threadId} — aborted after ${messageCount} msgs (${Date.now() - startTime}ms)`);
         return;
       }
@@ -660,4 +659,11 @@ export class SessionManager {
       });
     }
   }
+}
+
+/** Adapter-agnostic check for abort errors from any SDK */
+function isAbortError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === "AbortError") return true;
+  if (err instanceof Error && err.name === "AbortError") return true;
+  return false;
 }
