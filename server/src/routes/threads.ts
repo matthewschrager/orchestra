@@ -214,6 +214,9 @@ export function createThreadRoutes(
       "UPDATE threads SET archived_at = datetime('now') WHERE id = ?",
     ).run(threadId);
 
+    // Broadcast so other clients remove from sidebar
+    sessionManager.notifyThread(threadId);
+
     return c.json({ ok: true, cleanupFailed });
   });
 

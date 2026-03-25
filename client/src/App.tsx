@@ -266,9 +266,18 @@ function AppInner() {
       }
     }, []),
     onThreadUpdate: useCallback((thread: Thread) => {
-      setThreads((prev) =>
-        prev.map((t) => (t.id === thread.id ? thread : t)),
-      );
+      setThreads((prev) => {
+        // Archived thread — remove from list
+        if (thread.archivedAt) {
+          return prev.filter((t) => t.id !== thread.id);
+        }
+        const exists = prev.some((t) => t.id === thread.id);
+        if (exists) {
+          return prev.map((t) => (t.id === thread.id ? thread : t));
+        }
+        // New thread from another client — add to the top
+        return [thread, ...prev];
+      });
       if (thread.status === "done" || thread.status === "error") {
         dispatchStreaming({ type: "clear_all", threadId: thread.id });
       }
@@ -326,8 +335,17 @@ function AppInner() {
     api.listProjects().then(setProjects).catch(console.error);
     api.listThreads().then(setThreads).catch(console.error);
     api.listAgents().then(setAgents).catch(console.error);
-    api.listCommands().then(setCommands).catch(console.error);
   }, []);
+
+  // Fetch commands scoped to active project; refetch when project changes.
+  // Stale-response guard prevents a slow earlier response from overwriting a fast later one.
+  useEffect(() => {
+    let stale = false;
+    api.listCommands(activeProjectId ?? undefined).then((cmds) => {
+      if (!stale) setCommands(cmds);
+    }).catch(console.error);
+    return () => { stale = true; };
+  }, [activeProjectId]);
 
   // Re-fetch thread list on WS reconnection so sidebar statuses are fresh.
   // Without this, threads that changed status while disconnected appear "stuck".
@@ -365,7 +383,8 @@ function AppInner() {
     try {
       setError(null);
       const thread = await api.createThread({ agent, prompt, projectId: pid, isolate, worktreeName, attachments });
-      setThreads((prev) => [thread, ...prev]);
+      // Guard against duplicate: WS broadcast from server may arrive before this HTTP response
+      setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
       setActiveThreadId(thread.id);
       setActiveProjectId(pid);
       setSidebarOpen(false);
