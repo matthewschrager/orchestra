@@ -1,19 +1,30 @@
 import { describe, expect, test } from "bun:test";
-import { ClaudeAdapter } from "../claude";
+import { ClaudeAdapter, ClaudeParser } from "../claude";
 
 function createParser() {
-  return new ClaudeAdapter().createParser();
+  // ClaudeParser is per-session — create a fresh one for each test
+  return new ClaudeParser();
 }
 
-describe("ClaudeAdapter parser", () => {
+describe("ClaudeAdapter", () => {
+  test("adapter has correct name and supports resume", () => {
+    const adapter = new ClaudeAdapter();
+    expect(adapter.name).toBe("claude");
+    expect(adapter.supportsResume()).toBe(true);
+  });
+});
+
+describe("ClaudeParser", () => {
   test("extracts cost_usd and duration_ms from result event", () => {
     const parser = createParser();
-    const { messages, deltas } = parser.parseOutput(JSON.stringify({
+    const { messages, deltas } = parser.handleMessage({
       type: "result",
-      cost_usd: 0.12,
+      subtype: "success",
+      total_cost_usd: 0.12,
       duration_ms: 3400,
       session_id: "sess-123",
-    }));
+      permission_denials: [],
+    });
 
     expect(messages).toHaveLength(0);
     expect(deltas.length).toBeGreaterThanOrEqual(2);
@@ -26,39 +37,28 @@ describe("ClaudeAdapter parser", () => {
     expect(turnEnd!.text).toBe("sess-123");
   });
 
-  test("accepts total_cost_usd from current Claude result events", () => {
-    const parser = createParser();
-    const { deltas } = parser.parseOutput(JSON.stringify({
-      type: "result",
-      total_cost_usd: 0.34,
-      duration_ms: 1200,
-      session_id: "sess-total",
-    }));
-
-    const metricsDelta = deltas.find((d) => d.deltaType === "metrics");
-    expect(metricsDelta).toBeDefined();
-    expect(metricsDelta!.costUsd).toBe(0.34);
-    expect(metricsDelta!.durationMs).toBe(1200);
-  });
-
   test("handles result event without cost fields", () => {
     const parser = createParser();
-    const { deltas } = parser.parseOutput(JSON.stringify({
+    const { deltas } = parser.handleMessage({
       type: "result",
+      subtype: "success",
       session_id: "sess-456",
-    }));
+      permission_denials: [],
+    });
 
     expect(deltas).toHaveLength(1);
     expect(deltas[0].deltaType).toBe("turn_end");
   });
 
-  test("captures session_id from early init envelopes without creating a phantom message", () => {
+  test("captures session_id from system init event", () => {
     const parser = createParser();
-    const { messages, deltas, sessionId } = parser.parseOutput(JSON.stringify({
+    const { messages, deltas, sessionId } = parser.handleMessage({
       type: "system",
       subtype: "init",
       session_id: "sess-init",
-    }));
+      tools: [],
+      cwd: "/tmp",
+    });
 
     expect(messages).toHaveLength(0);
     expect(deltas).toHaveLength(0);
@@ -67,208 +67,115 @@ describe("ClaudeAdapter parser", () => {
 
   test("assistant event with only text produces no messages (text persisted via stream_events)", () => {
     const parser = createParser();
-    const { messages } = parser.parseOutput(JSON.stringify({
+    const { messages } = parser.handleMessage({
       type: "assistant",
       message: {
         content: [{ type: "text", text: "Hello world" }],
       },
-    }));
+      session_id: "sess-1",
+    });
 
     // Text-only assistant events are redundant — text is persisted via content_block_stop
     expect(messages).toHaveLength(0);
   });
 
-  test("parses top-level tool_use event and emits attention for AskUserQuestion", () => {
+  test("extracts tool_use blocks from assistant event", () => {
     const parser = createParser();
-    const { messages, attention } = parser.parseOutput(JSON.stringify({
-      type: "tool_use",
-      tool: {
-        id: "toolu_123",
-        name: "AskUserQuestion",
-        input: {
-          questions: [{
-            question: "Which branch should we use?",
-            options: [{ label: "main" }, { label: "feature" }],
-          }],
-        },
+    const { messages } = parser.handleMessage({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "text", text: "Let me read that file." },
+          { type: "tool_use", id: "toolu_read", name: "Read", input: { file_path: "/foo/bar.ts" } },
+        ],
       },
-    }));
+      session_id: "sess-1",
+    });
 
     expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe("tool");
-    expect(messages[0].toolName).toBe("AskUserQuestion");
-    expect(attention).toBeDefined();
-    expect(attention!.prompt).toBe("Which branch should we use?");
-    expect(attention!.options).toEqual(["main", "feature"]);
+    expect(messages[0].toolName).toBe("Read");
+    expect(JSON.parse(messages[0].toolInput!)).toEqual({ file_path: "/foo/bar.ts" });
   });
 
-  test("handles system event as assistant message", () => {
+  test("detects AskUserQuestion in assistant tool_use blocks", () => {
     const parser = createParser();
-    const { messages } = parser.parseOutput(JSON.stringify({
-      type: "system",
-      content: "System initialization complete",
-    }));
+    const { messages, attention } = parser.handleMessage({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use", id: "toolu_ask", name: "AskUserQuestion", input: {
+              questions: [{ question: "Which option?", options: [{ label: "A" }, { label: "B" }] }],
+            },
+          },
+        ],
+      },
+      session_id: "sess-1",
+    });
 
     expect(messages).toHaveLength(1);
-    expect(messages[0].role).toBe("assistant");
-    expect(messages[0].content).toBe("System initialization complete");
+    expect(messages[0].toolName).toBe("AskUserQuestion");
+    expect(attention).toBeDefined();
+    expect(attention!.prompt).toBe("Which option?");
+    expect(attention!.options).toEqual(["A", "B"]);
   });
 
-  test("handles system event with null content (no phantom message)", () => {
+  test("system init event produces no messages", () => {
     const parser = createParser();
-    const { messages } = parser.parseOutput(JSON.stringify({ type: "system", content: null }));
+    const { messages } = parser.handleMessage({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-1",
+      tools: ["Read", "Bash"],
+      cwd: "/tmp",
+    });
     expect(messages).toHaveLength(0);
   });
 
-  test("handles system event with empty string content (no phantom message)", () => {
+  test("system compact_boundary produces no messages", () => {
     const parser = createParser();
-    const { messages } = parser.parseOutput(JSON.stringify({ type: "system", content: "" }));
+    const { messages } = parser.handleMessage({
+      type: "system",
+      subtype: "compact_boundary",
+      session_id: "sess-1",
+    });
     expect(messages).toHaveLength(0);
   });
 
   test("message_stop stream event does not emit turn_end (only result does)", () => {
     const parser = createParser();
-    const { messages, deltas } = parser.parseOutput(JSON.stringify({
+    const { messages, deltas } = parser.handleMessage({
       type: "stream_event",
       event: { type: "message_stop" },
-    }));
+      session_id: "sess-1",
+    });
 
     expect(messages).toHaveLength(0);
     expect(deltas).toHaveLength(0);
   });
 
-  test("silently ignores thinking deltas from slash-command runs", () => {
+  test("silently ignores thinking deltas", () => {
     const parser = createParser();
-    const { messages, deltas } = parser.parseOutput(JSON.stringify({
+    const { messages, deltas } = parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "pondering" } },
       session_id: "sess-think",
-    }));
-
-    expect(messages).toHaveLength(0);
-    expect(deltas).toHaveLength(0);
-  });
-
-  test("handles empty line gracefully", () => {
-    const parser = createParser();
-    const { messages, deltas } = parser.parseOutput("");
-    expect(messages).toHaveLength(0);
-    expect(deltas).toHaveLength(0);
-  });
-
-  test("message_stop does not emit turn_end (result event handles it)", () => {
-    const parser = createParser();
-    const line = JSON.stringify({
-      type: "stream_event",
-      event: { type: "message_stop" },
     });
-    const { messages, deltas } = parser.parseOutput(line);
+
     expect(messages).toHaveLength(0);
     expect(deltas).toHaveLength(0);
-  });
-
-  test("handles non-JSON line as raw assistant output", () => {
-    const parser = createParser();
-    const { messages } = parser.parseOutput("some raw text output");
-    expect(messages).toHaveLength(1);
-    expect(messages[0].role).toBe("assistant");
-    expect(messages[0].content).toBe("some raw text output");
-  });
-
-  test("tracks tool blocks by content block index so interleaved blocks do not corrupt ask-user input", () => {
-    const parser = createParser();
-
-    parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_ask", name: "AskUserQuestion" } },
-    }));
-    parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: {
-        type: "content_block_delta",
-        index: 0,
-        delta: { type: "input_json_delta", partial_json: "{\"questions\":[{\"question\":\"Which branch should we use?\"" },
-      },
-    }));
-    parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: { type: "content_block_start", index: 1, content_block: { type: "text" } },
-    }));
-    parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Thinking..." } },
-    }));
-    parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: { type: "content_block_stop", index: 1 },
-    }));
-    parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: {
-        type: "content_block_delta",
-        index: 0,
-        delta: { type: "input_json_delta", partial_json: ",\"header\":\"Branch\"}]}" },
-      },
-    }));
-
-    const { messages, deltas, attention } = parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: { type: "content_block_stop", index: 0 },
-    }));
-
-    expect(messages).toHaveLength(1);
-    expect(messages[0].toolName).toBe("AskUserQuestion");
-    expect(messages[0].toolInput).toBe("{\"questions\":[{\"question\":\"Which branch should we use?\",\"header\":\"Branch\"}]}");
-    expect(deltas).toEqual([{ deltaType: "tool_end" }]);
-    expect(attention?.prompt).toBe("Which branch should we use?");
-  });
-
-  test("merges initial tool input with a trailing streamed fragment when Claude starts with parsed JSON", () => {
-    const parser = createParser();
-
-    parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: {
-        type: "content_block_start",
-        index: 0,
-        content_block: {
-          type: "tool_use",
-          id: "toolu_ask",
-          name: "AskUserQuestion",
-          input: { questions: [{ question: "Which branch should we use?" }] },
-        },
-      },
-    }));
-    parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: {
-        type: "content_block_delta",
-        index: 0,
-        delta: { type: "input_json_delta", partial_json: ",\"description\":\"Check current branch\"}" },
-      },
-    }));
-
-    const { messages, attention } = parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: { type: "content_block_stop", index: 0 },
-    }));
-
-    expect(messages).toHaveLength(1);
-    expect(messages[0].toolName).toBe("AskUserQuestion");
-    expect(JSON.parse(messages[0].toolInput!)).toEqual({
-      questions: [{ question: "Which branch should we use?" }],
-      description: "Check current branch",
-    });
-    expect(attention?.prompt).toBe("Which branch should we use?");
   });
 
   test("emits turn_end on result event even without session_id", () => {
     const parser = createParser();
-    const { deltas } = parser.parseOutput(JSON.stringify({
+    const { deltas } = parser.handleMessage({
       type: "result",
-      cost_usd: 0.05,
+      subtype: "success",
+      total_cost_usd: 0.05,
       duration_ms: 1000,
-    }));
+      permission_denials: [],
+    });
 
     const turnEnd = deltas.find((d) => d.deltaType === "turn_end");
     expect(turnEnd).toBeDefined();
@@ -280,35 +187,40 @@ describe("ClaudeAdapter parser", () => {
   });
 
   test("keeps parser state isolated across concurrent session parsers", () => {
-    const adapter = new ClaudeAdapter();
-    const parserA = adapter.createParser();
-    const parserB = adapter.createParser();
+    const parserA = createParser();
+    const parserB = createParser();
 
-    parserA.parseOutput(JSON.stringify({
+    parserA.handleMessage({
       type: "stream_event",
       event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_a", name: "AskUserQuestion" } },
-    }));
-    parserB.parseOutput(JSON.stringify({
+      session_id: "sess-a",
+    });
+    parserB.handleMessage({
       type: "stream_event",
       event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_b", name: "Bash" } },
-    }));
-    parserA.parseOutput(JSON.stringify({
+      session_id: "sess-b",
+    });
+    parserA.handleMessage({
       type: "stream_event",
       event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"questions\":[{\"question\":\"Pick A?\"}]}" } },
-    }));
-    parserB.parseOutput(JSON.stringify({
+      session_id: "sess-a",
+    });
+    parserB.handleMessage({
       type: "stream_event",
       event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"command\":\"pwd\"}" } },
-    }));
+      session_id: "sess-b",
+    });
 
-    const resultB = parserB.parseOutput(JSON.stringify({
+    const resultB = parserB.handleMessage({
       type: "stream_event",
       event: { type: "content_block_stop", index: 0 },
-    }));
-    const resultA = parserA.parseOutput(JSON.stringify({
+      session_id: "sess-b",
+    });
+    const resultA = parserA.handleMessage({
       type: "stream_event",
       event: { type: "content_block_stop", index: 0 },
-    }));
+      session_id: "sess-a",
+    });
 
     expect(resultB.messages[0].toolName).toBe("Bash");
     expect(resultB.messages[0].toolInput).toBe("{\"command\":\"pwd\"}");
@@ -324,25 +236,26 @@ describe("ClaudeAdapter parser", () => {
   test("persists text from stream_event content blocks on stop", () => {
     const parser = createParser();
 
-    // Start a text content block
-    parser.parseOutput(JSON.stringify({
+    parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
-    }));
-    // Stream text deltas
-    parser.parseOutput(JSON.stringify({
+      session_id: "sess-1",
+    });
+    parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello " } },
-    }));
-    parser.parseOutput(JSON.stringify({
+      session_id: "sess-1",
+    });
+    parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "world!" } },
-    }));
-    // Stop the block — should persist the accumulated text
-    const { messages } = parser.parseOutput(JSON.stringify({
+      session_id: "sess-1",
+    });
+    const { messages } = parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_stop", index: 0 },
-    }));
+      session_id: "sess-1",
+    });
 
     expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe("assistant");
@@ -353,21 +266,24 @@ describe("ClaudeAdapter parser", () => {
     const parser = createParser();
 
     // First, emit a tool_use via stream_event so the ID is tracked
-    parser.parseOutput(JSON.stringify({
+    parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_abc", name: "Bash" } },
-    }));
-    parser.parseOutput(JSON.stringify({
+      session_id: "sess-1",
+    });
+    parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"command\":\"ls\"}" } },
-    }));
-    parser.parseOutput(JSON.stringify({
+      session_id: "sess-1",
+    });
+    parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_stop", index: 0 },
-    }));
+      session_id: "sess-1",
+    });
 
     // Now a user event with tool_result referencing that ID
-    const { messages } = parser.parseOutput(JSON.stringify({
+    const { messages } = parser.handleMessage({
       type: "user",
       message: {
         role: "user",
@@ -375,73 +291,114 @@ describe("ClaudeAdapter parser", () => {
           { type: "tool_result", tool_use_id: "toolu_abc", content: "file1.ts\nfile2.ts" },
         ],
       },
-    }));
+      session_id: "sess-1",
+    });
 
     expect(messages).toHaveLength(1);
     expect(messages[0].toolName).toBe("Bash");
     expect(messages[0].toolOutput).toBe("file1.ts\nfile2.ts");
   });
 
-  // ── Top-level assistant/user envelope parsing ─────────
-
-  test("extracts tool_use blocks from top-level assistant event (text handled by stream_events)", () => {
+  test("tracks tool blocks by content block index so interleaved blocks do not corrupt ask-user input", () => {
     const parser = createParser();
-    const { messages } = parser.parseOutput(JSON.stringify({
-      type: "assistant",
-      message: {
-        content: [
-          { type: "text", text: "Let me read that file." },
-          { type: "tool_use", id: "toolu_read", name: "Read", input: { file_path: "/foo/bar.ts" } },
-        ],
+
+    parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_ask", name: "AskUserQuestion" } },
+      session_id: "sess-1",
+    });
+    parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: "{\"questions\":[{\"question\":\"Which branch should we use?\"" },
       },
-    }));
-
-    // Only tool_use extracted — text is persisted via stream_event content_block_stop
-    expect(messages).toHaveLength(1);
-    expect(messages[0].role).toBe("tool");
-    expect(messages[0].toolName).toBe("Read");
-    expect(JSON.parse(messages[0].toolInput!)).toEqual({ file_path: "/foo/bar.ts" });
-  });
-
-  test("extracts tool_use blocks from assistant event with no text", () => {
-    const parser = createParser();
-    const { messages } = parser.parseOutput(JSON.stringify({
-      type: "assistant",
-      message: {
-        content: [
-          { type: "tool_use", id: "toolu_bash", name: "Bash", input: { command: "ls" } },
-        ],
+      session_id: "sess-1",
+    });
+    parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 1, content_block: { type: "text" } },
+      session_id: "sess-1",
+    });
+    parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Thinking..." } },
+      session_id: "sess-1",
+    });
+    parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 1 },
+      session_id: "sess-1",
+    });
+    parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: ",\"header\":\"Branch\"}]}" },
       },
-    }));
+      session_id: "sess-1",
+    });
 
-    expect(messages).toHaveLength(1);
-    expect(messages[0].role).toBe("tool");
-    expect(messages[0].toolName).toBe("Bash");
-  });
-
-  test("detects AskUserQuestion in top-level assistant tool_use blocks", () => {
-    const parser = createParser();
-    const { messages, attention } = parser.parseOutput(JSON.stringify({
-      type: "assistant",
-      message: {
-        content: [
-          { type: "tool_use", id: "toolu_ask", name: "AskUserQuestion", input: {
-            questions: [{ question: "Which option?", options: [{ label: "A" }, { label: "B" }] }],
-          }},
-        ],
-      },
-    }));
+    const { messages, deltas, attention } = parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 0 },
+      session_id: "sess-1",
+    });
 
     expect(messages).toHaveLength(1);
     expect(messages[0].toolName).toBe("AskUserQuestion");
-    expect(attention).toBeDefined();
-    expect(attention!.prompt).toBe("Which option?");
-    expect(attention!.options).toEqual(["A", "B"]);
+    expect(messages[0].toolInput).toBe("{\"questions\":[{\"question\":\"Which branch should we use?\",\"header\":\"Branch\"}]}");
+    expect(deltas).toEqual([{ deltaType: "tool_end" }]);
+    expect(attention?.prompt).toBe("Which branch should we use?");
   });
 
-  test("extracts tool_result from top-level user event", () => {
+  test("merges initial tool input with a trailing streamed fragment when SDK starts with parsed JSON", () => {
     const parser = createParser();
-    const { messages } = parser.parseOutput(JSON.stringify({
+
+    parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "content_block_start",
+        index: 0,
+        content_block: {
+          type: "tool_use",
+          id: "toolu_ask",
+          name: "AskUserQuestion",
+          input: { questions: [{ question: "Which branch should we use?" }] },
+        },
+      },
+      session_id: "sess-1",
+    });
+    parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: ",\"description\":\"Check current branch\"}" },
+      },
+      session_id: "sess-1",
+    });
+
+    const { messages, attention } = parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 0 },
+      session_id: "sess-1",
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].toolName).toBe("AskUserQuestion");
+    expect(JSON.parse(messages[0].toolInput!)).toEqual({
+      questions: [{ question: "Which branch should we use?" }],
+      description: "Check current branch",
+    });
+    expect(attention?.prompt).toBe("Which branch should we use?");
+  });
+
+  test("extracts tool_result from user event", () => {
+    const parser = createParser();
+    const { messages } = parser.handleMessage({
       type: "user",
       message: {
         role: "user",
@@ -449,7 +406,8 @@ describe("ClaudeAdapter parser", () => {
           { type: "tool_result", tool_use_id: "toolu_read", content: "file contents here" },
         ],
       },
-    }));
+      session_id: "sess-1",
+    });
 
     expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe("tool");
@@ -458,17 +416,20 @@ describe("ClaudeAdapter parser", () => {
 
   test("extracts tool_result with array content from user event", () => {
     const parser = createParser();
-    const { messages } = parser.parseOutput(JSON.stringify({
+    const { messages } = parser.handleMessage({
       type: "user",
       message: {
         role: "user",
         content: [
-          { type: "tool_result", tool_use_id: "toolu_agent", content: [
-            { type: "text", text: "Subagent completed successfully." },
-          ]},
+          {
+            type: "tool_result", tool_use_id: "toolu_agent", content: [
+              { type: "text", text: "Subagent completed successfully." },
+            ],
+          },
         ],
       },
-    }));
+      session_id: "sess-1",
+    });
 
     expect(messages).toHaveLength(1);
     expect(messages[0].toolOutput).toBe("Subagent completed successfully.");
@@ -476,73 +437,31 @@ describe("ClaudeAdapter parser", () => {
 
   // ── Deduplication across event types ──────────────────
 
-  test("stream_event + tool_use for same tool_use_id does not produce duplicate messages", () => {
-    const parser = createParser();
-
-    // Stream the tool via stream_event flow
-    parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_dup", name: "AskUserQuestion" } },
-    }));
-    parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"questions\":[{\"question\":\"Pick?\"}]}" } },
-    }));
-    const stopResult = parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: { type: "content_block_stop", index: 0 },
-    }));
-    expect(stopResult.messages).toHaveLength(1);
-    expect(stopResult.messages[0].toolName).toBe("AskUserQuestion");
-
-    // Now the same tool arrives as a top-level tool_use event — should be deduped
-    const toolUseResult = parser.parseOutput(JSON.stringify({
-      type: "tool_use",
-      tool: { id: "toolu_dup", name: "AskUserQuestion", input: { questions: [{ question: "Pick?" }] } },
-    }));
-    expect(toolUseResult.messages).toHaveLength(0);
-  });
+  // Note: top-level "tool_use" events don't exist in the SDK — only in CLI stream-json.
+  // Dedup between stream_event and assistant is the relevant SDK scenario.
 
   test("stream_event + assistant event for same tool_use_id does not produce duplicate messages", () => {
     const parser = createParser();
 
     // Stream the tool via stream_event flow
-    parser.parseOutput(JSON.stringify({
+    parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_dup2", name: "Bash" } },
-    }));
-    parser.parseOutput(JSON.stringify({
+    });
+    parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"command\":\"ls\"}" } },
-    }));
-    parser.parseOutput(JSON.stringify({
+    });
+    parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_stop", index: 0 },
-    }));
+    });
 
     // Same tool in assistant summary — should be deduped
-    const assistantResult = parser.parseOutput(JSON.stringify({
+    const assistantResult = parser.handleMessage({
       type: "assistant",
       message: { content: [{ type: "tool_use", id: "toolu_dup2", name: "Bash", input: { command: "ls" } }] },
-    }));
-    expect(assistantResult.messages).toHaveLength(0);
-  });
-
-  test("tool_use event + assistant event for same tool_use_id does not produce duplicate messages", () => {
-    const parser = createParser();
-
-    // Tool arrives as top-level tool_use event first
-    const toolUseResult = parser.parseOutput(JSON.stringify({
-      type: "tool_use",
-      tool: { id: "toolu_dup3", name: "AskUserQuestion", input: { questions: [{ question: "Choose?" }] } },
-    }));
-    expect(toolUseResult.messages).toHaveLength(1);
-
-    // Same tool in assistant summary — should be deduped
-    const assistantResult = parser.parseOutput(JSON.stringify({
-      type: "assistant",
-      message: { content: [{ type: "tool_use", id: "toolu_dup3", name: "AskUserQuestion", input: { questions: [{ question: "Choose?" }] } }] },
-    }));
+    });
     expect(assistantResult.messages).toHaveLength(0);
   });
 
@@ -550,74 +469,45 @@ describe("ClaudeAdapter parser", () => {
     const parser = createParser();
 
     // First assistant event processes the tool_use
-    const first = parser.parseOutput(JSON.stringify({
+    const first = parser.handleMessage({
       type: "assistant",
       message: { content: [{ type: "tool_use", id: "toolu_dup4", name: "Read", input: { file_path: "/foo.ts" } }] },
-    }));
+    });
     expect(first.messages).toHaveLength(1);
 
     // Second assistant event (e.g. from --include-partial-messages) — should be deduped
-    const second = parser.parseOutput(JSON.stringify({
+    const second = parser.handleMessage({
       type: "assistant",
       message: { content: [{ type: "tool_use", id: "toolu_dup4", name: "Read", input: { file_path: "/foo.ts" } }] },
-    }));
+    });
     expect(second.messages).toHaveLength(0);
   });
 
   // ── Reverse-order deduplication (tool_use/assistant BEFORE stream_event stop) ──
 
-  test("tool_use event before stream_event stop does not produce duplicate (reverse order)", () => {
-    const parser = createParser();
-
-    // Top-level tool_use arrives first
-    const toolUseResult = parser.parseOutput(JSON.stringify({
-      type: "tool_use",
-      tool: { id: "toolu_rev1", name: "AskUserQuestion", input: { questions: [{ question: "Pick?" }] } },
-    }));
-    expect(toolUseResult.messages).toHaveLength(1);
-
-    // Then the same tool streams via stream_event flow
-    parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_rev1", name: "AskUserQuestion" } },
-    }));
-    parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"questions\":[{\"question\":\"Pick?\"}]}" } },
-    }));
-    const stopResult = parser.parseOutput(JSON.stringify({
-      type: "stream_event",
-      event: { type: "content_block_stop", index: 0 },
-    }));
-
-    // content_block_stop should be deduped — only emit tool_end delta, no message
-    expect(stopResult.messages).toHaveLength(0);
-    expect(stopResult.deltas).toEqual([{ deltaType: "tool_end" }]);
-  });
-
   test("assistant event before stream_event stop does not produce duplicate (reverse order)", () => {
     const parser = createParser();
 
     // Assistant summary arrives first
-    const assistantResult = parser.parseOutput(JSON.stringify({
+    const assistantResult = parser.handleMessage({
       type: "assistant",
       message: { content: [{ type: "tool_use", id: "toolu_rev2", name: "Bash", input: { command: "ls" } }] },
-    }));
+    });
     expect(assistantResult.messages).toHaveLength(1);
 
     // Then the same tool streams via stream_event flow
-    parser.parseOutput(JSON.stringify({
+    parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_rev2", name: "Bash" } },
-    }));
-    parser.parseOutput(JSON.stringify({
+    });
+    parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"command\":\"ls\"}" } },
-    }));
-    const stopResult = parser.parseOutput(JSON.stringify({
+    });
+    const stopResult = parser.handleMessage({
       type: "stream_event",
       event: { type: "content_block_stop", index: 0 },
-    }));
+    });
 
     // content_block_stop should be deduped
     expect(stopResult.messages).toHaveLength(0);
@@ -626,7 +516,7 @@ describe("ClaudeAdapter parser", () => {
 
   test("handles user event with no tool_result blocks (echo of user prompt)", () => {
     const parser = createParser();
-    const { messages } = parser.parseOutput(JSON.stringify({
+    const { messages } = parser.handleMessage({
       type: "user",
       message: {
         role: "user",
@@ -634,9 +524,52 @@ describe("ClaudeAdapter parser", () => {
           { type: "text", text: "Hello, please help me." },
         ],
       },
-    }));
+      session_id: "sess-1",
+    });
 
-    // Text-only user events produce no messages (still echo of user input)
     expect(messages).toHaveLength(0);
+  });
+
+  // ── SDK-specific message types ──────────────────────────
+
+  test("rate_limit_event is silently skipped", () => {
+    const parser = createParser();
+    const { messages, deltas } = parser.handleMessage({
+      type: "rate_limit_event",
+      session_id: "sess-1",
+    });
+    expect(messages).toHaveLength(0);
+    expect(deltas).toHaveLength(0);
+  });
+
+  test("unknown message type logs warning but doesn't crash", () => {
+    const parser = createParser();
+    const { messages, deltas } = parser.handleMessage({
+      type: "some_future_type",
+      session_id: "sess-1",
+    });
+    expect(messages).toHaveLength(0);
+    expect(deltas).toHaveLength(0);
+  });
+
+  test("result error event still emits metrics and turn_end", () => {
+    const parser = createParser();
+    const { deltas } = parser.handleMessage({
+      type: "result",
+      subtype: "error_during_execution",
+      total_cost_usd: 0.15,
+      duration_ms: 5000,
+      session_id: "sess-err",
+      permission_denials: [],
+      errors: ["Something went wrong"],
+      is_error: true,
+    });
+
+    const metrics = deltas.find((d) => d.deltaType === "metrics");
+    expect(metrics).toBeDefined();
+    expect(metrics!.costUsd).toBe(0.15);
+
+    const turnEnd = deltas.find((d) => d.deltaType === "turn_end");
+    expect(turnEnd).toBeDefined();
   });
 });
