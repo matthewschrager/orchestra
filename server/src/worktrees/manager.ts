@@ -3,7 +3,7 @@ import { existsSync, rmSync } from "fs";
 import type { DB, ThreadRow } from "../db";
 import { getThread, updateThread } from "../db";
 
-const DEFAULT_WORKTREE_ROOT = join(
+export const DEFAULT_WORKTREE_ROOT = join(
   process.env.HOME || "~",
   "projects",
   "worktrees",
@@ -24,6 +24,15 @@ export class WorktreeManager {
     this.worktreeRoot = worktreeRoot || DEFAULT_WORKTREE_ROOT;
   }
 
+  /** Update the worktree root (e.g., when settings change) */
+  setWorktreeRoot(root: string): void {
+    this.worktreeRoot = root;
+  }
+
+  getWorktreeRoot(): string {
+    return this.worktreeRoot;
+  }
+
   async create(threadId: string, repoPath: string, name?: string): Promise<WorktreeInfo> {
     const repoName = basename(repoPath);
     const dirName = name || `${repoName}-${threadId}`;
@@ -31,9 +40,13 @@ export class WorktreeManager {
     const wtPath = dirName.startsWith("/") ? dirName : join(this.worktreeRoot, dirName);
     const branch = `orchestra/${basename(wtPath)}`;
 
-    // Create the worktree
+    // Always branch from main/master, not HEAD — prevents inheriting a dirty
+    // checkout state if an agent previously switched the main repo's branch.
+    const mainBranch = await this.detectMainBranch(repoPath);
+
+    // Create the worktree with explicit start-point
     const proc = Bun.spawn(
-      ["git", "worktree", "add", wtPath, "-b", branch],
+      ["git", "worktree", "add", wtPath, "-b", branch, mainBranch],
       { cwd: repoPath, stdout: "pipe", stderr: "pipe" },
     );
     await proc.exited;

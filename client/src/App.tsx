@@ -7,7 +7,6 @@ import { ProjectSidebar } from "./components/ProjectSidebar";
 import { ChatView } from "./components/ChatView";
 import { ContextPanel } from "./components/ContextPanel";
 import { InputBar } from "./components/InputBar";
-import { SlashCommandInput } from "./components/SlashCommandInput";
 import { AuthGate } from "./components/AuthGate";
 import { extractTokenFromUrl, getStoredToken } from "./lib/auth";
 import { StickyRunBar } from "./components/StickyRunBar";
@@ -20,6 +19,7 @@ import { isAskUserTool } from "./lib/askUser";
 import { WorktreePathInput } from "./components/WorktreePathInput";
 import { useTerminal } from "./hooks/useTerminal";
 import { TerminalPanel } from "./components/TerminalPanel";
+import { SettingsPanel } from "./components/SettingsPanel";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -191,6 +191,7 @@ function AppInner() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -601,6 +602,16 @@ function AppInner() {
               Context
             </button>
           )}
+          <button
+            onClick={() => setShowSettings(true)}
+            className="hidden md:flex p-1.5 hover:bg-surface-3 rounded-lg text-content-3 hover:text-content-1"
+            title="Settings"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="8" cy="8" r="2.5" />
+              <path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85" />
+            </svg>
+          </button>
         </div>
       </header>
 
@@ -656,6 +667,7 @@ function AppInner() {
           onArchiveThread={handleArchiveThread}
           onRemoveProject={handleRemoveProject}
           onAddProject={() => setShowAddProject(true)}
+          onOpenSettings={() => setShowSettings(true)}
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
         />
@@ -712,12 +724,19 @@ function AppInner() {
               )}
             </>
           ) : activeProject ? (
-            <ProjectEmptyState
-              project={activeProject}
-              agents={agents}
-              commands={commands}
-              onNewThread={handleNewThread}
-            />
+            <>
+              <ProjectEmptyState project={activeProject} />
+              <InputBar
+                agents={agents}
+                thread={null}
+                activeProjectId={activeProjectId}
+                activeProjectName={activeProject.name}
+                commands={commands}
+                onSend={handleSendMessage}
+                onNewThread={handleNewThread}
+                onStop={handleStopThread}
+              />
+            </>
           ) : (
             <WelcomeState onAddProject={() => setShowAddProject(true)} />
           )}
@@ -807,33 +826,20 @@ function AppInner() {
           onClose={() => setShowAddProject(false)}
         />
       )}
+
+      {/* Settings Panel */}
+      {showSettings && (
+        <SettingsPanel onClose={() => setShowSettings(false)} />
+      )}
     </div>
   );
 }
 
-// ── Project-aware empty state ──────────────────────────
+// ── Project-aware empty state (header only — InputBar is reused below) ───
 
-function ProjectEmptyState({
-  project,
-  agents,
-  commands,
-  onNewThread,
-}: {
-  project: ProjectWithStatus;
-  agents: Array<{ name: string; detected: boolean }>;
-  commands: SlashCommand[];
-  onNewThread: (agent: string, prompt: string, isolate: boolean, projectId: string, worktreeName?: string) => void;
-}) {
-  const [prompt, setPrompt] = useState("");
-  const [isolate, setIsolate] = useState(false);
-  const [worktreeName, setWorktreeName] = useState(() => {
-    const suffix = Math.random().toString(36).slice(2, 13);
-    return `orchestra/${project.name}-${suffix}`;
-  });
-  const defaultAgent = agents.find((a) => a.detected)?.name ?? "claude";
-
+function ProjectEmptyState({ project }: { project: ProjectWithStatus }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8 gap-6">
+    <div className="flex-1 flex flex-col items-center justify-center p-8">
       <div className="text-center">
         <h2 className="text-2xl font-semibold mb-2">{project.name}</h2>
         <div className="flex items-center justify-center gap-2 text-xs text-content-3">
@@ -845,55 +851,6 @@ function ProjectEmptyState({
               <span className="text-emerald-400 ml-1">{project.activeThreadCount} running</span>
             )}
           </span>
-        </div>
-      </div>
-      <div className="w-full max-w-xl">
-        <SlashCommandInput
-          value={prompt}
-          onChange={setPrompt}
-          onSubmit={() => {
-            if (prompt.trim()) {
-              onNewThread(defaultAgent, prompt.trim(), isolate, project.id, isolate ? worktreeName : undefined);
-              setPrompt("");
-            }
-          }}
-          commands={commands}
-          placeholder="What would you like to build?"
-          rows={5}
-        />
-        <div className="flex flex-col gap-2 mt-3">
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-sm text-content-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isolate}
-                onChange={(e) => {
-                  setIsolate(e.target.checked);
-                  if (e.target.checked) {
-                    const suffix = Math.random().toString(36).slice(2, 13);
-                    setWorktreeName(`orchestra/${project.name}-${suffix}`);
-                  }
-                }}
-                className="rounded"
-              />
-              Isolate to worktree
-            </label>
-            <button
-              onClick={() => {
-                if (prompt.trim()) {
-                  onNewThread(defaultAgent, prompt.trim(), isolate, project.id, isolate ? worktreeName : undefined);
-                  setPrompt("");
-                }
-              }}
-            disabled={!prompt.trim()}
-            className="px-5 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base"
-          >
-            Send
-          </button>
-          </div>
-          {isolate && (
-            <WorktreePathInput value={worktreeName} onChange={setWorktreeName} />
-          )}
         </div>
       </div>
     </div>

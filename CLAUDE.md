@@ -30,7 +30,8 @@ orchestra/
 │       │   ├── filesystem.ts Directory browser API
 │       │   ├── attention.ts Attention queue API
 │       │   ├── push.ts     Push subscription API
-│       │   └── uploads.ts  File upload + serve API
+│       │   ├── uploads.ts  File upload + serve API
+│       │   └── settings.ts Settings CRUD API
 │       ├── push/           Web Push notification management
 │       │   └── manager.ts  VAPID keys, subscriptions, dispatch
 │       ├── terminal/       Integrated terminal (PTY management)
@@ -53,6 +54,7 @@ orchestra/
 │       │       ├── SearchRenderer.tsx  Grep/Glob → match list
 │       │       └── SubAgentCard.tsx    Agent → status card
 │       │   ├── AttentionInbox.tsx  Attention queue inbox
+│       │   ├── SettingsPanel.tsx   Settings modal dialog
 │       │   ├── MobileNav.tsx      Bottom tab navigation
 │       │   ├── MobileSessions.tsx Thread list for mobile
 │       │   ├── MobileNewSession.tsx New session form for mobile
@@ -99,11 +101,13 @@ cd server && bun run src/index.ts  # Production server
 - WebSocket heartbeat prevents idle disconnection
 - Slash command autocompletion: scoped per project via `installed_plugins.json` + `settings.json` (global + project-level merge); `.agents/` internal skills excluded; cached per projectId
 - Worktree isolation: detectWorktree returns name for port/data separation, expanded port hash range (9999 slots)
+- Worktree branching: `git worktree add` always branches from detected main/master, not HEAD — prevents inheriting polluted checkout state from non-isolated agents
 - Cross-client thread sync: thread creation and archival broadcast `thread_updated` via WS to all clients; client deduplicates optimistic inserts
 - Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag
 - Session abort uses AbortController; `aborted` flag distinguishes user-stop from SDK error
-- Inactivity timeout (5 min) replaces PID-based health check for hung SDK iterators
+- Inactivity timeout (default 30 min, configurable via Settings) replaces PID-based health check for hung SDK iterators
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
+- Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings` with typed `Settings` interface; gear icon in sidebar footer + header; WorktreeManager updated live on save
 - File attachments: paste/drag-drop/picker in InputBar → upload to DATA_DIR/uploads/ → file paths appended to Claude prompt so it can Read them → rendered inline in chat messages
 - Integrated terminal: xterm.js v6 (client) + Bun native PTY via `Bun.spawn({ terminal })` (server); TerminalManager uses event-emitter pattern (like SessionManager) with 50KB replay buffer for reconnect viewport restore, output batching at ~60fps, 15-min idle timeout, max 20 concurrent PTYs; toggle via `Ctrl+`` or header button; terminal panel sits below InputBar; PTY persists per-thread across switches (idempotent `terminal_create` returns existing); disabled when `--tunnel` is active (security); desktop only (hidden on mobile); server-side `closeForThread()` on thread archive prevents zombie PTYs
 

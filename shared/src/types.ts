@@ -166,6 +166,14 @@ export interface SlashCommand {
   source: "builtin" | "plugin" | "skill";
 }
 
+// ── Settings ─────────────────────────────────────────────
+
+export interface Settings {
+  worktreeRoot: string;
+  /** Inactivity timeout in minutes — abort sessions with no SDK messages for this long (default: 30) */
+  inactivityTimeoutMinutes: number;
+}
+
 // ── API Types ───────────────────────────────────────────
 
 export interface CreateThreadRequest {

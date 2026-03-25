@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.1.13.0] - 2026-03-25
+
+### Changed
+
+- **Inactivity timeout raised to 30 minutes** — default increased from 5 min to 30 min to prevent premature termination of long-running sub-agent tasks
+- **Inactivity timeout now configurable** — new "Inactivity timeout (minutes)" setting in Settings panel; persisted to SQLite; validated between 1–1440 min; read dynamically each check interval (no restart needed)
+- **Timeout errors surfaced clearly** — timed-out sessions now show a visible error message in chat with guidance to increase the setting, status badge shows "error" (was silently "done"), and `error_message` field includes timeout details
+- **Atomic settings validation** — PATCH `/api/settings` now validates all fields before writing any, preventing partial updates on validation failure
+
+### Added
+
+- **Timeout settings tests** — 6 new tests covering valid update, lower/upper bound rejection, non-numeric rejection, atomicity with bad worktreeRoot, and default value
+
+## [0.1.12.3] - 2026-03-25
+
+### Fixed
+
+- **Worktree branching from wrong base** — `git worktree add` now explicitly branches from the detected main branch instead of HEAD, preventing new worktrees from inheriting a polluted checkout state when a non-isolated agent previously switched the main repo's branch
+
+### Added
+
+- **Worktree manager tests** — 4 new integration tests verifying correct branching from main (even when HEAD is on a feature branch or detached), master fallback, and custom worktree root
+
+## [0.1.12.2] - 2026-03-25
+
+### Changed
+
+- **Empty state reuses InputBar** — project empty state now renders the shared InputBar component instead of a standalone textarea, bringing file attachment support (paste, drag-drop, file picker) to the initial thread creation screen with zero code duplication
+
+## [0.1.12.1] - 2026-03-25
+
+### Fixed
+
+- **Sub-agent error detection** — replaced naive string-matching heuristic (`output.includes("error")`) with the SDK's structured `is_error` flag from `tool_result` blocks; sub-agents that mention "error" or "failed" in successful output no longer show a false error badge
+
+## [0.1.12.0] - 2026-03-25
+
+### Added
+
+- **Settings menu** — new key-value settings system with SQLite `settings` table, `GET/PATCH /api/settings` REST API, and modal UI accessible via gear icon in sidebar footer and header bar
+- **Configurable worktree directory root** — first setting allows users to choose where new worktrees are created; defaults to `~/projects/worktrees`; includes input validation (type guard, absolute path enforcement, tilde expansion, directory auto-creation), error/retry state in UI, and live sync to WorktreeManager
+- **Settings tests** — 9 new tests covering defaults, persistence, tilde resolution, type validation, directory creation, and error cases
+
 ## [0.1.11.0] - 2026-03-24
 
 ### Changed

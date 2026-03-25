@@ -69,6 +69,11 @@ const MIGRATIONS = [
     user_agent  TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  `CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
 ];
 
 // Column migration — safe to run multiple times
@@ -504,4 +509,27 @@ function safeJsonParse(s: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+// ── Settings helpers ─────────────────────────────────────
+
+export function getSetting(db: DB, key: string): string | null {
+  const row = db.query("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | null;
+  return row?.value ?? null;
+}
+
+export function setSetting(db: DB, key: string, value: string): void {
+  db.query(
+    `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+  ).run(key, value);
+}
+
+export function getAllSettings(db: DB): Record<string, string> {
+  const rows = db.query("SELECT key, value FROM settings").all() as Array<{ key: string; value: string }>;
+  const result: Record<string, string> = {};
+  for (const row of rows) {
+    result[row.key] = row.value;
+  }
+  return result;
 }

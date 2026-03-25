@@ -19,14 +19,15 @@ interface Props {
   input: string | null;
   output: string | null;
   isActive: boolean;
+  metadata?: Record<string, unknown> | null;
 }
 
-export function SubAgentCard({ input, output, isActive }: Props) {
+export function SubAgentCard({ input, output, isActive, metadata }: Props) {
   const agent = parseAgentPrompt(input);
   if (!agent) return null;
 
   const hasResult = !!output;
-  const isError = output?.toLowerCase().includes("error") || output?.toLowerCase().includes("failed");
+  const isError = metadata?.isError === true;
 
   if (!isActive && hasResult && !isError) {
     // Collapsed done state — single line
