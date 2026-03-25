@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { Message, Thread } from "shared";
 import { MarkdownContent } from "./MarkdownContent";
 import { DiffRenderer } from "./renderers/DiffRenderer";
@@ -10,6 +10,11 @@ import { extractQuestionPreview, formatAnswers, isAskUserTool, parseQuestions, t
 import { MessageAttachments } from "./AttachmentPreview";
 import type { Attachment } from "shared";
 
+export interface ChatViewHandle {
+  scrollToBottom: () => void;
+  scrollToTop: () => void;
+}
+
 interface Props {
   messages: Message[];
   thread: Thread;
@@ -20,10 +25,17 @@ interface Props {
   onSubmitAnswers?: (text: string) => void;
 }
 
-export function ChatView({ messages, thread, streamingText, streamingTool, streamingToolInput, turnEnded, onSubmitAnswers }: Props) {
+export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
+  { messages, thread, streamingText, streamingTool, streamingToolInput, turnEnded, onSubmitAnswers },
+  ref,
+) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  // Track how many messages existed when user scrolled away, for the "N new" badge
+  const [msgCountAtScrollAway, setMsgCountAtScrollAway] = useState(0);
+  // Guard: suppress handleScroll during programmatic smooth-scroll to prevent flicker
+  const isProgrammaticScroll = useRef(false);
 
   const grouped = useMemo(() => groupMessages(messages), [messages]);
 
@@ -49,13 +61,49 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
     }
   }, [messages.length, streamingText, streamingTool, streamingToolInput, autoScroll]);
 
-  // Detect manual scroll
+  // Reset scroll-away state when switching threads
+  useEffect(() => {
+    setMsgCountAtScrollAway(0);
+    setAutoScroll(true);
+  }, [thread.id]);
+
+  // Track when user scrolls away to count new messages for the FAB badge
+  useEffect(() => {
+    if (!autoScroll && msgCountAtScrollAway === 0) {
+      setMsgCountAtScrollAway(messages.length);
+    } else if (autoScroll && msgCountAtScrollAway > 0) {
+      setMsgCountAtScrollAway(0);
+    }
+  }, [autoScroll, messages.length, msgCountAtScrollAway]);
+
+  const newMessageCount = !autoScroll && msgCountAtScrollAway > 0
+    ? Math.max(0, messages.length - msgCountAtScrollAway)
+    : 0;
+
+  // Detect manual scroll (suppressed during programmatic smooth-scrolls)
   const handleScroll = () => {
+    if (isProgrammaticScroll.current) return;
     const el = containerRef.current;
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
     setAutoScroll(atBottom);
   };
+
+  const scrollToBottom = useCallback(() => {
+    isProgrammaticScroll.current = true;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    setAutoScroll(true);
+    // Re-enable scroll detection after animation settles
+    setTimeout(() => { isProgrammaticScroll.current = false; }, 500);
+  }, []);
+
+  const scrollToTop = useCallback(() => {
+    isProgrammaticScroll.current = true;
+    containerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    setTimeout(() => { isProgrammaticScroll.current = false; }, 500);
+  }, []);
+
+  useImperativeHandle(ref, () => ({ scrollToBottom, scrollToTop }), [scrollToBottom, scrollToTop]);
 
   return (
     <div
@@ -63,9 +111,9 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
       onScroll={handleScroll}
       className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4"
     >
-      {/* Thread header */}
-      <div className="mb-6 pb-4 border-b border-edge-1">
-        <h2 className="text-lg font-semibold tracking-tight">{thread.title}</h2>
+      {/* Thread header — tap to scroll to top */}
+      <div className="mb-6 pb-4 border-b border-edge-1 cursor-pointer group" role="button" tabIndex={0} onClick={scrollToTop} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") scrollToTop(); }}>
+        <h2 className="text-lg font-semibold tracking-tight group-hover:text-accent transition-colors">{thread.title}</h2>
         <div className="flex items-center gap-2 mt-1.5 text-xs text-content-3">
           <span className="text-content-2">{thread.agent}</span>
           <span className="text-content-3">&middot;</span>
@@ -144,9 +192,26 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
       )}
 
       <div ref={bottomRef} />
+
+      {/* Jump-to-bottom FAB — visible when scrolled up */}
+      {!autoScroll && (
+        <button
+          onClick={scrollToBottom}
+          className="sticky bottom-3 left-full -ml-14 mr-2 z-10 flex items-center gap-1.5 pl-2.5 pr-3 py-1.5 rounded-full bg-surface-2 border border-edge-2 hover:border-accent/40 hover:bg-surface-3 shadow-lg text-xs text-content-2 hover:text-content-1 transition-all"
+          aria-label={newMessageCount > 0 ? `${newMessageCount} new messages — jump to bottom` : "Jump to bottom"}
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 12.5a.5.5 0 01-.354-.146l-4.5-4.5a.5.5 0 01.708-.708L8 11.293l4.146-4.147a.5.5 0 01.708.708l-4.5 4.5A.5.5 0 018 12.5z"/>
+            <path d="M8 8.5a.5.5 0 01-.354-.146l-4.5-4.5a.5.5 0 11.708-.708L8 7.293l4.146-4.147a.5.5 0 11.708.708l-4.5 4.5A.5.5 0 018 8.5z"/>
+          </svg>
+          {newMessageCount > 0 && (
+            <span className="text-accent font-medium">{newMessageCount} new</span>
+          )}
+        </button>
+      )}
     </div>
   );
-}
+});
 
 // ── Message grouping ────────────────────────────────────
 

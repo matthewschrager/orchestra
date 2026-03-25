@@ -4,7 +4,7 @@ import { useWebSocket } from "./hooks/useWebSocket";
 import { api } from "./hooks/useApi";
 import { useAttention } from "./hooks/useAttention";
 import { ProjectSidebar } from "./components/ProjectSidebar";
-import { ChatView } from "./components/ChatView";
+import { ChatView, type ChatViewHandle } from "./components/ChatView";
 import { ContextPanel } from "./components/ContextPanel";
 import { InputBar } from "./components/InputBar";
 import { SlashCommandInput } from "./components/SlashCommandInput";
@@ -201,6 +201,7 @@ function AppInner() {
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
   const wasConnectedRef = useRef<boolean | null>(null);
+  const chatViewRef = useRef<ChatViewHandle>(null);
 
   // Attention system — cross-thread pending questions/permissions
   const attention = useAttention();
@@ -613,6 +614,7 @@ function AppInner() {
           {activeThread ? (
             <>
               <ChatView
+                ref={chatViewRef}
                 messages={activeMessages}
                 thread={activeThread}
                 streamingText={activeStreamingText}
@@ -629,6 +631,7 @@ function AppInner() {
                 metrics={activeMetrics}
                 elapsedMs={activelyWorking ? Date.now() - (turnStartRef.current || Date.now()) : activeMetrics.durationMs}
                 onInterrupt={handleStopThread}
+                onScrollToBottom={() => chatViewRef.current?.scrollToBottom()}
                 todos={activeTodos}
               />
               <InputBar
