@@ -9,6 +9,7 @@ interface Props {
 export function SettingsPanel({ onClose }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [worktreeRoot, setWorktreeRoot] = useState("");
+  const [inactivityTimeout, setInactivityTimeout] = useState("30");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -17,6 +18,7 @@ export function SettingsPanel({ onClose }: Props) {
     api.getSettings().then((s) => {
       setSettings(s);
       setWorktreeRoot(s.worktreeRoot);
+      setInactivityTimeout(String(s.inactivityTimeoutMinutes));
     }).catch((err) => setError((err as Error).message));
   }, []);
 
@@ -26,9 +28,18 @@ export function SettingsPanel({ onClose }: Props) {
     setError(null);
     setSaved(false);
     try {
-      const updated = await api.updateSettings({ worktreeRoot: worktreeRoot.trim() });
+      const patch: Partial<Settings> = {};
+      if (worktreeRoot.trim() !== settings?.worktreeRoot) {
+        patch.worktreeRoot = worktreeRoot.trim();
+      }
+      const timeoutNum = Number(inactivityTimeout);
+      if (Number.isFinite(timeoutNum) && timeoutNum >= 1 && timeoutNum !== settings?.inactivityTimeoutMinutes) {
+        patch.inactivityTimeoutMinutes = timeoutNum;
+      }
+      const updated = await api.updateSettings(patch);
       setSettings(updated);
       setWorktreeRoot(updated.worktreeRoot);
+      setInactivityTimeout(String(updated.inactivityTimeoutMinutes));
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -36,9 +47,12 @@ export function SettingsPanel({ onClose }: Props) {
     } finally {
       setSaving(false);
     }
-  }, [worktreeRoot]);
+  }, [worktreeRoot, inactivityTimeout, settings]);
 
-  const isDirty = settings !== null && worktreeRoot.trim() !== settings.worktreeRoot;
+  const isDirty = settings !== null && (
+    worktreeRoot.trim() !== settings.worktreeRoot ||
+    (Number.isFinite(Number(inactivityTimeout)) && Number(inactivityTimeout) >= 1 && Number(inactivityTimeout) !== settings.inactivityTimeoutMinutes)
+  );
 
   return (
     <div
@@ -67,6 +81,7 @@ export function SettingsPanel({ onClose }: Props) {
                 api.getSettings().then((s) => {
                   setSettings(s);
                   setWorktreeRoot(s.worktreeRoot);
+                  setInactivityTimeout(String(s.inactivityTimeoutMinutes));
                 }).catch((err) => setError((err as Error).message));
               }}
               className="text-sm text-accent hover:text-accent-light"
@@ -92,6 +107,27 @@ export function SettingsPanel({ onClose }: Props) {
                 onChange={(e) => setWorktreeRoot(e.target.value)}
                 placeholder="~/projects/worktrees"
                 className="w-full bg-surface-1 border border-edge-2 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent placeholder:text-content-3"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && isDirty) handleSave();
+                }}
+              />
+            </div>
+
+            {/* Inactivity Timeout */}
+            <div>
+              <label className="block text-sm font-medium text-content-2 mb-1.5">
+                Inactivity timeout (minutes)
+              </label>
+              <p className="text-xs text-content-3 mb-2">
+                Sessions are stopped if the agent produces no messages for this long. Increase for long-running sub-agent tasks.
+              </p>
+              <input
+                type="number"
+                min={1}
+                value={inactivityTimeout}
+                onChange={(e) => setInactivityTimeout(e.target.value)}
+                placeholder="30"
+                className="w-32 bg-surface-1 border border-edge-2 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent placeholder:text-content-3"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && isDirty) handleSave();
                 }}

@@ -4,6 +4,7 @@ import type { DB, MessageRow, ThreadRow, AttentionRow } from "../db";
 import {
   getThread,
   getAttentionItem,
+  getSetting,
   insertMessage,
   updateThread,
   createAttentionItem,
@@ -35,8 +36,8 @@ type StreamDeltaListener = (threadId: string, delta: StreamDelta) => void;
 type AttentionListener = (threadId: string, attention: AttentionItem) => void;
 type AttentionResolvedListener = (attentionId: string, threadId: string) => void;
 
-/** Inactivity timeout: abort session if no SDK message arrives within this period */
-const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+/** Default inactivity timeout: abort session if no SDK message arrives within this period */
+const DEFAULT_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const INACTIVITY_CHECK_INTERVAL_MS = 30_000;
 const DEBUG = process.env.ORCHESTRA_DEBUG === "1";
 
@@ -578,16 +579,66 @@ export class SessionManager {
     }
   }
 
+  /** Read inactivity timeout from settings DB, falling back to compiled default */
+  private getInactivityTimeoutMs(): number {
+    const raw = getSetting(this.db, "inactivityTimeoutMinutes");
+    if (raw) {
+      const mins = Number(raw);
+      if (Number.isFinite(mins) && mins > 0) return mins * 60 * 1000;
+    }
+    return DEFAULT_INACTIVITY_TIMEOUT_MS;
+  }
+
+  /** Abort a session due to inactivity timeout — surfaces the error to the user */
+  private timeoutThread(threadId: string, elapsedSec: number): void {
+    const active = this.sessions.get(threadId);
+    if (!active) return;
+
+    const timeoutMin = Math.round(this.getInactivityTimeoutMs() / 60_000);
+    const errMsg = `Session timed out after ${Math.round(elapsedSec)}s of inactivity (limit: ${timeoutMin}min). Long-running sub-agents may need a higher timeout — adjust in Settings.`;
+
+    // 1. Remove from active sessions
+    this.sessions.delete(threadId);
+    active.aborted = true;
+
+    // 2. Abort the SDK session
+    try {
+      active.session.abort();
+    } catch {
+      // Already aborted or completed
+    }
+
+    // 3. Cleanup
+    this.clearMainWorktreeLock(threadId);
+    orphanAttentionItems(this.db, threadId);
+
+    // 4. Persist a visible error message so the user sees it in chat
+    this.persistMessage(threadId, {
+      role: "assistant",
+      content: `**Inactivity timeout:** No messages received from the agent for ${Math.round(elapsedSec)} seconds. The session has been stopped.\n\nYou can increase the timeout in **Settings** and then send a follow-up message to resume.`,
+    });
+
+    // 5. Mark thread as error with descriptive message
+    updateThread(this.db, threadId, {
+      status: "error",
+      pid: null,
+      error_message: errMsg,
+    });
+    this.notifyThread(threadId);
+  }
+
   /** Periodically check for sessions that haven't received any SDK messages.
    *  This replaces the PID-based health check from the CLI approach. */
   private startInactivityCheck(): void {
     this.inactivityCheckInterval = setInterval(() => {
       const now = Date.now();
+      const timeoutMs = this.getInactivityTimeoutMs();
       for (const [threadId, session] of this.sessions) {
         const elapsed = now - session.lastMessageAt;
-        if (elapsed > INACTIVITY_TIMEOUT_MS) {
-          console.warn(`[health] Thread ${threadId} inactive for ${Math.round(elapsed / 1000)}s — aborting`);
-          this.stopThread(threadId);
+        if (elapsed > timeoutMs) {
+          const elapsedSec = Math.round(elapsed / 1000);
+          console.warn(`[health] Thread ${threadId} inactive for ${elapsedSec}s (limit: ${Math.round(timeoutMs / 1000)}s) — aborting`);
+          this.timeoutThread(threadId, elapsedSec);
         }
       }
     }, INACTIVITY_CHECK_INTERVAL_MS);
