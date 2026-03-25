@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.12.1] - 2026-03-25
+
+### Fixed
+
+- **Worktree branching from wrong base** — `git worktree add` now explicitly branches from the detected main branch instead of HEAD, preventing new worktrees from inheriting a polluted checkout state when a non-isolated agent previously switched the main repo's branch
+
+### Added
+
+- **Worktree manager tests** — 4 new integration tests verifying correct branching from main (even when HEAD is on a feature branch or detached), master fallback, and custom worktree root
+
 ## [0.1.12.0] - 2026-03-25
 
 ### Added
