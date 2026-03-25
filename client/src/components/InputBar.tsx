@@ -28,7 +28,6 @@ function generateDefaultWorktreeName(projectName: string | null): string {
 export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, pendingQuestion, onSend, onNewThread, onStop }: Props) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
-  const [showOptions, setShowOptions] = useState(false);
   const [agent, setAgent] = useState(agents.find((a) => a.detected)?.name ?? "claude");
   const [isolate, setIsolate] = useState(false);
   const [worktreeName, setWorktreeName] = useState(() => generateDefaultWorktreeName(activeProjectName));
@@ -280,7 +279,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
           <button
             onClick={handleSubmit}
             disabled={uploading || (!input.trim() && attachments.length === 0)}
-            className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base shrink-0"
+            className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base shrink-0 border border-transparent"
             title="Enter to send, Shift+Enter for newline"
           >
             {mode === "new" && thread ? "New" : "Send"}
@@ -288,9 +287,9 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
         )}
       </div>
 
-      {/* Collapsed options row — only in new-thread mode */}
+      {/* Thread options — always visible in new-thread mode */}
       {(mode === "new" || !thread) && (
-        <div className="flex items-center gap-2 mt-2">
+        <div className="flex items-center gap-3 mt-2 flex-wrap">
           {thread && (
             <button
               onClick={() => setMode("reply")}
@@ -299,21 +298,6 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
               &larr; Back to reply
             </button>
           )}
-          <div className="flex-1" />
-          <button
-            onClick={() => setShowOptions(!showOptions)}
-            className="text-xs text-content-3 hover:text-content-2 flex items-center gap-1"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M6.5 2a1.5 1.5 0 100 3 1.5 1.5 0 000-3zM2 3.5h2a2.5 2.5 0 005 0h5v-1H9a2.5 2.5 0 00-5 0H2v1zM9.5 11a1.5 1.5 0 100 3 1.5 1.5 0 000-3zM2 12.5h5a2.5 2.5 0 005 0h2v-1h-2a2.5 2.5 0 00-5 0H2v1z"/>
-            </svg>
-            Options
-          </button>
-        </div>
-      )}
-
-      {showOptions && (mode === "new" || !thread) && (
-        <div className="flex items-center gap-3 mt-2 pt-2 border-t border-edge-1/50">
           <select
             value={agent}
             onChange={(e) => setAgent(e.target.value)}
