@@ -95,6 +95,7 @@ cd server && bun run src/index.ts  # Production server
 - AskUserQuestion rendered inline as interactive cards with answer buttons
 - WebSocket heartbeat prevents idle disconnection
 - Worktree isolation: detectWorktree returns name for port/data separation, expanded port hash range (9999 slots)
+- Cross-client thread sync: thread creation and archival broadcast `thread_updated` via WS to all clients; client deduplicates optimistic inserts
 - Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag
 - Session abort uses AbortController; `aborted` flag distinguishes user-stop from SDK error
 - Inactivity timeout (5 min) replaces PID-based health check for hung SDK iterators
