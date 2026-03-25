@@ -208,14 +208,28 @@ class ClaudeParser {
         let contextWindow: number | undefined;
 
         if (modelUsage) {
-          inputTokens = 0;
-          outputTokens = 0;
-          for (const model of Object.values(modelUsage)) {
-            inputTokens += (model.inputTokens ?? 0) + (model.cacheReadInputTokens ?? 0) + (model.cacheCreationInputTokens ?? 0);
-            outputTokens += model.outputTokens ?? 0;
-            // Use the largest context window (primary model)
+          // Find the primary model (largest context window) — its tokens
+          // represent actual context occupancy. Summing across all models
+          // (including sub-agents) inflates the count far beyond the window.
+          let primaryKey: string | undefined;
+          for (const [key, model] of Object.entries(modelUsage)) {
             if (model.contextWindow && (!contextWindow || model.contextWindow > contextWindow)) {
               contextWindow = model.contextWindow;
+              primaryKey = key;
+            }
+          }
+
+          if (primaryKey) {
+            const pm = modelUsage[primaryKey];
+            inputTokens = (pm.inputTokens ?? 0) + (pm.cacheReadInputTokens ?? 0) + (pm.cacheCreationInputTokens ?? 0);
+            outputTokens = pm.outputTokens ?? 0;
+          } else {
+            // No context window info — fall back to summing all models
+            inputTokens = 0;
+            outputTokens = 0;
+            for (const model of Object.values(modelUsage)) {
+              inputTokens += (model.inputTokens ?? 0) + (model.cacheReadInputTokens ?? 0) + (model.cacheCreationInputTokens ?? 0);
+              outputTokens += model.outputTokens ?? 0;
             }
           }
         }
