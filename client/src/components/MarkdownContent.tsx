@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import type { Components } from "react-markdown";
 import type { Highlighter } from "shiki";
 
@@ -83,7 +84,7 @@ const components: Components = {
 export const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
   return (
     <div className="md-content">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
         {content}
       </ReactMarkdown>
     </div>
