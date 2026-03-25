@@ -98,6 +98,7 @@ cd server && bun run src/index.ts  # Production server
 - WebSocket heartbeat prevents idle disconnection
 - Slash command autocompletion: scoped per project via `installed_plugins.json` + `settings.json` (global + project-level merge); `.agents/` internal skills excluded; cached per projectId
 - Worktree isolation: detectWorktree returns name for port/data separation, expanded port hash range (9999 slots)
+- Worktree branching: `git worktree add` always branches from detected main/master, not HEAD — prevents inheriting polluted checkout state from non-isolated agents
 - Cross-client thread sync: thread creation and archival broadcast `thread_updated` via WS to all clients; client deduplicates optimistic inserts
 - Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag
 - Session abort uses AbortController; `aborted` flag distinguishes user-stop from SDK error
