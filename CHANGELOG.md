@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.16.0] - 2026-03-25
+
+### Added
+
+- **Codex CLI agent adapter** — Orchestra now supports OpenAI Codex as a second agent alongside Claude Code; when `@openai/codex-sdk` is installed and the user has run `codex login`, "codex" appears in the agent dropdown automatically
+- **Codex event parser** — maps Codex SDK events to Orchestra's streaming and persistence model: `command_execution` → Bash renderer, `file_change` → Edit renderer, `web_search` → WebSearch, `mcp_tool_call` → MCP tool name, `todo_list` → TodoWrite
+- **Text delta diffing with backtrack guard** — computes character-level streaming deltas from Codex's full-text `agent_message` updates, with a guard for model text revisions
+- **Codex parser tests** — 25 unit tests covering all event types, text diffing edge cases, tool mapping, and error handling
+
+### Changed
+
+- **SessionManager decoupled from Claude SDK** — replaced `AbortError` import from `@anthropic-ai/claude-agent-sdk` with a generic `isAbortError()` helper that works with any agent adapter
+- **AgentRegistry** now registers both `ClaudeAdapter` and `CodexAdapter`
+
 ## [0.1.15.0] - 2026-03-25
 
 ### Added

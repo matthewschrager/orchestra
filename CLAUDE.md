@@ -15,6 +15,7 @@ orchestra/
 │       ├── agents/         Agent adapter interface + implementations
 │       │   ├── types.ts    AgentAdapter interface
 │       │   ├── claude.ts   Claude Code adapter
+│       │   ├── codex.ts    Codex CLI adapter
 │       │   └── registry.ts Agent registry
 │       ├── sessions/       Session lifecycle management
 │       │   └── manager.ts  SDK session orchestration, stream consumption, persistence
@@ -80,8 +81,13 @@ cd server && bun run src/index.ts  # Production server
 ## Key design decisions
 
 - Agents use `@anthropic-ai/claude-agent-sdk` (pinned v0.2.81) — SDK manages subprocess lifecycle internally
+- Codex adapter uses `@openai/codex-sdk` (pinned v0.116.0) — ESM-only, loaded via `await import()` to avoid crash when not installed
+- Codex sessions use `Thread.runStreamed()` with item-based events; text deltas computed by diffing `agent_message.text` updates
+- Codex item types mapped to existing tool names: `command_execution` → Bash, `file_change` → Edit, `web_search` → WebSearch, `mcp_tool_call` → tool name, `todo_list` → TodoWrite
+- Codex runs with `sandboxMode: "workspace-write"`, `approvalPolicy: "never"` — no interactive permission events
 - Claude Code sessions use `query()` with `includePartialMessages: true` for streaming, `resume` for multi-turn
 - SDK options: `permissionMode: "bypassPermissions"`, `cwd` per-call for multi-project isolation
+- SessionManager is adapter-agnostic — uses `isAbortError()` helper instead of SDK-specific `AbortError` import
 - Multi-project: single server manages multiple registered git repos via `projects` table
 - Multiple threads can run concurrently on the same project's main worktree
 - Real-time streaming via ephemeral WebSocket deltas (not persisted to DB)
@@ -118,4 +124,4 @@ cd server && bun run src/index.ts  # Production server
 bun test                        # Run all tests
 ```
 
-Tests cover renderer parsing functions, server-side Claude SDK message parsing (including token usage extraction from modelUsage), SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, and terminal manager (PTY create/close/idempotent/limits/I/O/replay buffer).
+Tests cover renderer parsing functions, server-side Claude SDK message parsing (including token usage extraction from modelUsage), Codex SDK event parsing (text diffing, tool mapping, backtrack guard), SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, and terminal manager (PTY create/close/idempotent/limits/I/O/replay buffer).
