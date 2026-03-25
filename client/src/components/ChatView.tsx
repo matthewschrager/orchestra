@@ -183,6 +183,7 @@ interface ToolPair {
   input: string | null;
   output: string | null;
   context: string;
+  metadata?: Record<string, unknown> | null;
 }
 
 function pairTools(toolMsgs: Message[]): ToolPair[] {
@@ -216,6 +217,7 @@ function pairTools(toolMsgs: Message[]): ToolPair[] {
           name: msg.toolName || "tool",
           input: msg.toolInput,
           output: toolMsgs[matchIdx].toolOutput,
+          metadata: toolMsgs[matchIdx].metadata,
           context: extractToolContext(msg.toolName || "tool", msg.toolInput),
         });
         i++;
@@ -228,6 +230,7 @@ function pairTools(toolMsgs: Message[]): ToolPair[] {
       name: msg.toolName || "tool",
       input: msg.toolInput,
       output: msg.toolOutput,
+      metadata: msg.metadata,
       context: msg.toolInput ? extractToolContext(msg.toolName || "tool", msg.toolInput) : "",
     });
     i++;
@@ -327,7 +330,7 @@ function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false }: { 
 
   // Render Agent tool_use as a SubAgentCard
   if (pair.name === "Agent") {
-    return <SubAgentCard input={pair.input} output={pair.output} isActive={!pair.output} />;
+    return <SubAgentCard input={pair.input} output={pair.output} isActive={!pair.output} metadata={pair.metadata} />;
   }
 
   // Rich renderer dispatch — always show rich content for supported tools
