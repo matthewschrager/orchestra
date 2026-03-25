@@ -102,7 +102,7 @@ app.use("/api/*", async (c, next) => {
 app.route("/api/projects", createProjectRoutes(db));
 app.route("/api/threads", createThreadRoutes(db, sessionManager, worktreeManager));
 app.route("/api/agents", createAgentRoutes(registry));
-app.route("/api/commands", createCommandRoutes());
+app.route("/api/commands", createCommandRoutes(db));
 app.route("/api/fs", createFilesystemRoutes());
 app.route("/api/attention", createAttentionRoutes(db, sessionManager));
 app.route("/api/push", createPushRoutes(pushManager));

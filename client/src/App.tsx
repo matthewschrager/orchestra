@@ -337,8 +337,17 @@ function AppInner() {
     api.listProjects().then(setProjects).catch(console.error);
     api.listThreads().then(setThreads).catch(console.error);
     api.listAgents().then(setAgents).catch(console.error);
-    api.listCommands().then(setCommands).catch(console.error);
   }, []);
+
+  // Fetch commands scoped to active project; refetch when project changes.
+  // Stale-response guard prevents a slow earlier response from overwriting a fast later one.
+  useEffect(() => {
+    let stale = false;
+    api.listCommands(activeProjectId ?? undefined).then((cmds) => {
+      if (!stale) setCommands(cmds);
+    }).catch(console.error);
+    return () => { stale = true; };
+  }, [activeProjectId]);
 
   // Re-fetch thread list on WS reconnection so sidebar statuses are fresh.
   // Without this, threads that changed status while disconnected appear "stuck".
