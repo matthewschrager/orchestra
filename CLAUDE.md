@@ -29,7 +29,8 @@ orchestra/
 │       │   ├── commands.ts Slash command listing
 │       │   ├── filesystem.ts Directory browser API
 │       │   ├── attention.ts Attention queue API
-│       │   └── push.ts     Push subscription API
+│       │   ├── push.ts     Push subscription API
+│       │   └── uploads.ts  File upload + serve API
 │       ├── push/           Web Push notification management
 │       │   └── manager.ts  VAPID keys, subscriptions, dispatch
 │       ├── tunnel/         Cloudflare Tunnel integration
@@ -53,7 +54,8 @@ orchestra/
 │       │   ├── MobileNav.tsx      Bottom tab navigation
 │       │   ├── MobileSessions.tsx Thread list for mobile
 │       │   ├── MobileNewSession.tsx New session form for mobile
-│       │   └── SlashCommandInput.tsx Textarea with slash command autocomplete
+│       │   ├── SlashCommandInput.tsx Textarea with slash command autocomplete
+│       │   └── AttachmentPreview.tsx Thumbnail previews for file attachments
 │       ├── lib/             Shared utilities
 │       │   └── askUser.ts   AskUserQuestion parsing + inline rendering helpers
 │       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications
@@ -93,6 +95,7 @@ cd server && bun run src/index.ts  # Production server
 - AskUserQuestion rendered inline as interactive cards with answer buttons
 - WebSocket heartbeat prevents idle disconnection
 - Worktree isolation: detectWorktree returns name for port/data separation, expanded port hash range (9999 slots)
+- File attachments: paste/drag-drop/picker in InputBar → upload to DATA_DIR/uploads/ → file paths appended to Claude prompt so it can Read them → rendered inline in chat messages
 
 ## Testing
 

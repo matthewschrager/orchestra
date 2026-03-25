@@ -93,7 +93,7 @@ export interface TurnMetrics {
 export type WSClientMessage =
   | { type: "subscribe"; threadId: string; lastSeq?: number }
   | { type: "unsubscribe"; threadId: string }
-  | { type: "send_message"; threadId: string; content: string }
+  | { type: "send_message"; threadId: string; content: string; attachments?: Attachment[] }
   | { type: "stop_thread"; threadId: string }
   | { type: "resolve_attention"; attentionId: string; resolution: AttentionResolution }
   | { type: "ping" };
@@ -140,6 +140,16 @@ export interface TodoItem {
   activeForm: string;
 }
 
+// ── Attachments ──────────────────────────────────────────
+
+export interface Attachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  url: string;          // relative URL to serve the file: /api/uploads/:id
+}
+
 // ── Slash Commands ─────────────────────────────────────
 
 export interface SlashCommand {
@@ -157,6 +167,7 @@ export interface CreateThreadRequest {
   title?: string;
   isolate?: boolean;
   worktreeName?: string;
+  attachments?: Attachment[];
 }
 
 export interface WorktreeInfo {
