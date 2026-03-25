@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.1.9.1] - 2026-03-24
+
+### Fixed
+
+- **WorktreePathInput missing import in App.tsx** — clicking the "Isolate worktree" checkbox threw `ReferenceError: WorktreePathInput is not defined` because the component was used but never imported
+
+## [0.1.9.0] - 2026-03-24
+
+### Changed
+
+- **Unified spinner indicators** — replaced pulsing green dots and equalizer bars with a consistent spinning circle across sidebar, chat, and status bar
+- **Idle threads show no indicator** — done/paused threads no longer display status dots in sidebars; only running/pending/waiting/error states show indicators
+- **Removed cost display** — removed `$` cost from both idle session summary and active metrics strip in StickyRunBar
+
+### Added
+
+- **Cursor-aware slash command autocomplete** — typing `/` anywhere in the input (not just at the start) triggers command autocomplete with mid-text token replacement and highlighting
+- **Slash command input tests** — 19 unit tests for `findSlashToken`, `buildHighlightSegments`, and `replaceSlashToken` pure functions
+
+### Removed
+
+- **Equalizer animation** — removed unused `animate-eq` CSS keyframes and custom property
+- **Header spinner** — removed spinning indicator next to "Orchestra" title
+
 ## [0.1.8.0] - 2026-03-24
 
 ### Fixed

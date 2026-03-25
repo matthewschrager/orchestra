@@ -107,7 +107,7 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
           {isAskUserTool(streamingTool) ? (
             <div className="my-2 max-w-[80%] rounded-lg border border-sky-500/20 bg-sky-950/20 px-4 py-3">
               <div className="flex items-center gap-2 mb-1.5 text-xs text-sky-400/80 font-medium">
-                <EqBars />
+                <Spinner />
                 <span>Agent is asking...</span>
               </div>
               {streamingToolInput && (
@@ -119,7 +119,7 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
             </div>
           ) : streamingTool ? (
             <div className="flex items-center gap-2 text-xs text-content-2 py-0.5">
-              <EqBars />
+              <Spinner />
               <span className="font-mono truncate">
                 {formatToolLabel(streamingTool, extractToolContext(streamingTool, streamingToolInput ?? ""), true)}
               </span>
@@ -136,7 +136,7 @@ export function ChatView({ messages, thread, streamingText, streamingTool, strea
             </div>
           ) : !streamingTool ? (
             <div className="flex items-center gap-2 text-xs text-content-3 py-1">
-              <EqBars />
+              <Spinner />
               <span>Thinking...</span>
             </div>
           ) : null}
@@ -574,13 +574,11 @@ function QuestionCard({ pair, isAnswered, onSubmitAnswers }: { pair: ToolPair; i
   );
 }
 
-function EqBars() {
+function Spinner({ className = "w-3 h-3" }: { className?: string }) {
   return (
-    <span className="inline-flex items-end gap-[2px] h-3 shrink-0">
-      <span className="w-[2px] h-full bg-accent rounded-full origin-bottom animate-eq" />
-      <span className="w-[2px] h-full bg-accent rounded-full origin-bottom animate-eq" style={{ animationDelay: "150ms" }} />
-      <span className="w-[2px] h-full bg-accent rounded-full origin-bottom animate-eq" style={{ animationDelay: "300ms" }} />
-    </span>
+    <svg className={`shrink-0 text-accent animate-spin ${className}`} viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28 10" strokeLinecap="round" />
+    </svg>
   );
 }
 
