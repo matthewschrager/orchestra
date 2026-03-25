@@ -95,6 +95,7 @@ cd server && bun run src/index.ts  # Production server
 - AskUserQuestion rendered inline as interactive cards with answer buttons
 - WebSocket heartbeat prevents idle disconnection
 - Worktree isolation: detectWorktree returns name for port/data separation, expanded port hash range (9999 slots)
+- Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag
 - Session abort uses AbortController; `aborted` flag distinguishes user-stop from SDK error
 - Inactivity timeout (5 min) replaces PID-based health check for hung SDK iterators
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
@@ -106,4 +107,4 @@ cd server && bun run src/index.ts  # Production server
 bun test                        # Run all tests
 ```
 
-Tests cover renderer parsing functions, server-side Claude SDK message parsing, SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, and slash command input logic.
+Tests cover renderer parsing functions, server-side Claude SDK message parsing, SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, slash command input logic, and thread archive with worktree cleanup.

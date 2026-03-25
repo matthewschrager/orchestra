@@ -9,7 +9,7 @@ interface Props {
   onSelectProject: (id: string) => void;
   onSelectThread: (id: string) => void;
   onNewThread: (projectId: string) => void;
-  onArchiveThread: (id: string) => void;
+  onArchiveThread: (id: string, opts?: { cleanupWorktree?: boolean }) => void;
   onRemoveProject: (id: string) => void;
   onAddProject: () => void;
   open: boolean;
@@ -206,7 +206,16 @@ export function ProjectSidebar({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              onArchiveThread(thread.id);
+                              if (thread.worktree) {
+                                const cleanup = confirm(
+                                  `This thread has a worktree. Also delete the worktree and branch?\n\n` +
+                                  `OK = archive thread + delete worktree\n` +
+                                  `Cancel = archive thread only (worktree kept)`,
+                                );
+                                onArchiveThread(thread.id, { cleanupWorktree: cleanup });
+                              } else {
+                                onArchiveThread(thread.id);
+                              }
                             }}
                             className="opacity-0 group-hover:opacity-100 px-2 py-2.5 mr-1 text-content-3 hover:text-red-400 shrink-0"
                             title="Archive thread"
