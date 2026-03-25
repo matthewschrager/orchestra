@@ -155,6 +155,7 @@ class ClaudeParser {
         const userBlocks = (Array.isArray(message?.content) ? message!.content : []) as Array<{
           type: string;
           tool_use_id?: string;
+          is_error?: boolean;
           content?: string | Array<{ type: string; text?: string }>;
         }>;
 
@@ -169,11 +170,13 @@ class ClaudeParser {
             const toolName = block.tool_use_id
               ? this.toolUseNames.get(block.tool_use_id)
               : undefined;
+            const metadata = block.is_error ? { isError: true } : undefined;
             userMessages.push({
               role: "tool",
               content: outputContent,
               toolName,
               toolOutput: outputContent || undefined,
+              metadata,
             });
           }
         }

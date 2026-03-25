@@ -435,6 +435,42 @@ describe("ClaudeParser", () => {
     expect(messages[0].toolOutput).toBe("Subagent completed successfully.");
   });
 
+  test("propagates is_error from tool_result to metadata", () => {
+    const parser = createParser();
+    const { messages } = parser.handleMessage({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "toolu_err", is_error: true, content: "Agent crashed" },
+        ],
+      },
+      session_id: "sess-1",
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].toolOutput).toBe("Agent crashed");
+    expect(messages[0].metadata).toEqual({ isError: true });
+  });
+
+  test("does not set isError metadata when tool_result succeeds", () => {
+    const parser = createParser();
+    const { messages } = parser.handleMessage({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "toolu_ok", content: "Report mentions error handling patterns" },
+        ],
+      },
+      session_id: "sess-1",
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].toolOutput).toBe("Report mentions error handling patterns");
+    expect(messages[0].metadata).toBeUndefined();
+  });
+
   // ── Deduplication across event types ──────────────────
 
   // Note: top-level "tool_use" events don't exist in the SDK — only in CLI stream-json.
