@@ -474,6 +474,156 @@ describe("ClaudeAdapter parser", () => {
     expect(messages[0].toolOutput).toBe("Subagent completed successfully.");
   });
 
+  // ── Deduplication across event types ──────────────────
+
+  test("stream_event + tool_use for same tool_use_id does not produce duplicate messages", () => {
+    const parser = createParser();
+
+    // Stream the tool via stream_event flow
+    parser.parseOutput(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_dup", name: "AskUserQuestion" } },
+    }));
+    parser.parseOutput(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"questions\":[{\"question\":\"Pick?\"}]}" } },
+    }));
+    const stopResult = parser.parseOutput(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 0 },
+    }));
+    expect(stopResult.messages).toHaveLength(1);
+    expect(stopResult.messages[0].toolName).toBe("AskUserQuestion");
+
+    // Now the same tool arrives as a top-level tool_use event — should be deduped
+    const toolUseResult = parser.parseOutput(JSON.stringify({
+      type: "tool_use",
+      tool: { id: "toolu_dup", name: "AskUserQuestion", input: { questions: [{ question: "Pick?" }] } },
+    }));
+    expect(toolUseResult.messages).toHaveLength(0);
+  });
+
+  test("stream_event + assistant event for same tool_use_id does not produce duplicate messages", () => {
+    const parser = createParser();
+
+    // Stream the tool via stream_event flow
+    parser.parseOutput(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_dup2", name: "Bash" } },
+    }));
+    parser.parseOutput(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"command\":\"ls\"}" } },
+    }));
+    parser.parseOutput(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 0 },
+    }));
+
+    // Same tool in assistant summary — should be deduped
+    const assistantResult = parser.parseOutput(JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "toolu_dup2", name: "Bash", input: { command: "ls" } }] },
+    }));
+    expect(assistantResult.messages).toHaveLength(0);
+  });
+
+  test("tool_use event + assistant event for same tool_use_id does not produce duplicate messages", () => {
+    const parser = createParser();
+
+    // Tool arrives as top-level tool_use event first
+    const toolUseResult = parser.parseOutput(JSON.stringify({
+      type: "tool_use",
+      tool: { id: "toolu_dup3", name: "AskUserQuestion", input: { questions: [{ question: "Choose?" }] } },
+    }));
+    expect(toolUseResult.messages).toHaveLength(1);
+
+    // Same tool in assistant summary — should be deduped
+    const assistantResult = parser.parseOutput(JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "toolu_dup3", name: "AskUserQuestion", input: { questions: [{ question: "Choose?" }] } }] },
+    }));
+    expect(assistantResult.messages).toHaveLength(0);
+  });
+
+  test("multiple assistant events for same tool_use_id does not produce duplicate messages", () => {
+    const parser = createParser();
+
+    // First assistant event processes the tool_use
+    const first = parser.parseOutput(JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "toolu_dup4", name: "Read", input: { file_path: "/foo.ts" } }] },
+    }));
+    expect(first.messages).toHaveLength(1);
+
+    // Second assistant event (e.g. from --include-partial-messages) — should be deduped
+    const second = parser.parseOutput(JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "toolu_dup4", name: "Read", input: { file_path: "/foo.ts" } }] },
+    }));
+    expect(second.messages).toHaveLength(0);
+  });
+
+  // ── Reverse-order deduplication (tool_use/assistant BEFORE stream_event stop) ──
+
+  test("tool_use event before stream_event stop does not produce duplicate (reverse order)", () => {
+    const parser = createParser();
+
+    // Top-level tool_use arrives first
+    const toolUseResult = parser.parseOutput(JSON.stringify({
+      type: "tool_use",
+      tool: { id: "toolu_rev1", name: "AskUserQuestion", input: { questions: [{ question: "Pick?" }] } },
+    }));
+    expect(toolUseResult.messages).toHaveLength(1);
+
+    // Then the same tool streams via stream_event flow
+    parser.parseOutput(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_rev1", name: "AskUserQuestion" } },
+    }));
+    parser.parseOutput(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"questions\":[{\"question\":\"Pick?\"}]}" } },
+    }));
+    const stopResult = parser.parseOutput(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 0 },
+    }));
+
+    // content_block_stop should be deduped — only emit tool_end delta, no message
+    expect(stopResult.messages).toHaveLength(0);
+    expect(stopResult.deltas).toEqual([{ deltaType: "tool_end" }]);
+  });
+
+  test("assistant event before stream_event stop does not produce duplicate (reverse order)", () => {
+    const parser = createParser();
+
+    // Assistant summary arrives first
+    const assistantResult = parser.parseOutput(JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "toolu_rev2", name: "Bash", input: { command: "ls" } }] },
+    }));
+    expect(assistantResult.messages).toHaveLength(1);
+
+    // Then the same tool streams via stream_event flow
+    parser.parseOutput(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_rev2", name: "Bash" } },
+    }));
+    parser.parseOutput(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"command\":\"ls\"}" } },
+    }));
+    const stopResult = parser.parseOutput(JSON.stringify({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 0 },
+    }));
+
+    // content_block_stop should be deduped
+    expect(stopResult.messages).toHaveLength(0);
+    expect(stopResult.deltas).toEqual([{ deltaType: "tool_end" }]);
+  });
+
   test("handles user event with no tool_result blocks (echo of user prompt)", () => {
     const parser = createParser();
     const { messages } = parser.parseOutput(JSON.stringify({
