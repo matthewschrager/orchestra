@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.11.1] - 2026-03-25
+
+### Fixed
+
+- **Sub-agent error detection** — replaced naive string-matching heuristic (`output.includes("error")`) with the SDK's structured `is_error` flag from `tool_result` blocks; sub-agents that mention "error" or "failed" in successful output no longer show a false error badge
+
 ## [0.1.11.0] - 2026-03-24
 
 ### Changed
