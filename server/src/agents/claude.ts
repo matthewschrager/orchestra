@@ -26,9 +26,9 @@ export class ClaudeAdapter implements AgentAdapter {
   async getVersion(): Promise<string | null> {
     try {
       const { readFileSync } = await import("fs");
-      const { resolve } = await import("path");
-      const pkgPath = resolve(require.resolve("@anthropic-ai/claude-agent-sdk"), "../package.json");
-      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      const { dirname, join } = await import("path");
+      const sdkEntry = Bun.resolveSync("@anthropic-ai/claude-agent-sdk", process.cwd());
+      const pkg = JSON.parse(readFileSync(join(dirname(sdkEntry), "package.json"), "utf-8"));
       return pkg.version ?? null;
     } catch {
       return null;
@@ -46,6 +46,7 @@ export class ClaudeAdapter implements AgentAdapter {
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         includePartialMessages: true,
+        settingSources: ["user", "project", "local"],
         abortController,
       },
     });
@@ -178,10 +179,14 @@ class ClaudeParser {
       }
 
       case "result": {
-        // SDKResultMessage: { type: "result", subtype, total_cost_usd, duration_ms, session_id, permission_denials }
+        // SDKResultMessage: SDKResultSuccess | SDKResultError
+        // SDKResultError has subtype: "error_during_execution" | "error_max_turns" | etc.
         const deltas: ParseResult["deltas"] = [];
         const costUsd = event.total_cost_usd as number | undefined;
         const durationMs = event.duration_ms as number | undefined;
+        const subtype = event.subtype as string | undefined;
+        const isError = event.is_error as boolean | undefined;
+        const errors = event.errors as string[] | undefined;
 
         if (costUsd !== undefined || durationMs !== undefined) {
           deltas.push({ deltaType: "metrics", costUsd, durationMs });
@@ -192,6 +197,16 @@ class ClaudeParser {
         });
 
         const resultParse: ParseResult = { messages: [], deltas };
+
+        // Detect SDK error results or zero-turn successes (no model interaction)
+        const numTurns = event.num_turns as number | undefined;
+        if (isError || (subtype && subtype.startsWith("error_"))) {
+          const errorDetail = errors?.join("; ") || subtype || "unknown SDK error";
+          resultParse.error = errorDetail;
+        } else if (subtype === "success" && numTurns === 0) {
+          const resultText = event.result as string | undefined;
+          resultParse.error = resultText || "SDK completed with zero model turns";
+        }
 
         // Check permission_denials for AskUserQuestion (fallback detection)
         const denials = event.permission_denials as Array<{

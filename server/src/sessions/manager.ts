@@ -37,6 +37,7 @@ type AttentionResolvedListener = (attentionId: string, threadId: string) => void
 /** Inactivity timeout: abort session if no SDK message arrives within this period */
 const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const INACTIVITY_CHECK_INTERVAL_MS = 30_000;
+const DEBUG = process.env.ORCHESTRA_DEBUG === "1";
 
 export class SessionManager {
   private sessions: Map<string, ActiveSession> = new Map();
@@ -135,6 +136,7 @@ export class SessionManager {
   }
 
   sendMessage(threadId: string, content: string): void {
+    if (DEBUG) console.log(`[session] sendMessage thread=${threadId} content=${content.slice(0, 60)}`);
     const thread = getThread(this.db, threadId) as ThreadRow | null;
     if (!thread) throw new Error(`Thread ${threadId} not found`);
 
@@ -249,6 +251,7 @@ export class SessionManager {
     prompt: string,
     resumeSessionId: string | null,
   ): void {
+    if (DEBUG) console.log(`[session] startTurn thread=${threadId} resume=${resumeSessionId ?? "new"} cwd=${cwd}`);
     const session = adapter.start({
       cwd,
       prompt,
@@ -269,26 +272,63 @@ export class SessionManager {
     this.sessions.set(threadId, active);
 
     // Fire and forget — consumeStream handles its own lifecycle
-    this.consumeStream(active);
+    this.consumeStream(active).catch((err) => {
+      // Safety net: catch any errors that escape the try/catch inside consumeStream
+      console.error(`[stream] Thread ${threadId} — unhandled consumeStream error:`, err);
+      if (this.sessions.get(threadId) === active) {
+        this.sessions.delete(threadId);
+        updateThread(this.db, threadId, {
+          status: "error",
+          pid: null,
+          error_message: `Unexpected stream error: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
+        });
+        this.notifyThread(threadId);
+      }
+    });
   }
 
   private async consumeStream(activeSession: ActiveSession): Promise<void> {
     const { threadId } = activeSession;
+    let messageCount = 0;
+    const startTime = Date.now();
+    if (DEBUG) console.log(`[stream] Thread ${threadId} — consumeStream started`);
 
     try {
       for await (const msg of activeSession.session.messages) {
         // Check if session was stopped/superseded (object identity)
-        if (this.sessions.get(threadId) !== activeSession) return;
+        if (this.sessions.get(threadId) !== activeSession) {
+          if (DEBUG) console.log(`[stream] Thread ${threadId} — session superseded after ${messageCount} msgs`);
+          return;
+        }
+
+        messageCount++;
+        const m = msg as Record<string, unknown>;
+        if (DEBUG && (messageCount <= 3 || m.type === "result")) {
+          const extra = m.type === "result"
+            ? ` subtype=${m.subtype} is_error=${m.is_error} errors=${JSON.stringify(m.errors ?? [])}`
+            : "";
+          console.log(`[stream] Thread ${threadId} msg#${messageCount} type=${m.type}${extra} (${Date.now() - startTime}ms)`);
+        }
 
         activeSession.lastMessageAt = Date.now();
 
-        const { messages, deltas, attention, sessionId } =
+        const { messages, deltas, attention, sessionId, error: sdkError } =
           activeSession.session.parseMessage(msg);
 
         if (sessionId) {
           activeSession.sessionId = sessionId;
           this.persistSessionId(threadId, sessionId);
         }
+
+        // If the SDK reported an error result, surface it to the user
+        if (sdkError) {
+          console.error(`[stream] Thread ${threadId} — SDK error result: ${sdkError}`);
+          this.persistMessage(threadId, {
+            role: "assistant",
+            content: `**Agent error:** ${sdkError}`,
+          });
+        }
+
         for (const msg of messages) {
           this.persistMessage(threadId, msg);
         }
@@ -308,11 +348,30 @@ export class SessionManager {
       }
 
       // ── Iterator completed normally ──
+      if (DEBUG) console.log(`[stream] Thread ${threadId} — iterator completed after ${messageCount} msgs (${Date.now() - startTime}ms)`);
       // CRITICAL: Final identity check after loop (prevents marking superseded thread as "done")
       if (this.sessions.get(threadId) !== activeSession) return;
 
       this.sessions.delete(threadId);
       this.clearMainWorktreeLock(threadId);
+
+      // Detect silent failure: if the SDK produced 0 messages (or only system init),
+      // something went wrong — mark as error instead of "done"
+      if (messageCount <= 1) {
+        console.warn(`[stream] Thread ${threadId} — SDK produced ${messageCount} messages, treating as error`);
+        orphanAttentionItems(this.db, threadId);
+        this.persistMessage(threadId, {
+          role: "assistant",
+          content: "**Agent session ended without producing a response.** This may indicate an SDK initialization failure. Try again.",
+        });
+        updateThread(this.db, threadId, {
+          status: "error",
+          pid: null,
+          error_message: `SDK produced ${messageCount} messages without a response`,
+        });
+        this.notifyThread(threadId);
+        return;
+      }
 
       const thread = getThread(this.db, threadId);
       if (thread?.status === "waiting") {
@@ -331,9 +390,11 @@ export class SessionManager {
       // Check if this was a user-initiated abort or session superseded
       if (this.sessions.get(threadId) !== activeSession) return;
       if (activeSession.aborted || err instanceof AbortError) {
-        // User called stopThread or sendMessage — cleanup already done by caller
+        if (DEBUG) console.log(`[stream] Thread ${threadId} — aborted after ${messageCount} msgs (${Date.now() - startTime}ms)`);
         return;
       }
+
+      console.error(`[stream] Thread ${threadId} — error after ${messageCount} msgs (${Date.now() - startTime}ms):`, err);
 
       // Real SDK error
       this.sessions.delete(threadId);
@@ -490,8 +551,8 @@ export class SessionManager {
    *  With SDK sessions (no orphan processes), we just update the DB. */
   private recoverOrphanedThreads(): void {
     const running = this.db
-      .query("SELECT * FROM threads WHERE status IN ('running', 'waiting')")
-      .all() as ThreadRow[];
+      .query("SELECT id FROM threads WHERE status IN ('running', 'waiting')")
+      .all() as Pick<ThreadRow, "id">[];
 
     for (const thread of running) {
       orphanAttentionItems(this.db, thread.id);

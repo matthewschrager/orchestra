@@ -38,6 +38,8 @@ export interface ParseResult {
   deltas: Omit<StreamDelta, "threadId">[];
   attention?: AttentionEvent;
   sessionId?: string;
+  /** Set when the SDK result indicates an error (e.g., error_during_execution) */
+  error?: string;
 }
 
 export interface AgentAdapter {
