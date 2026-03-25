@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.1.16.0] - 2026-03-25
+
+### Added
+
+- **Codex CLI agent adapter** — Orchestra now supports OpenAI Codex as a second agent alongside Claude Code; when `@openai/codex-sdk` is installed and the user has run `codex login`, "codex" appears in the agent dropdown automatically
+- **Codex event parser** — maps Codex SDK events to Orchestra's streaming and persistence model: `command_execution` → Bash renderer, `file_change` → Edit renderer, `web_search` → WebSearch, `mcp_tool_call` → MCP tool name, `todo_list` → TodoWrite
+- **Text delta diffing with backtrack guard** — computes character-level streaming deltas from Codex's full-text `agent_message` updates, with a guard for model text revisions
+- **Codex parser tests** — 25 unit tests covering all event types, text diffing edge cases, tool mapping, and error handling
+
+### Changed
+
+- **SessionManager decoupled from Claude SDK** — replaced `AbortError` import from `@anthropic-ai/claude-agent-sdk` with a generic `isAbortError()` helper that works with any agent adapter
+- **AgentRegistry** now registers both `ClaudeAdapter` and `CodexAdapter`
+
+## [0.1.15.0] - 2026-03-25
+
+### Added
+
+- **Context window indicator** — real-time progress bar in StickyRunBar showing token usage vs. model context window size, with color-coded thresholds (green → yellow → orange → red) and compact token count label (e.g. "42k", "1.2M")
+- **Token usage extraction from SDK** — parses `modelUsage` from Claude Agent SDK result events to extract input/output tokens, cache tokens, and context window size per model
+- **Token usage tests** — 4 new tests covering single-model extraction, multi-model aggregation, empty modelUsage, and missing optional fields
+
+### Changed
+
+- **Token fields added to shared types** — `StreamDelta` and `TurnMetrics` interfaces extended with `inputTokens`, `outputTokens`, and `contextWindow` fields
+- **Replacement semantics for token metrics** — client reducer uses latest-value (not additive) for token counts since SDK reports cumulative session totals; `contextWindow` uses `Math.max` to prevent regression from sub-agent models
+
+## [0.1.14.0] - 2026-03-25
+
+### Added
+
+- **Integrated terminal** — xterm.js v6 terminal panel with Bun native PTY (`Bun.spawn({ terminal })`); toggle via `Ctrl+`` or `>_` header button; defaults to thread's working directory; PTY persists across thread switches with 50KB replay buffer for viewport restore; output batched at ~60fps; 15-min idle timeout; max 20 concurrent PTYs; server-side `closeForThread()` on thread archive; disabled in tunnel mode (security); desktop only
+- **Terminal tests** — 19 unit tests covering PTY create, idempotent reattach, max limit, input validation, resize clamping, close/cleanup, replay buffer, and I/O roundtrip
+
+### Fixed
+
+- **API status route ordering** — `/api/status` was registered after SPA fallback, returning HTML instead of JSON
+- **Vite proxy port hardcoded** — dev server proxy now reads `ORCHESTRA_PORT` env var, enabling worktree-isolated dev environments
+- **Production build crash** — `api()` called as function but `api` is an exported object; caused silent `TypeError` killing React in production builds
+
 ## [0.1.13.0] - 2026-03-25
 
 ### Changed

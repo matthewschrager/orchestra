@@ -1,11 +1,13 @@
 import type { AgentAdapter } from "./types";
 import { ClaudeAdapter } from "./claude";
+import { CodexAdapter } from "./codex";
 
 export class AgentRegistry {
   private adapters: Map<string, AgentAdapter> = new Map();
 
   constructor() {
     this.register(new ClaudeAdapter());
+    this.register(new CodexAdapter());
   }
 
   register(adapter: AgentAdapter): void {

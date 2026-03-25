@@ -4,7 +4,7 @@ import { useWebSocket } from "./hooks/useWebSocket";
 import { api } from "./hooks/useApi";
 import { useAttention } from "./hooks/useAttention";
 import { ProjectSidebar } from "./components/ProjectSidebar";
-import { ChatView } from "./components/ChatView";
+import { ChatView, type ChatViewHandle } from "./components/ChatView";
 import { ContextPanel } from "./components/ContextPanel";
 import { InputBar } from "./components/InputBar";
 import { AuthGate } from "./components/AuthGate";
@@ -17,6 +17,8 @@ import { MobileNewSession } from "./components/MobileNewSession";
 import { usePushNotifications } from "./hooks/usePushNotifications";
 import { isAskUserTool } from "./lib/askUser";
 import { WorktreePathInput } from "./components/WorktreePathInput";
+import { useTerminal } from "./hooks/useTerminal";
+import { TerminalPanel } from "./components/TerminalPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 
 export function App() {
@@ -62,7 +64,7 @@ const initialStreamingState: StreamingState = {
   turnEnded: new Set(),
 };
 
-const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0 };
+const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0 };
 
 type StreamingAction =
   | { type: "delta"; delta: StreamDelta }
@@ -118,6 +120,9 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
             costUsd: prev.costUsd + (delta.costUsd ?? 0),
             durationMs: prev.durationMs + (delta.durationMs ?? 0),
             turnCount: prev.turnCount + 1,
+            inputTokens: delta.inputTokens ?? prev.inputTokens,
+            outputTokens: delta.outputTokens ?? prev.outputTokens,
+            contextWindow: Math.max(delta.contextWindow ?? 0, prev.contextWindow),
           });
           return { ...state, metrics };
         }
@@ -192,6 +197,9 @@ function AppInner() {
   const [showSettings, setShowSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalEnabled, setTerminalEnabled] = useState(true);
+  const [lastTerminalMsg, setLastTerminalMsg] = useState<WSServerMessage | null>(null);
   const [latestTodos, setLatestTodos] = useState<Map<string, TodoItem[]>>(new Map());
   const [pushBannerDismissed, setPushBannerDismissed] = useState(
     () => localStorage.getItem("orchestra_push_dismissed") === "1",
@@ -200,6 +208,7 @@ function AppInner() {
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
   const wasConnectedRef = useRef<boolean | null>(null);
+  const chatViewRef = useRef<ChatViewHandle>(null);
 
   // Attention system — cross-thread pending questions/permissions
   const attention = useAttention();
@@ -289,8 +298,52 @@ function AppInner() {
     }, []),
     onRawMessage: useCallback((msg: WSServerMessage) => {
       attention.handleWSMessage(msg);
+      // Route terminal messages
+      if (msg.type === "terminal_output" || msg.type === "terminal_exit" ||
+          msg.type === "terminal_created" || msg.type === "terminal_error") {
+        setLastTerminalMsg(msg);
+      }
     }, []), // eslint-disable-line react-hooks/exhaustive-deps
   });
+
+  // Terminal hook
+  const terminal = useTerminal({
+    threadId: activeThreadId,
+    visible: terminalOpen,
+    send,
+  });
+
+  // Route terminal WS messages to the hook
+  useEffect(() => {
+    if (lastTerminalMsg) {
+      terminal.handleMessage(lastTerminalMsg);
+    }
+  }, [lastTerminalMsg]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch terminal enabled status
+  useEffect(() => {
+    fetch("/api/status")
+      .then((r) => r.ok ? r.json() : null)
+      .then((s) => { if (s?.terminalEnabled !== undefined) setTerminalEnabled(s.terminalEnabled); })
+      .catch(() => {}); // Ignore — old server without /api/status
+  }, []);
+
+  // Keyboard shortcut: Ctrl+` / Cmd+` to toggle terminal
+  const terminalEnabledRef = useRef(terminalEnabled);
+  terminalEnabledRef.current = terminalEnabled;
+  const activeThreadIdRef = useRef(activeThreadId);
+  activeThreadIdRef.current = activeThreadId;
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "`") {
+        e.preventDefault();
+        if (!terminalEnabledRef.current || !activeThreadIdRef.current) return;
+        setTerminalOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Subscribe to active thread
   useEffect(() => {
@@ -529,6 +582,22 @@ function AppInner() {
             }`}
             title={connected ? "Connected" : "Disconnected"}
           />
+          <button
+            onClick={() => setTerminalOpen(!terminalOpen)}
+            disabled={!activeThread || !terminalEnabled}
+            className="hidden md:block px-3 py-1.5 hover:bg-surface-3 rounded-lg text-sm text-content-2 hover:text-content-1 disabled:opacity-30 disabled:cursor-not-allowed font-mono"
+            title={
+              !terminalEnabled
+                ? "Terminal disabled in tunnel mode"
+                : !activeThread
+                  ? "Select a thread to open terminal"
+                  : terminalOpen
+                    ? "Close terminal (Ctrl+`)"
+                    : "Open terminal (Ctrl+`)"
+            }
+          >
+            &gt;_
+          </button>
           {activeThread?.worktree && (
             <button
               onClick={() => setContextOpen(!contextOpen)}
@@ -612,6 +681,7 @@ function AppInner() {
           {activeThread ? (
             <>
               <ChatView
+                ref={chatViewRef}
                 messages={activeMessages}
                 thread={activeThread}
                 streamingText={activeStreamingText}
@@ -628,6 +698,7 @@ function AppInner() {
                 metrics={activeMetrics}
                 elapsedMs={activelyWorking ? Date.now() - (turnStartRef.current || Date.now()) : activeMetrics.durationMs}
                 onInterrupt={handleStopThread}
+                onScrollToBottom={() => chatViewRef.current?.scrollToBottom()}
                 todos={activeTodos}
               />
               <InputBar
@@ -641,6 +712,22 @@ function AppInner() {
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
               />
+              {activeThread && terminalEnabled && (
+                <TerminalPanel
+                  threadId={activeThread.id}
+                  visible={terminalOpen}
+                  connected={terminal.connected}
+                  exited={terminal.exited}
+                  exitCode={terminal.exitCode}
+                  error={terminal.error}
+                  replay={terminal.replay}
+                  onInput={terminal.sendInput}
+                  onResize={terminal.resize}
+                  onRestart={terminal.restart}
+                  onClose={() => setTerminalOpen(false)}
+                  lastMessage={lastTerminalMsg}
+                />
+              )}
             </>
           ) : activeProject ? (
             <>

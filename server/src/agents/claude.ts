@@ -251,8 +251,34 @@ class ClaudeParser {
         const isError = event.is_error as boolean | undefined;
         const errors = event.errors as string[] | undefined;
 
-        if (costUsd !== undefined || durationMs !== undefined) {
-          deltas.push({ deltaType: "metrics", costUsd, durationMs });
+        // Extract token usage from modelUsage (per-model breakdown)
+        const modelUsage = event.modelUsage as Record<string, {
+          inputTokens?: number;
+          outputTokens?: number;
+          cacheReadInputTokens?: number;
+          cacheCreationInputTokens?: number;
+          contextWindow?: number;
+        }> | undefined;
+
+        let inputTokens: number | undefined;
+        let outputTokens: number | undefined;
+        let contextWindow: number | undefined;
+
+        if (modelUsage) {
+          inputTokens = 0;
+          outputTokens = 0;
+          for (const model of Object.values(modelUsage)) {
+            inputTokens += (model.inputTokens ?? 0) + (model.cacheReadInputTokens ?? 0) + (model.cacheCreationInputTokens ?? 0);
+            outputTokens += model.outputTokens ?? 0;
+            // Use the largest context window (primary model)
+            if (model.contextWindow && (!contextWindow || model.contextWindow > contextWindow)) {
+              contextWindow = model.contextWindow;
+            }
+          }
+        }
+
+        if (costUsd !== undefined || durationMs !== undefined || inputTokens !== undefined) {
+          deltas.push({ deltaType: "metrics", costUsd, durationMs, inputTokens, outputTokens, contextWindow });
         }
         deltas.push({
           deltaType: "turn_end",
