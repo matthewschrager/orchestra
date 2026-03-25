@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.14.0] - 2026-03-25
+
+### Added
+
+- **Integrated terminal** — xterm.js v6 terminal panel with Bun native PTY (`Bun.spawn({ terminal })`); toggle via `Ctrl+`` or `>_` header button; defaults to thread's working directory; PTY persists across thread switches with 50KB replay buffer for viewport restore; output batched at ~60fps; 15-min idle timeout; max 20 concurrent PTYs; server-side `closeForThread()` on thread archive; disabled in tunnel mode (security); desktop only
+- **Terminal tests** — 19 unit tests covering PTY create, idempotent reattach, max limit, input validation, resize clamping, close/cleanup, replay buffer, and I/O roundtrip
+
+### Fixed
+
+- **API status route ordering** — `/api/status` was registered after SPA fallback, returning HTML instead of JSON
+- **Vite proxy port hardcoded** — dev server proxy now reads `ORCHESTRA_PORT` env var, enabling worktree-isolated dev environments
+- **Production build crash** — `api()` called as function but `api` is an exported object; caused silent `TypeError` killing React in production builds
+
 ## [0.1.13.0] - 2026-03-25
 
 ### Changed

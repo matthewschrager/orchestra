@@ -12,11 +12,13 @@ import {
 } from "../db";
 import type { SessionManager } from "../sessions/manager";
 import type { WorktreeManager } from "../worktrees/manager";
+import type { TerminalManager } from "../terminal/manager";
 
 export function createThreadRoutes(
   db: DB,
   sessionManager: SessionManager,
   worktreeManager: WorktreeManager,
+  terminalManager?: TerminalManager,
 ) {
   const app = new Hono();
 
@@ -195,6 +197,9 @@ export function createThreadRoutes(
 
     // Stop the thread if it's running
     sessionManager.stopThread(threadId);
+
+    // Close terminal for this thread (server-side lifecycle — not client-dependent)
+    terminalManager?.closeForThread(threadId);
 
     // Optionally cleanup worktree before archiving
     const cleanupWorktree = c.req.query("cleanup_worktree") === "true";
