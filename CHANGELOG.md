@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.17.0] - 2026-03-25
+
+### Changed
+
+- **Improved empty state UX** — redesigned the "new thread" launch view with project path display, recent threads list (clickable, with status dots and relative timestamps), and a subtle radial glow background
+- **Always-visible thread options** — model selector and "Isolate to worktree" checkbox are now permanently visible in the InputBar when creating a new thread, instead of hidden behind an "Options" toggle
+- **Send button alignment** — fixed subtle 1px misalignment between the Send button and text input by matching border box models
+
 ## [0.1.16.0] - 2026-03-25
 
 ### Added
