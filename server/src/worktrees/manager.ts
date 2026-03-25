@@ -40,9 +40,13 @@ export class WorktreeManager {
     const wtPath = dirName.startsWith("/") ? dirName : join(this.worktreeRoot, dirName);
     const branch = `orchestra/${basename(wtPath)}`;
 
-    // Create the worktree
+    // Always branch from main/master, not HEAD — prevents inheriting a dirty
+    // checkout state if an agent previously switched the main repo's branch.
+    const mainBranch = await this.detectMainBranch(repoPath);
+
+    // Create the worktree with explicit start-point
     const proc = Bun.spawn(
-      ["git", "worktree", "add", wtPath, "-b", branch],
+      ["git", "worktree", "add", wtPath, "-b", branch, mainBranch],
       { cwd: repoPath, stdout: "pipe", stderr: "pipe" },
     );
     await proc.exited;
