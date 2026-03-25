@@ -198,7 +198,6 @@ function AppInner() {
   const [error, setError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const [terminalEnabled, setTerminalEnabled] = useState(true);
   const [lastTerminalMsg, setLastTerminalMsg] = useState<WSServerMessage | null>(null);
   const [latestTodos, setLatestTodos] = useState<Map<string, TodoItem[]>>(new Map());
   const [pushBannerDismissed, setPushBannerDismissed] = useState(
@@ -320,24 +319,14 @@ function AppInner() {
     }
   }, [lastTerminalMsg]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch terminal enabled status
-  useEffect(() => {
-    fetch("/api/status")
-      .then((r) => r.ok ? r.json() : null)
-      .then((s) => { if (s?.terminalEnabled !== undefined) setTerminalEnabled(s.terminalEnabled); })
-      .catch(() => {}); // Ignore — old server without /api/status
-  }, []);
-
   // Keyboard shortcut: Ctrl+` / Cmd+` to toggle terminal
-  const terminalEnabledRef = useRef(terminalEnabled);
-  terminalEnabledRef.current = terminalEnabled;
   const activeThreadIdRef = useRef(activeThreadId);
   activeThreadIdRef.current = activeThreadId;
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "`") {
         e.preventDefault();
-        if (!terminalEnabledRef.current || !activeThreadIdRef.current) return;
+        if (!activeThreadIdRef.current) return;
         setTerminalOpen((prev) => !prev);
       }
     };
@@ -584,16 +573,14 @@ function AppInner() {
           />
           <button
             onClick={() => setTerminalOpen(!terminalOpen)}
-            disabled={!activeThread || !terminalEnabled}
+            disabled={!activeThread}
             className="hidden md:block px-3 py-1.5 hover:bg-surface-3 rounded-lg text-sm text-content-2 hover:text-content-1 disabled:opacity-30 disabled:cursor-not-allowed font-mono"
             title={
-              !terminalEnabled
-                ? "Terminal disabled in tunnel mode"
-                : !activeThread
-                  ? "Select a thread to open terminal"
-                  : terminalOpen
-                    ? "Close terminal (Ctrl+`)"
-                    : "Open terminal (Ctrl+`)"
+              !activeThread
+                ? "Select a thread to open terminal"
+                : terminalOpen
+                  ? "Close terminal (Ctrl+`)"
+                  : "Open terminal (Ctrl+`)"
             }
           >
             &gt;_
@@ -712,7 +699,7 @@ function AppInner() {
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
               />
-              {activeThread && terminalEnabled && (
+              {activeThread && (
                 <TerminalPanel
                   threadId={activeThread.id}
                   visible={terminalOpen}

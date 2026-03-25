@@ -13,7 +13,6 @@ export function createWSHandler(
   sessionManager: SessionManager,
   db: DB,
   terminalManager?: TerminalManager,
-  terminalEnabled: boolean = true,
 ) {
   const clients = new Set<ServerWebSocket<WSData>>();
 
@@ -113,18 +112,6 @@ export function createWSHandler(
     msg: WSClientMessage,
   ): void {
     if (!terminalManager) return;
-
-    if (!terminalEnabled) {
-      if ("threadId" in msg || "terminalId" in msg) {
-        const id = "terminalId" in msg ? (msg as { terminalId: string }).terminalId : (msg as { threadId: string }).threadId;
-        ws.send(JSON.stringify({
-          type: "terminal_error",
-          terminalId: id,
-          error: "Terminal disabled in tunnel mode",
-        } satisfies WSServerMessage));
-      }
-      return;
-    }
 
     switch (msg.type) {
       case "terminal_create": {
