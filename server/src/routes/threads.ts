@@ -183,6 +183,7 @@ export function createThreadRoutes(
     const { title } = await c.req.json<{ title?: string }>();
     if (title) {
       updateThread(db, c.req.param("id"), { title });
+      sessionManager.notifyThread(c.req.param("id"));
     }
     const thread = getThread(db, c.req.param("id"));
     if (!thread) return c.json({ error: "Not found" }, 404);

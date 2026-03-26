@@ -6,8 +6,10 @@ import { BashRenderer } from "./renderers/BashRenderer";
 import { ReadRenderer } from "./renderers/ReadRenderer";
 import { SearchRenderer, searchSummary } from "./renderers/SearchRenderer";
 import { SubAgentCard } from "./renderers/SubAgentCard";
+import { TodoCard } from "./renderers/TodoCard";
 import { extractQuestionPreview, formatAnswers, isAskUserTool, parseQuestions, type ParsedQuestion } from "../lib/askUser";
 import { MessageAttachments } from "./AttachmentPreview";
+import { EditableTitle } from "./EditableTitle";
 import type { Attachment } from "shared";
 
 export interface ChatViewHandle {
@@ -23,10 +25,11 @@ interface Props {
   streamingToolInput?: string;
   turnEnded?: boolean;
   onSubmitAnswers?: (text: string) => void;
+  onSaveTitle?: (newTitle: string) => void;
 }
 
 export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
-  { messages, thread, streamingText, streamingTool, streamingToolInput, turnEnded, onSubmitAnswers },
+  { messages, thread, streamingText, streamingTool, streamingToolInput, turnEnded, onSubmitAnswers, onSaveTitle },
   ref,
 ) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -38,6 +41,14 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
   const isProgrammaticScroll = useRef(false);
 
   const grouped = useMemo(() => groupMessages(messages), [messages]);
+
+  // Find the ID of the latest TodoWrite message for prominent rendering
+  const latestTodoId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].toolName === "TodoWrite" && messages[i].toolInput) return messages[i].id;
+    }
+    return null;
+  }, [messages]);
 
   // Detect which ask-user tool messages have been answered (user replied after them)
   const answeredQuestionIds = useMemo(() => {
@@ -112,9 +123,13 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
       onScroll={handleScroll}
       className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4"
     >
-      {/* Thread header — tap to scroll to top */}
-      <div className="mb-6 pb-4 border-b border-edge-1 cursor-pointer group" role="button" tabIndex={0} onClick={scrollToTop} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") scrollToTop(); }}>
-        <h2 className="text-lg font-semibold tracking-tight group-hover:text-accent transition-colors">{thread.title}</h2>
+      {/* Thread header — hidden on mobile (MobileThreadHeader handles it), tap to scroll to top on desktop */}
+      <div className="hidden md:block mb-6 pb-4 border-b border-edge-1" role="button" tabIndex={0} onClick={scrollToTop} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") scrollToTop(); }}>
+        {onSaveTitle ? (
+          <EditableTitle title={thread.title} onSave={onSaveTitle} className="text-lg font-semibold tracking-tight" />
+        ) : (
+          <h2 className="text-lg font-semibold tracking-tight cursor-pointer group-hover:text-accent transition-colors">{thread.title}</h2>
+        )}
         <div className="flex items-center gap-2 mt-1.5 text-xs text-content-3">
           <span className="text-content-2">{thread.agent}</span>
           <span className="text-content-3">&middot;</span>
@@ -143,7 +158,7 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
 
       {grouped.map((item, i) =>
         Array.isArray(item) ? (
-          <ToolGroup key={`tg-${item[0].id}`} messages={item} answeredIds={answeredQuestionIds} onSubmitAnswers={onSubmitAnswers} />
+          <ToolGroup key={`tg-${item[0].id}`} messages={item} answeredIds={answeredQuestionIds} onSubmitAnswers={onSubmitAnswers} latestTodoId={latestTodoId} />
         ) : (
           <MessageBubble key={item.id} message={item} />
         ),
@@ -306,7 +321,7 @@ function pairTools(toolMsgs: Message[]): ToolPair[] {
 
 // ── Components ──────────────────────────────────────────
 
-function ToolGroup({ messages, answeredIds, onSubmitAnswers }: { messages: Message[]; answeredIds: Set<string>; onSubmitAnswers?: (text: string) => void }) {
+function ToolGroup({ messages, answeredIds, onSubmitAnswers, latestTodoId }: { messages: Message[]; answeredIds: Set<string>; onSubmitAnswers?: (text: string) => void; latestTodoId: string | null }) {
   const pairs = useMemo(() => pairTools(messages), [messages]);
   const grouped = useMemo(() => groupConsecutiveTools(pairs), [pairs]);
   const [expandAll, setExpandAll] = useState(false);
@@ -323,16 +338,16 @@ function ToolGroup({ messages, answeredIds, onSubmitAnswers }: { messages: Messa
       )}
       {grouped.map((group) =>
         group.length === 1 ? (
-          <ToolLine key={group[0].id} pair={group[0]} isAnswered={answeredIds.has(group[0].id)} onSubmitAnswers={onSubmitAnswers} forceExpand={expandAll} />
+          <ToolLine key={group[0].id} pair={group[0]} isAnswered={answeredIds.has(group[0].id)} onSubmitAnswers={onSubmitAnswers} forceExpand={expandAll} latestTodoId={latestTodoId} />
         ) : (
-          <ToolGroupRow key={group[0].id} pairs={group} forceExpand={expandAll} />
+          <ToolGroupRow key={group[0].id} pairs={group} forceExpand={expandAll} latestTodoId={latestTodoId} />
         ),
       )}
     </div>
   );
 }
 
-function ToolGroupRow({ pairs, forceExpand }: { pairs: ToolPair[]; forceExpand: boolean }) {
+function ToolGroupRow({ pairs, forceExpand, latestTodoId }: { pairs: ToolPair[]; forceExpand: boolean; latestTodoId: string | null }) {
   const [expanded, setExpanded] = useState(false);
   const isOpen = expanded || forceExpand;
 
@@ -353,7 +368,7 @@ function ToolGroupRow({ pairs, forceExpand }: { pairs: ToolPair[]; forceExpand: 
       {isOpen && (
         <div className="ml-5 space-y-0.5">
           {pairs.map((pair) => (
-            <ToolLine key={pair.id} pair={pair} isAnswered={false} forceExpand={false} />
+            <ToolLine key={pair.id} pair={pair} isAnswered={false} forceExpand={false} latestTodoId={latestTodoId} />
           ))}
         </div>
       )}
@@ -366,8 +381,8 @@ function groupConsecutiveTools(pairs: ToolPair[]): ToolPair[][] {
   let current: ToolPair[] = [];
 
   for (const pair of pairs) {
-    // Ask-user tools always get their own group
-    if (isAskUserTool(pair.name)) {
+    // Ask-user tools and TodoWrite always get their own group
+    if (isAskUserTool(pair.name) || pair.name === "TodoWrite") {
       if (current.length > 0) groups.push(current);
       groups.push([pair]);
       current = [];
@@ -384,19 +399,32 @@ function groupConsecutiveTools(pairs: ToolPair[]): ToolPair[][] {
   return groups;
 }
 
-function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false }: { pair: ToolPair; isAnswered: boolean; onSubmitAnswers?: (text: string) => void; forceExpand?: boolean }) {
+/** Declarative registry of tools that get special (non-ToolLine) rendering.
+ *  Each entry maps a tool name to a render function.
+ *  Context object provides props needed by different renderers. */
+interface ToolRenderContext {
+  pair: ToolPair;
+  isAnswered: boolean;
+  onSubmitAnswers?: (text: string) => void;
+  latestTodoId: string | null;
+}
+
+const TOOL_RENDERERS: Record<string, (ctx: ToolRenderContext) => React.ReactNode> = {
+  AskUserQuestion: (ctx) => <QuestionCard pair={ctx.pair} isAnswered={ctx.isAnswered} onSubmitAnswers={ctx.onSubmitAnswers} />,
+  AskUserTool: (ctx) => <QuestionCard pair={ctx.pair} isAnswered={ctx.isAnswered} onSubmitAnswers={ctx.onSubmitAnswers} />,
+  Agent: (ctx) => <SubAgentCard input={ctx.pair.input} output={ctx.pair.output} isActive={!ctx.pair.output} metadata={ctx.pair.metadata} />,
+  TodoWrite: (ctx) => <TodoCard input={ctx.pair.input} isLatest={ctx.pair.id === ctx.latestTodoId} />,
+};
+
+function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false, latestTodoId = null }: { pair: ToolPair; isAnswered: boolean; onSubmitAnswers?: (text: string) => void; forceExpand?: boolean; latestTodoId?: string | null }) {
   const [expanded, setExpanded] = useState(false);
   const hasDetails = pair.input || pair.output;
   const isOpen = expanded || forceExpand;
 
-  // Render ask-user tools as prominent question cards
-  if (isAskUserTool(pair.name)) {
-    return <QuestionCard pair={pair} isAnswered={isAnswered} onSubmitAnswers={onSubmitAnswers} />;
-  }
-
-  // Render Agent tool_use as a SubAgentCard
-  if (pair.name === "Agent") {
-    return <SubAgentCard input={pair.input} output={pair.output} isActive={!pair.output} metadata={pair.metadata} />;
+  // Check registry for special rendering (AskUser, Agent, TodoWrite)
+  const specialRenderer = TOOL_RENDERERS[pair.name];
+  if (specialRenderer) {
+    return <>{specialRenderer({ pair, isAnswered, onSubmitAnswers, latestTodoId: latestTodoId ?? null })}</>;
   }
 
   // Rich renderer dispatch — always show rich content for supported tools
@@ -461,8 +489,6 @@ function getRichRenderer(pair: ToolPair): React.ReactNode | null {
     case "Grep":
     case "Glob":
       return <SearchRenderer input={pair.input} output={pair.output} />;
-    case "TodoWrite":
-      return <TodoRenderer input={pair.input} />;
     default:
       return null;
   }
@@ -718,6 +744,7 @@ const TOOL_VERBS: Record<string, [string, string]> = {
   NotebookEdit: ["Editing notebook", "Edited notebook"],
   AskUserQuestion: ["Asking", "Asked"],
   AskUserTool: ["Asking", "Asked"],
+  TodoWrite: ["Updating tasks", "Updated tasks"],
 };
 
 function formatToolLabel(name: string, context: string, active: boolean): string {

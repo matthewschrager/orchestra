@@ -78,9 +78,9 @@ export interface StreamDelta {
   costUsd?: number;
   durationMs?: number;
   sessionId?: string;
-  /** Aggregate input tokens (including cache reads) for this turn */
+  /** Per-request input tokens (including cache reads) — actual context occupancy */
   inputTokens?: number;
-  /** Aggregate output tokens for this turn */
+  /** Per-request output tokens — actual context occupancy */
   outputTokens?: number;
   /** Model context window size (from the primary model used) */
   contextWindow?: number;
@@ -94,9 +94,9 @@ export interface TurnMetrics {
   costUsd: number;
   durationMs: number;
   turnCount: number;
-  /** Cumulative input tokens across all turns */
+  /** Per-request input tokens from latest primary-model API call (actual context occupancy) */
   inputTokens: number;
-  /** Cumulative output tokens across all turns */
+  /** Per-request output tokens from latest primary-model API call */
   outputTokens: number;
   /** Model context window size (latest reported) */
   contextWindow: number;
@@ -203,6 +203,8 @@ export interface TailscaleStatus {
   httpsUrl: string | null;
   /** Whether tailscale serve maps to this Orchestra instance's port */
   portMatch: boolean;
+  /** Proxy target uses HTTPS but Orchestra is HTTP — will cause 502 */
+  proxyMismatch: boolean;
   /** Orchestra server port (for generating correct tailscale serve command) */
   orchestraPort: number;
   /** Current remoteUrl setting value */

@@ -132,7 +132,7 @@ app.get("*", async (c) => {
 
 // ── Server ──────────────────────────────────────────────
 
-const wsHandler = createWSHandler(sessionManager, db, terminalManager);
+const wsHandler = createWSHandler(sessionManager, db);
 
 let server: ReturnType<typeof Bun.serve>;
 try {
@@ -225,16 +225,19 @@ tailscaleDetector.detect().then((ts) => {
 
   console.log(`\n[tailscale] Detected: ${ts.hostname || ts.ip || "unknown"}`);
 
-  if (ts.httpsAvailable && ts.portMatch && ts.httpsUrl) {
+  if (ts.proxyMismatch) {
+    console.log(`[tailscale] ⚠ tailscale serve is proxying to HTTPS but Orchestra is HTTP — this causes 502 errors.`);
+    console.log(`[tailscale] Fix: tailscale serve reset && tailscale serve --bg ${PORT}`);
+  } else if (ts.httpsAvailable && ts.portMatch && ts.httpsUrl) {
     console.log(`[tailscale] HTTPS active: ${ts.httpsUrl}`);
     console.log(`[tailscale] Remote access ready — open this URL on your phone.`);
     console.log(`[tailscale] ⚠ Any device on your tailnet can access Orchestra without a token.`);
   } else if (ts.httpsAvailable && !ts.portMatch) {
     console.log(`[tailscale] ⚠ tailscale serve is active but not mapped to port ${PORT}.`);
-    console.log(`[tailscale] Fix: tailscale serve --bg https / http://localhost:${PORT}`);
+    console.log(`[tailscale] Fix: tailscale serve --bg ${PORT}`);
   } else {
     console.log(`[tailscale] Enable remote access with push notifications:`);
-    console.log(`  tailscale serve --bg https / http://localhost:${PORT}`);
+    console.log(`  tailscale serve --bg ${PORT}`);
     if (ts.hostname) {
       console.log(`  Then access via: https://${ts.hostname}/`);
     }

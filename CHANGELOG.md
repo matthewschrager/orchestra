@@ -1,10 +1,57 @@
 # Changelog
 
-## [0.1.21.2] - 2026-03-25
+## [0.1.23.2] - 2026-03-26
 
 ### Changed
 
 - **Worktree badge shows identifying name** — thread sidebar badge now displays the worktree name (extracted from branch) with a git-branch icon instead of a generic "wt" label; applies to both desktop and mobile views; full branch name shown on hover tooltip
+
+## [0.1.23.1] - 2026-03-26
+
+### Fixed
+
+- **Terminal panel not working on first open** — xterm.js initialization effect only depended on `threadId`, so when the panel first opened (visibility changed but thread didn't), the terminal instance was never created; added `visible` to the effect's dependency array so the terminal initializes correctly on first toggle
+
+## [0.1.23.0] - 2026-03-26
+
+### Fixed
+
+- **TodoWrite rendering broken (missing import)** — `ChatView.tsx` referenced `<TodoRenderer>` without importing it, causing TodoWrite tool results to silently fail to render
+- **Codex TodoWrite data shape mismatch** — Codex adapter emits `{ items: [{ text, completed }] }` but the parser only accepted Claude SDK's `{ todos: [{ content, status, activeForm }] }`; `parseTodos()` now normalizes both shapes with explicit `String()` coercion for type safety
+- **`latestTodos` not hydrated from message history** — after page reload, StickyRunBar showed no task state because `latestTodos` was only populated from live WebSocket messages, not REST-loaded history
+- **History hydration race condition** — added guard to prevent slower REST history load from overwriting newer streaming todo state
+- **Duplicate AskUserQuestion cards** — when the agent asked the user a question (via AskUserQuestion tool), the same question appeared 2-3 times in the chat before the user answered; replaced `permissionMode: "bypassPermissions"` with a `canUseTool` callback that denies AskUserQuestion with `interrupt: true`, preventing SDK internal retries
+- **Turn-end state bug** — after AskUserQuestion, the session state was set to `idle` instead of `waiting` because the turn_end handler relied on a per-message variable that missed attention created in earlier messages; now checks the database for pending attention items
+- **AskUser denial noise** — suppressed the SDK's tool_result denial message and `ede_diagnostic` error that were rendered as visual noise below the QuestionCard
+- **ExitPlanMode stuck threads** — SDK bug where `requiresUserInteraction()` short-circuits `bypassPermissions` causes ExitPlanMode to be denied in headless mode; Orchestra now detects ExitPlanMode in the SDK stream and auto-approves by sending "Plan approved. Proceed with implementation." on turn end, preventing the denial/retry loop that caused threads to hang
+
+### Added
+
+- **Prominent TodoCard rendering** — latest TodoWrite renders as a full-width card showing all tasks with per-task status (✓ completed, ▸ running, ○ queued), progress bar, and ARIA accessibility roles; prior TodoWrites collapse to clickable `✓ Updated tasks (X/Y)` lines expandable for history inspection
+- **StickyRunBar active task display** — shows the currently running task description (e.g., `▸ Running integration tests (3/5)`) instead of just `3/5 tasks`
+- **`TOOL_RENDERERS` declarative registry** — replaces ad-hoc if/switch pattern in `ToolLine` for special tool rendering (AskUser, Agent, TodoWrite); adding new special tools is now a one-line registry entry
+- **Codex TodoWrite normalization tests** — 7 new parser tests covering Codex shape, `completed` boolean mapping, `todos`-over-`items` preference, and empty array handling
+
+## [0.1.22.2] - 2026-03-26
+
+### Fixed
+
+- **Context window indicator showing inflated >1M usage** — `modelUsage` in SDK result events reports cumulative token totals across ALL API calls in a session (each turn re-sends conversation history), so the context bar was comparing cumulative totals against the per-request context window limit; now extracts per-request `input_tokens` from `message_start` stream events (primary model only via `parent_tool_use_id === null`) which represent actual context occupancy; context bar also updates in real-time during streaming instead of waiting for the turn to complete
+- **Turn count inflated by intermediate metrics** — metrics deltas from `message_start` stream events were incorrectly incrementing the turn counter; now only result events (with cost/duration) count as turns
+
+## [0.1.22.1] - 2026-03-25
+
+### Fixed
+
+- **Thread sort order not updating in real-time** — sidebar threads only sorted by `updatedAt` on page refresh; now threads bubble to the top when they receive updates (new messages, status changes) without requiring a refresh, in both desktop sidebar and mobile sessions view
+
+## [0.1.22.0] - 2026-03-25
+
+### Fixed
+
+- **Tailscale HTTPS-to-HTTP proxy mismatch detection** — when `tailscale serve` proxies to `https://localhost:PORT` but Orchestra runs plain HTTP, the TLS-to-plaintext mismatch causes a 502 (mobile browsers download this as "document.txt"); the server now detects this misconfiguration and the Settings panel shows a red warning with a one-click-copy fix command
+- **Updated tailscale serve command syntax** — suggested command changed from old `tailscale serve --bg https / http://...` to current `tailscale serve --bg PORT` (compatible with Tailscale v1.96+)
+- **Port regex prefix-match false positive** — port detection regex could match e.g. port 38470 when looking for 3847; added negative lookahead to prevent
 
 ## [0.1.21.1] - 2026-03-25
 

@@ -45,16 +45,17 @@ export function RemoteAccessSettings() {
     }
   }, [manualUrl, fetchStatus]);
 
-  // Derive state: Not Detected → Detected → HTTPS Ready
+  // Derive state: Not Detected → Detected → HTTPS Ready (but not if proxy is misconfigured)
   const state = !status || !status.installed || !status.running
     ? "not-detected"
-    : status.httpsAvailable && status.portMatch && status.httpsUrl
+    : status.httpsAvailable && status.portMatch && status.httpsUrl && !status.proxyMismatch
       ? "https-ready"
       : "detected";
 
-  const serveCommand = status?.ip
-    ? `tailscale serve --bg https / http://localhost:${status.orchestraPort}`
+  const serveCommand = status
+    ? `tailscale serve --bg ${status.orchestraPort}`
     : "";
+  const serveResetCommand = "tailscale serve reset";
 
   return (
     <div>
@@ -100,29 +101,51 @@ export function RemoteAccessSettings() {
                 Tailscale detected ({status!.ip})
               </span>
             </div>
-            {status!.httpsAvailable && !status!.portMatch ? (
+            {status!.proxyMismatch ? (
+              <>
+                <p className="text-xs text-red-400">
+                  ⚠ tailscale serve is proxying to HTTPS but Orchestra runs plain HTTP — this causes a 502 error. Fix:
+                </p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-xs font-mono bg-surface-1 border border-red-500/30 rounded px-2 py-1.5 truncate">
+                    {serveResetCommand} && {serveCommand}
+                  </code>
+                  <button
+                    onClick={() => copyToClipboard(`${serveResetCommand} && ${serveCommand}`, "fix")}
+                    className="shrink-0 p-1.5 rounded hover:bg-surface-3 text-content-3 hover:text-content-1"
+                    title="Copy fix command"
+                  >
+                    {copied === "fix" ? "✓" : "📋"}
+                  </button>
+                </div>
+              </>
+            ) : status!.httpsAvailable && !status!.portMatch ? (
               <p className="text-xs text-amber-400/80">
                 ⚠ tailscale serve is active but not mapped to this Orchestra port.
               </p>
             ) : null}
-            <p className="text-xs text-content-3 mb-1">
-              Enable HTTPS for remote access + push notifications:
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 text-xs font-mono bg-surface-1 border border-edge-1 rounded px-2 py-1.5 truncate">
-                {serveCommand}
-              </code>
-              <button
-                onClick={() => copyToClipboard(serveCommand, "cmd")}
-                className="shrink-0 p-1.5 rounded hover:bg-surface-3 text-content-3 hover:text-content-1"
-                title="Copy command"
-              >
-                {copied === "cmd" ? "✓" : "📋"}
-              </button>
-            </div>
+            {!status!.proxyMismatch && (
+              <>
+                <p className="text-xs text-content-3 mb-1">
+                  Enable HTTPS for remote access + push notifications:
+                </p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-xs font-mono bg-surface-1 border border-edge-1 rounded px-2 py-1.5 truncate">
+                    {serveCommand}
+                  </code>
+                  <button
+                    onClick={() => copyToClipboard(serveCommand, "cmd")}
+                    className="shrink-0 p-1.5 rounded hover:bg-surface-3 text-content-3 hover:text-content-1"
+                    title="Copy command"
+                  >
+                    {copied === "cmd" ? "✓" : "📋"}
+                  </button>
+                </div>
+              </>
+            )}
             {status!.hostname && (
               <p className="text-xs text-content-3">
-                Then access via: <code className="font-mono">https://{status!.hostname}/</code>
+                {status!.proxyMismatch ? "After fixing, access" : "Then access"} via: <code className="font-mono">https://{status!.hostname}/</code>
               </p>
             )}
           </>
