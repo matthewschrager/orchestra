@@ -404,8 +404,57 @@ describe("parseTodos", () => {
     expect(parseTodos(input)).toBeNull();
   });
 
-  test("returns null for missing todos field", () => {
-    const input = JSON.stringify({ items: [{ content: "test" }] });
+  test("parses Codex-shaped items field", () => {
+    const input = JSON.stringify({
+      items: [{ text: "Set up schema", completed: true }, { text: "Write tests", completed: false }],
+    });
+    const result = parseTodos(input);
+    expect(result).not.toBeNull();
+    expect(result!.items).toHaveLength(2);
+    expect(result!.items[0].content).toBe("Set up schema");
+    expect(result!.items[0].status).toBe("completed");
+    expect(result!.items[0].activeForm).toBe("Set up schema");
+    expect(result!.items[1].content).toBe("Write tests");
+    expect(result!.items[1].status).toBe("pending");
+    expect(result!.completed).toBe(1);
+    expect(result!.total).toBe(2);
+  });
+
+  test("returns null for missing todos and items fields", () => {
+    const input = JSON.stringify({ other: [{ content: "test" }] });
+    expect(parseTodos(input)).toBeNull();
+  });
+
+  test("Codex completed: true maps to completed status", () => {
+    const input = JSON.stringify({
+      items: [{ text: "Done task", completed: true }],
+    });
+    const result = parseTodos(input);
+    expect(result).not.toBeNull();
+    expect(result!.items[0].status).toBe("completed");
+  });
+
+  test("Codex completed: false maps to pending status", () => {
+    const input = JSON.stringify({
+      items: [{ text: "Pending task", completed: false }],
+    });
+    const result = parseTodos(input);
+    expect(result).not.toBeNull();
+    expect(result!.items[0].status).toBe("pending");
+  });
+
+  test("prefers todos field over items when both present", () => {
+    const input = JSON.stringify({
+      todos: [{ content: "From todos", status: "in_progress", activeForm: "Working" }],
+      items: [{ text: "From items", completed: false }],
+    });
+    const result = parseTodos(input);
+    expect(result).not.toBeNull();
+    expect(result!.items[0].content).toBe("From todos");
+  });
+
+  test("returns null for empty items array", () => {
+    const input = JSON.stringify({ items: [] });
     expect(parseTodos(input)).toBeNull();
   });
 
