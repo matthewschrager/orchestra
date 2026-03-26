@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.20.1] - 2026-03-25
+
+### Added
+
+- **Unread thread indicator** — blue dot appears next to threads in the sidebar and mobile sessions list when new activity arrives (status changes, completion, errors) while the user is viewing a different thread; clears instantly on thread selection
+
 ## [0.1.20.0] - 2026-03-25
 
 ### Added
