@@ -64,7 +64,7 @@ const initialStreamingState: StreamingState = {
   turnEnded: new Set(),
 };
 
-const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0 };
+const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0, modelName: null };
 
 type StreamingAction =
   | { type: "delta"; delta: StreamDelta }
@@ -116,13 +116,16 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
         case "metrics": {
           const metrics = new Map(state.metrics);
           const prev = state.metrics.get(delta.threadId) ?? { ...EMPTY_METRICS };
+          // Only count as a turn if there's actual turn data (not just model info)
+          const hasTurnData = delta.costUsd !== undefined || delta.durationMs !== undefined || delta.inputTokens !== undefined;
           metrics.set(delta.threadId, {
             costUsd: prev.costUsd + (delta.costUsd ?? 0),
             durationMs: prev.durationMs + (delta.durationMs ?? 0),
-            turnCount: prev.turnCount + 1,
+            turnCount: prev.turnCount + (hasTurnData ? 1 : 0),
             inputTokens: delta.inputTokens ?? prev.inputTokens,
             outputTokens: delta.outputTokens ?? prev.outputTokens,
             contextWindow: Math.max(delta.contextWindow ?? 0, prev.contextWindow),
+            modelName: delta.modelName ?? prev.modelName,
           });
           return { ...state, metrics };
         }

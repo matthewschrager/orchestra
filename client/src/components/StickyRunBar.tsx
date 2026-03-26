@@ -25,6 +25,8 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
     return `${m}m ${s % 60}s`;
   };
 
+  const modelLabel = metrics.modelName ? formatModelName(metrics.modelName) : null;
+
   if (!activelyWorking) {
     // Idle state — session summary (tap to scroll to bottom)
     return (
@@ -36,6 +38,11 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
         title="Jump to bottom"
       >
         <div className="flex items-center gap-3 text-content-3">
+          {modelLabel && (
+            <span className="text-[10px] text-content-3/70 font-medium" title={metrics.modelName ?? undefined}>
+              {modelLabel}
+            </span>
+          )}
           <span className="text-[11px]">
             Session: {metrics.turnCount} turn{metrics.turnCount !== 1 ? "s" : ""}
             {" · "}{formatDuration(metrics.durationMs)}
@@ -58,6 +65,12 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
         <svg className="w-3 h-3 shrink-0 text-accent animate-spin" viewBox="0 0 16 16" fill="none">
           <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28 10" strokeLinecap="round" />
         </svg>
+
+        {modelLabel && (
+          <span className="text-[10px] text-accent/70 font-medium shrink-0" title={metrics.modelName ?? undefined}>
+            {modelLabel}
+          </span>
+        )}
 
         {/* Current action */}
         <span className="text-[11px] text-content-2 font-mono truncate">
@@ -86,6 +99,18 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
       </div>
     </div>
   );
+}
+
+// ── Model Name Formatting ──────────────────────────────
+
+/** Convert raw SDK model ID to a shorter display label.
+ *  Strips the date suffix and vendor prefix — no hard-coded model list.
+ *  e.g. "claude-sonnet-4-20250514" → "claude-sonnet-4"
+ *       "gpt-4o-2024-11-20"        → "gpt-4o"
+ */
+function formatModelName(raw: string): string {
+  // Strip trailing date suffix: -YYYYMMDD or -YYYY-MM-DD
+  return raw.replace(/-\d{4}-?\d{2}-?\d{2}$/, "");
 }
 
 // ── Context Window Indicator ──────────────────────────────
@@ -159,3 +184,6 @@ function formatToolAction(tool: string, context: string | null): string {
   }
   return `${verb} ${context.length > 60 ? context.slice(0, 60) + "…" : context}`;
 }
+
+// Export for testing
+export { formatModelName };

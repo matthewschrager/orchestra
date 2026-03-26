@@ -93,7 +93,8 @@ cd server && bun run src/index.ts  # Production server
 - Shiki syntax highlighting lazy-loaded via module-level singleton with DOMPurify sanitization
 - Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
 - Cost/duration/token metrics extracted from Claude result events and displayed in StickyRunBar
-- Context window indicator: token usage (input+output) vs model context window shown as color-coded progress bar; uses replacement semantics (SDK reports cumulative totals); only primary model tokens used (largest contextWindow) to avoid inflated counts from sub-agent aggregate; `Math.max` for contextWindow to prevent sub-agent regression
+- Context window indicator: token usage (input+output) vs model context window shown as color-coded progress bar; uses replacement semantics (SDK reports cumulative totals); `Math.max` for contextWindow to prevent sub-agent regression
+- Model name display: extracted from SDK events (`system` init, `message_start` stream, `modelUsage` result keys); streamed via `modelName` field on `StreamDelta`/`TurnMetrics`; displayed in StickyRunBar with date-suffix stripping (`formatModelName`); no hard-coded model list
 - Attention queue: AskUserQuestion/permission tool_use events detected in SDK message stream, persisted to `attention_required` table, broadcast to ALL WS clients (cross-thread), resolvable via REST or WS with first-caller-wins race guard
 - Session IDs persisted to `session_id` column on threads table (survives server restart)
 - Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
