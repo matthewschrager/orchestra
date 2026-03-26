@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.21.2] - 2026-03-25
+
+### Changed
+
+- **Worktree badge shows identifying name** — thread sidebar badge now displays the worktree name (extracted from branch) with a git-branch icon instead of a generic "wt" label; applies to both desktop and mobile views; full branch name shown on hover tooltip
+
 ## [0.1.21.1] - 2026-03-25
 
 ### Fixed
