@@ -1,10 +1,12 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AgentAdapter,
   AgentSession,
   AttentionEvent,
   ParsedMessage,
   ParseResult,
+  PersistentSession,
   StartOpts,
 } from "./types";
 
@@ -35,6 +37,7 @@ export class ClaudeAdapter implements AgentAdapter {
     }
   }
 
+  /** Legacy per-turn session — creates a new subprocess per call */
   start(opts: StartOpts): AgentSession {
     const abortController = new AbortController();
 
@@ -61,7 +64,51 @@ export class ClaudeAdapter implements AgentAdapter {
     };
   }
 
+  /** Persistent session — subprocess stays alive between turns, follow-ups via streamInput() */
+  startPersistent(opts: StartOpts): PersistentSession {
+    const q: Query = query({
+      prompt: opts.prompt,
+      options: {
+        cwd: opts.cwd,
+        resume: opts.resumeSessionId,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        includePartialMessages: true,
+        settingSources: ["user", "project", "local"],
+      },
+    });
+
+    const parser = new ClaudeParser();
+
+    return {
+      messages: q, // Query extends AsyncGenerator<SDKMessage>
+      abort: () => q.close(),
+      parseMessage: (msg: unknown) => parser.handleMessage(msg),
+      sessionId: opts.resumeSessionId,
+      close: () => q.close(),
+      resetTurnState: () => parser.resetTurnState(),
+      async injectMessage(text: string, sessionId: string): Promise<void> {
+        const userMsg: SDKUserMessage = {
+          type: "user",
+          message: { role: "user", content: text },
+          parent_tool_use_id: null,
+          session_id: sessionId,
+        };
+        // streamInput expects AsyncIterable — wrap in single-element generator
+        await q.streamInput(
+          (async function* () {
+            yield userMsg;
+          })(),
+        );
+      },
+    };
+  }
+
   supportsResume(): boolean {
+    return true;
+  }
+
+  supportsPersistent(): boolean {
     return true;
   }
 }
@@ -76,6 +123,16 @@ class ClaudeParser {
   /** tool_use IDs already persisted via stream_events — skip in assistant summary */
   private readonly persistedToolUseIds = new Set<string>();
   private readonly emittedAttentionKeys = new Set<string>();
+
+  /** Reset turn-level state between turns in persistent sessions.
+   *  Clears active blocks (should be empty at turn boundary) and dedup sets.
+   *  Keeps toolUseNames since tool_use_ids are globally unique per session. */
+  resetTurnState(): void {
+    this.activeToolBlocks.clear();
+    this.activeTextBlocks.clear();
+    this.persistedToolUseIds.clear();
+    this.emittedAttentionKeys.clear();
+  }
 
   handleMessage(msg: unknown): ParseResult {
     // All SDK messages have a `type` field

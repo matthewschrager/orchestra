@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.17.0] - 2026-03-25
+
+### Added
+
+- **Persistent query architecture** — Claude Code sessions now keep a long-lived `Query` object per thread; subprocess stays alive between turns and follow-ups are injected via `streamInput()`, eliminating MCP reconnection delay on every follow-up message
+- **`PersistentSession` interface** — extends `AgentSession` with `injectMessage()`, `close()`, and `resetTurnState()` methods; adapters opt in via `supportsPersistent()`
+- **Session state machine** — `ActiveSession` tracks `thinking → idle/waiting → thinking` state; rejects messages while agent is mid-turn, properly handles attention queue transitions
+- **Auto-restart with circuit breaker** — persistent sessions that crash mid-turn auto-restart via resume (max 2 attempts) with fallback to legacy per-turn mode
+- **Parser turn-state reset** — `ClaudeParser.resetTurnState()` clears dedup sets between turns to prevent memory growth in long-lived sessions
+- 6 new persistent session tests covering lifecycle, streamInput injection, close, thinking guard, crash detection, and idle exit
+
+### Changed
+
+- **`sendMessage()` persistent path** — injects follow-up messages into living subprocess instead of aborting and restarting; falls back to restart on `streamInput()` failure
+- **`stopThread()` uses `close()`** for persistent sessions instead of `AbortController.abort()`
+- **`consumeStream()` stays alive across turns** — `result` events transition state to idle instead of ending the stream loop; iterator end signals subprocess death
+- **Inactivity timeout skips idle/waiting** persistent sessions — subprocess staying alive between user messages is expected behavior
+
 ## [0.1.16.0] - 2026-03-25
 
 ### Added
