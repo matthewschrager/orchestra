@@ -42,7 +42,18 @@ self.addEventListener("notificationclick", (event) => {
   const data = event.notification.data || {};
 
   // Use server-provided targetUrl (per-subscription origin), fallback to relative path
+  // Fix 8: Validate targetUrl is same-origin to prevent open redirect via push notifications
   let targetUrl = data.targetUrl || "/";
+  if (targetUrl && !targetUrl.startsWith("/")) {
+    try {
+      const parsed = new URL(targetUrl);
+      if (parsed.origin !== self.location.origin) {
+        targetUrl = "/"; // Reject cross-origin, javascript:, data:, blob:
+      }
+    } catch {
+      targetUrl = "/"; // Invalid URL
+    }
+  }
   if (!data.targetUrl && data.threadId) {
     targetUrl = `/?thread=${data.threadId}`;
     if (data.attentionId) {

@@ -397,9 +397,10 @@ export class SessionManager {
 
     const fileLines = resolved.map(({ attachment, absolutePath }) => {
       const isImage = attachment.mimeType.startsWith("image/");
-      // Sanitize filename to prevent prompt injection — strip control chars and limit length
-      const safeName = attachment.filename.replace(/[\n\r\t]/g, "_").slice(0, 100);
-      return `- ${absolutePath} (${safeName}, ${attachment.mimeType})${isImage ? " — use Read tool to view this image" : ""}`;
+      // Sanitize filename and mimeType to prevent prompt injection — strip control chars and limit length
+      const safeName = attachment.filename.replace(/[\n\r\t\x00-\x1f]/g, "_").slice(0, 100);
+      const safeMime = attachment.mimeType.replace(/[\n\r\t\x00-\x1f]/g, "_").slice(0, 100);
+      return `- ${absolutePath} (${safeName}, ${safeMime})${isImage ? " — use Read tool to view this image" : ""}`;
     });
 
     return `${prompt}\n\n[The user has attached the following file(s):]\n${fileLines.join("\n")}`;
