@@ -10,6 +10,8 @@ export function EditableTitle({ title, onSave, className = "" }: EditableTitlePr
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Track what the title was when editing started — compare against this, not the live prop
+  const titleAtEditStart = useRef(title);
 
   // Sync draft with prop when not editing (e.g., AI title arrives via WS)
   useEffect(() => {
@@ -19,6 +21,7 @@ export function EditableTitle({ title, onSave, className = "" }: EditableTitlePr
   // Auto-focus input on edit start
   useEffect(() => {
     if (editing) {
+      titleAtEditStart.current = title;
       inputRef.current?.focus();
       inputRef.current?.select();
     }
@@ -27,11 +30,13 @@ export function EditableTitle({ title, onSave, className = "" }: EditableTitlePr
   const save = useCallback(() => {
     if (!editing) return; // Guard against double-fire from blur after Enter/Escape
     const trimmed = draft.trim();
-    if (trimmed && trimmed !== title) {
+    // Only save if user actually changed the text from what it was when they started editing.
+    // Prevents stale draft from overwriting an AI title that arrived mid-edit.
+    if (trimmed && trimmed !== titleAtEditStart.current) {
       onSave(trimmed);
     }
     setEditing(false);
-  }, [editing, draft, title, onSave]);
+  }, [editing, draft, onSave]);
 
   const cancel = useCallback(() => {
     setDraft(title);
