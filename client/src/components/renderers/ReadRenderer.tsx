@@ -1,16 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import DOMPurify from "dompurify";
-
-// Module-level Shiki cache — shared across all ReadRenderer instances
-let shikiPromise: Promise<any> | null = null;
-function getHighlighter() {
-  if (!shikiPromise) {
-    shikiPromise = import("shiki").then(({ createHighlighter }) =>
-      createHighlighter({ themes: ["github-dark-default"], langs: [] }),
-    ).catch(() => null);
-  }
-  return shikiPromise;
-}
+import { getHighlighter, detectLanguage } from "../../lib/shiki";
 
 interface ParsedRead {
   filePath: string;
@@ -40,20 +30,6 @@ export function parseRead(input: string | null, output: string | null): ParsedRe
   } catch {
     return null;
   }
-}
-
-function detectLanguage(filePath: string): string {
-  const ext = filePath.split(".").pop()?.toLowerCase() || "";
-  const langMap: Record<string, string> = {
-    ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx",
-    py: "python", rb: "ruby", rs: "rust", go: "go",
-    java: "java", kt: "kotlin", swift: "swift",
-    css: "css", scss: "scss", html: "html", vue: "vue", svelte: "svelte",
-    json: "json", yaml: "yaml", yml: "yaml", toml: "toml",
-    md: "markdown", sql: "sql", sh: "bash", zsh: "bash", bash: "bash",
-    dockerfile: "dockerfile", graphql: "graphql",
-  };
-  return langMap[ext] || "text";
 }
 
 function isBinary(content: string): boolean {
