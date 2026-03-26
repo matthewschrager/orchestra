@@ -37,6 +37,8 @@ orchestra/
 │       │   └── manager.ts  VAPID keys, subscriptions, dispatch
 │       ├── tailscale/      Tailscale detection
 │       │   └── detector.ts CLI detection, IP/hostname, serve config parsing
+│       ├── titles/         AI title generation
+│       │   └── generator.ts Fire-and-forget title gen via Agent SDK query()
 │       ├── tunnel/         Cloudflare Tunnel integration
 │       │   └── manager.ts  Tunnel lifecycle, URL capture
 │       └── ws/handler.ts   WebSocket handler + attention events
@@ -57,6 +59,8 @@ orchestra/
 │       │   ├── AttentionInbox.tsx  Attention queue inbox
 │       │   ├── SettingsPanel.tsx   Settings modal dialog
 │       │   ├── RemoteAccessSettings.tsx Remote Access section (Tailscale detection + guided setup)
+│       │   ├── MobileThreadHeader.tsx Mobile sticky header with back + editable title
+│       │   ├── EditableTitle.tsx  Click-to-edit title (shared mobile/desktop)
 │       │   ├── MobileNav.tsx      Bottom tab navigation
 │       │   ├── MobileSessions.tsx Thread list for mobile
 │       │   ├── MobileNewSession.tsx New session form for mobile
@@ -102,7 +106,9 @@ cd server && bun run src/index.ts  # Production server
 - Service worker (`sw.js`): handles push display + notification click; uses server-provided `targetUrl` (per-subscription origin) with cross-origin fallback via `clients.openWindow`
 - Tailscale detection: `TailscaleDetector` checks CLI installation, `tailscale status --json` for IP/hostname, `tailscale serve status --json` for HTTPS config; cached with configurable TTL; results shown at startup and via `/api/tailscale/status` endpoint
 - Remote access settings: `RemoteAccessSettings` component in Settings panel shows Tailscale state (not detected / detected / HTTPS ready) with guided `tailscale serve` setup; `remoteUrl` setting (HTTPS-only, display-only) stored in settings table
-- Mobile UI: bottom tab navigation (Inbox/Sessions/New), attention inbox with interactive cards
+- Mobile UI: bottom tab navigation (Inbox/Sessions/New), attention inbox with interactive cards; `MobileThreadHeader` provides sticky thread title with back button and editable title on mobile
+- AI thread titles: `generateTitle()` in `titles/generator.ts` uses `query()` from the Agent SDK (fire-and-forget) to produce 3-6 word summaries; race guard compares current title against original `prompt.slice(0, 80)` to avoid overwriting user edits; PATCH `/threads/:id` broadcasts via `notifyThread()` for cross-client sync
+- Inline title editing: `EditableTitle` component renders click-to-edit title with Enter/Escape/blur handling; used in both `MobileThreadHeader` and `ChatView`; optimistic update + WS broadcast
 - Input: Enter sends, Shift+Enter for newline (with IME composition guard for CJK input)
 - AskUserQuestion rendered inline as interactive cards with answer buttons
 - WebSocket heartbeat prevents idle disconnection

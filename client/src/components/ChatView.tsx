@@ -8,6 +8,7 @@ import { SearchRenderer, searchSummary } from "./renderers/SearchRenderer";
 import { SubAgentCard } from "./renderers/SubAgentCard";
 import { extractQuestionPreview, formatAnswers, isAskUserTool, parseQuestions, type ParsedQuestion } from "../lib/askUser";
 import { MessageAttachments } from "./AttachmentPreview";
+import { EditableTitle } from "./EditableTitle";
 import type { Attachment } from "shared";
 
 export interface ChatViewHandle {
@@ -23,10 +24,11 @@ interface Props {
   streamingToolInput?: string;
   turnEnded?: boolean;
   onSubmitAnswers?: (text: string) => void;
+  onSaveTitle?: (newTitle: string) => void;
 }
 
 export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
-  { messages, thread, streamingText, streamingTool, streamingToolInput, turnEnded, onSubmitAnswers },
+  { messages, thread, streamingText, streamingTool, streamingToolInput, turnEnded, onSubmitAnswers, onSaveTitle },
   ref,
 ) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -112,9 +114,13 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
       onScroll={handleScroll}
       className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4"
     >
-      {/* Thread header — tap to scroll to top */}
-      <div className="mb-6 pb-4 border-b border-edge-1 cursor-pointer group" role="button" tabIndex={0} onClick={scrollToTop} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") scrollToTop(); }}>
-        <h2 className="text-lg font-semibold tracking-tight group-hover:text-accent transition-colors">{thread.title}</h2>
+      {/* Thread header — hidden on mobile (MobileThreadHeader handles it), tap to scroll to top on desktop */}
+      <div className="hidden md:block mb-6 pb-4 border-b border-edge-1" role="button" tabIndex={0} onClick={scrollToTop} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") scrollToTop(); }}>
+        {onSaveTitle ? (
+          <EditableTitle title={thread.title} onSave={onSaveTitle} className="text-lg font-semibold tracking-tight" />
+        ) : (
+          <h2 className="text-lg font-semibold tracking-tight cursor-pointer group-hover:text-accent transition-colors">{thread.title}</h2>
+        )}
         <div className="flex items-center gap-2 mt-1.5 text-xs text-content-3">
           <span className="text-content-2">{thread.agent}</span>
           <span className="text-content-3">&middot;</span>

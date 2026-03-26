@@ -20,6 +20,7 @@ import { WorktreePathInput } from "./components/WorktreePathInput";
 import { useTerminal } from "./hooks/useTerminal";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { MobileThreadHeader } from "./components/MobileThreadHeader";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -497,6 +498,17 @@ function AppInner() {
     setMobileTab("sessions");
   };
 
+  const handleSaveTitle = useCallback(async (newTitle: string) => {
+    if (!activeThreadId) return;
+    // Optimistic update
+    setThreads((prev) => prev.map((t) => (t.id === activeThreadId ? { ...t, title: newTitle } : t)));
+    try {
+      await api.updateThread(activeThreadId, { title: newTitle });
+    } catch {
+      // Revert on failure — WS broadcast will correct if server succeeded
+    }
+  }, [activeThreadId]);
+
   const handleAddProject = async (path: string) => {
     try {
       setError(null);
@@ -637,7 +649,7 @@ function AppInner() {
           )}
         </div>
         {activeThread && (
-          <div className="flex items-center gap-2 mx-4 min-w-0 justify-center flex-1">
+          <div className="hidden md:flex items-center gap-2 mx-4 min-w-0 justify-center flex-1">
             <span className="text-sm font-medium truncate">{activeThread.title}</span>
             <HeaderStatusBadge status={activeThread.status} errorMessage={activeThread.errorMessage} />
           </div>
@@ -749,6 +761,14 @@ function AppInner() {
         <div className="flex-1 flex flex-col min-w-0 pb-14 md:pb-0">
           {activeThread ? (
             <>
+              <MobileThreadHeader
+                thread={activeThread}
+                onBack={() => {
+                  setActiveThreadId(null);
+                  setMobileTab("sessions");
+                }}
+                onSaveTitle={handleSaveTitle}
+              />
               <ChatView
                 ref={chatViewRef}
                 messages={activeMessages}
@@ -758,6 +778,7 @@ function AppInner() {
                 streamingToolInput={activeStreamingToolInput}
                 turnEnded={activeTurnEnded}
                 onSubmitAnswers={handleSendMessage}
+                onSaveTitle={handleSaveTitle}
               />
               <StickyRunBar
                 isRunning={isRunning}
