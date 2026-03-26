@@ -118,6 +118,8 @@ cd server && bun run src/index.ts  # Production server
 - WebSocket heartbeat prevents idle disconnection
 - Slash command autocompletion: scoped per project via `installed_plugins.json` + `settings.json` (global + project-level merge); `.agents/` internal skills excluded; cached per projectId
 - Worktree isolation: detectWorktree returns name for port/data separation, expanded port hash range (9999 slots)
+- Worktree agent isolation: three-layer defense — (1) nested instance guard (`ORCHESTRA_MANAGED=1` blocks agents from relaunching Orchestra, override with `--allow-nested`), (2) env scrubbing (deletes `ORCHESTRA_PORT/DATA_DIR/HOST/ALLOW_NESTED` from `process.env` after startup), (3) prompt preamble injection (worktree threads get isolation context — port, cwd, rules — prepended to first prompt only; cwd sanitized for prompt injection)
+- Git spawn helpers: all git command execution centralized via `gitSpawn()`/`gitSpawnSync()` in `utils/git.ts` — automatically prepends `--no-optional-locks` to reduce index.lock contention with concurrent agent operations
 - Worktree branching: `git worktree add` always branches from detected main/master, not HEAD — prevents inheriting polluted checkout state from non-isolated agents
 - Cross-client thread sync: thread creation and archival broadcast `thread_updated` via WS to all clients; client deduplicates optimistic inserts
 - Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag

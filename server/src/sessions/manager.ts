@@ -71,6 +71,7 @@ export class SessionManager {
     private registry: AgentRegistry,
     private worktreeManager: WorktreeManager,
     private uploadsDir: string,
+    private orchestraPort: number = 3847,
   ) {
     this.recoverOrphanedThreads();
     this.startInactivityCheck();
@@ -114,7 +115,12 @@ export class SessionManager {
 
     // Validate and build prompt with attachment references
     const validAttachments = this.validateAttachments(opts.attachments);
-    const agentPrompt = this.buildPromptWithAttachments(opts.prompt, validAttachments);
+    let agentPrompt = this.buildPromptWithAttachments(opts.prompt, validAttachments);
+
+    // Inject isolation preamble for worktree-isolated threads (first message only)
+    if (worktree) {
+      agentPrompt = `${this.buildIsolationPreamble(cwd)}\n\n${agentPrompt}`;
+    }
 
     // Persist user prompt as first message (with attachment metadata)
     this.persistMessage(threadId, {
@@ -367,6 +373,19 @@ export class SessionManager {
   private validateAttachments(attachments?: Attachment[]): Attachment[] | undefined {
     if (!attachments?.length) return attachments;
     return attachments.filter((a) => SessionManager.NANOID_RE.test(a.id));
+  }
+
+  /** Build isolation preamble for worktree-isolated agent sessions.
+   *  Gives the agent operational context about Orchestra to avoid accidental interference. */
+  buildIsolationPreamble(cwd: string): string {
+    // Sanitize cwd to prevent prompt injection via crafted worktree names
+    const safeCwd = cwd.replace(/[\n\r\t]/g, "_").slice(0, 200);
+    return [
+      "[Orchestra context — you are running inside an Orchestra-managed session]",
+      `- Orchestra server is on localhost:${this.orchestraPort} — do NOT interact with it`,
+      "- Do NOT modify ~/.orchestra/ or kill processes you didn't start",
+      `- Confine your work to this directory: ${safeCwd}`,
+    ].join("\n");
   }
 
   /** Build prompt text with file path references for attachments */

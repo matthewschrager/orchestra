@@ -1,7 +1,8 @@
 import { join, basename } from "path";
-import { existsSync, rmSync } from "fs";
+import { existsSync } from "fs";
 import type { DB, ThreadRow } from "../db";
 import { getThread, updateThread } from "../db";
+import { gitSpawn } from "../utils/git";
 
 export const DEFAULT_WORKTREE_ROOT = join(
   process.env.HOME || "~",
@@ -45,8 +46,8 @@ export class WorktreeManager {
     const mainBranch = await this.detectMainBranch(repoPath);
 
     // Create the worktree with explicit start-point
-    const proc = Bun.spawn(
-      ["git", "worktree", "add", wtPath, "-b", branch, mainBranch],
+    const proc = gitSpawn(
+      ["worktree", "add", wtPath, "-b", branch, mainBranch],
       { cwd: repoPath, stdout: "pipe", stderr: "pipe" },
     );
     await proc.exited;
@@ -67,7 +68,7 @@ export class WorktreeManager {
     if (!existsSync(thread.worktree)) return null;
 
     // Changed files
-    const diffProc = Bun.spawn(["git", "diff", "--name-only", "HEAD"], {
+    const diffProc = gitSpawn(["diff", "--name-only", "HEAD"], {
       cwd: thread.worktree,
       stdout: "pipe",
       stderr: "pipe",
@@ -76,8 +77,8 @@ export class WorktreeManager {
     await diffProc.exited;
 
     // Also include untracked files
-    const statusProc = Bun.spawn(
-      ["git", "ls-files", "--others", "--exclude-standard"],
+    const statusProc = gitSpawn(
+      ["ls-files", "--others", "--exclude-standard"],
       { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
     );
     const untrackedText = await new Response(statusProc.stdout).text();
@@ -93,8 +94,8 @@ export class WorktreeManager {
     let behind = 0;
     if (thread.branch) {
       const mainBranch = await this.detectMainBranch(thread.worktree);
-      const abProc = Bun.spawn(
-        ["git", "rev-list", "--left-right", "--count", `${mainBranch}...${thread.branch}`],
+      const abProc = gitSpawn(
+        ["rev-list", "--left-right", "--count", `${mainBranch}...${thread.branch}`],
         { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
       );
       const abText = await new Response(abProc.stdout).text();
@@ -115,7 +116,7 @@ export class WorktreeManager {
     if (!thread?.worktree) throw new Error("Thread is not isolated to a worktree");
 
     // Stage and commit any uncommitted changes
-    const statusProc = Bun.spawn(["git", "status", "--porcelain"], {
+    const statusProc = gitSpawn(["status", "--porcelain"], {
       cwd: thread.worktree,
       stdout: "pipe",
       stderr: "pipe",
@@ -124,7 +125,7 @@ export class WorktreeManager {
     await statusProc.exited;
 
     if (status.trim()) {
-      const addProc = Bun.spawn(["git", "add", "-A"], {
+      const addProc = gitSpawn(["add", "-A"], {
         cwd: thread.worktree,
         stdout: "pipe",
         stderr: "pipe",
@@ -134,7 +135,7 @@ export class WorktreeManager {
       const commitMsg = (opts.commitMessage || thread.title || "Orchestra commit").trim();
       if (!commitMsg) throw new Error("Commit message cannot be empty");
 
-      const commitProc = Bun.spawn(["git", "commit", "-m", commitMsg], {
+      const commitProc = gitSpawn(["commit", "-m", commitMsg], {
         cwd: thread.worktree,
         stdout: "pipe",
         stderr: "pipe",
@@ -150,8 +151,8 @@ export class WorktreeManager {
     }
 
     // Push
-    const pushProc = Bun.spawn(
-      ["git", "push", "-u", "origin", thread.branch!],
+    const pushProc = gitSpawn(
+      ["push", "-u", "origin", thread.branch!],
       { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
     );
     const [, pushStderr] = await Promise.all([
@@ -163,7 +164,7 @@ export class WorktreeManager {
       throw new Error(`Failed to push: ${pushStderr}`);
     }
 
-    // Create PR
+    // Create PR (gh is not git — keep as Bun.spawn)
     const title = opts.title || thread.title;
     const body = opts.body || `Created by Orchestra thread ${threadId}`;
     const prProc = Bun.spawn(
@@ -191,7 +192,7 @@ export class WorktreeManager {
     if (!thread?.worktree) return;
 
     // Remove worktree
-    const proc = Bun.spawn(["git", "worktree", "remove", thread.worktree, "--force"], {
+    const proc = gitSpawn(["worktree", "remove", thread.worktree, "--force"], {
       cwd: repoPath,
       stdout: "pipe",
       stderr: "pipe",
@@ -200,7 +201,7 @@ export class WorktreeManager {
 
     // Delete branch
     if (thread.branch) {
-      const branchProc = Bun.spawn(["git", "branch", "-D", thread.branch], {
+      const branchProc = gitSpawn(["branch", "-D", thread.branch], {
         cwd: repoPath,
         stdout: "pipe",
         stderr: "pipe",
@@ -227,7 +228,7 @@ export class WorktreeManager {
 
     // Check for uncommitted changes (ignore untracked files — they're artifacts
     // like PLAN.md, temp files, or test files from other agents)
-    const statusProc = Bun.spawn(["git", "status", "--porcelain", "-uno"], {
+    const statusProc = gitSpawn(["status", "--porcelain", "-uno"], {
       cwd: thread.worktree, stdout: "pipe", stderr: "pipe",
     });
     const statusText = await new Response(statusProc.stdout).text();
@@ -241,7 +242,7 @@ export class WorktreeManager {
 
     // Check if branch exists on remote
     const remoteRef = `origin/${thread.branch}`;
-    const refProc = Bun.spawn(["git", "rev-parse", "--verify", remoteRef], {
+    const refProc = gitSpawn(["rev-parse", "--verify", remoteRef], {
       cwd: thread.worktree, stdout: "pipe", stderr: "pipe",
     });
     await refProc.exited;
@@ -250,8 +251,8 @@ export class WorktreeManager {
     }
 
     // Check for unpushed commits
-    const logProc = Bun.spawn(
-      ["git", "rev-list", "--count", `${remoteRef}..HEAD`],
+    const logProc = gitSpawn(
+      ["rev-list", "--count", `${remoteRef}..HEAD`],
       { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
     );
     const countText = await new Response(logProc.stdout).text();
@@ -268,8 +269,8 @@ export class WorktreeManager {
   }
 
   private async detectMainBranch(cwd: string): Promise<string> {
-    const proc = Bun.spawn(
-      ["git", "rev-parse", "--verify", "main"],
+    const proc = gitSpawn(
+      ["rev-parse", "--verify", "main"],
       { cwd, stdout: "pipe", stderr: "pipe" },
     );
     await proc.exited;

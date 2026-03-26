@@ -1,8 +1,31 @@
 import { realpathSync } from "fs";
 import { resolve, basename } from "path";
 
+// ── Git spawn helpers ────────────────────────────────────
+// Centralized git command execution with --no-optional-locks to avoid
+// index.lock contention when agents are running concurrent git operations.
+// Harmless on write commands (git ignores the flag for mandatory locks).
+
+interface GitSpawnOpts {
+  cwd: string;
+  stdout: "pipe";
+  stderr: "pipe";
+}
+
+/** Async git spawn with --no-optional-locks for read-side contention avoidance */
+export function gitSpawn(args: string[], opts: GitSpawnOpts) {
+  return Bun.spawn(["git", "--no-optional-locks", ...args], opts);
+}
+
+/** Sync git spawn with --no-optional-locks for read-side contention avoidance */
+export function gitSpawnSync(args: string[], opts: GitSpawnOpts) {
+  return Bun.spawnSync(["git", "--no-optional-locks", ...args], opts);
+}
+
+// ── Git utilities ────────────────────────────────────────
+
 export function validateGitRepo(path: string): void {
-  const check = Bun.spawnSync(["git", "rev-parse", "--git-dir"], {
+  const check = gitSpawnSync(["rev-parse", "--git-dir"], {
     cwd: path,
     stdout: "pipe",
     stderr: "pipe",
@@ -23,7 +46,7 @@ export function resolveProjectPath(rawPath: string): string {
 
 export function getCurrentBranch(path: string): string {
   try {
-    const result = Bun.spawnSync(["git", "branch", "--show-current"], {
+    const result = gitSpawnSync(["branch", "--show-current"], {
       cwd: path,
       stdout: "pipe",
       stderr: "pipe",
@@ -40,15 +63,12 @@ export function getCurrentBranch(path: string): string {
  */
 export function detectWorktree(path: string): string | null {
   try {
-    // git rev-parse --git-common-dir returns the shared .git of the main repo
-    // git rev-parse --git-dir returns the worktree-specific .git path
-    // If they differ, we're in a worktree.
-    const commonDir = Bun.spawnSync(["git", "rev-parse", "--git-common-dir"], {
+    const commonDir = gitSpawnSync(["rev-parse", "--git-common-dir"], {
       cwd: path,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const gitDir = Bun.spawnSync(["git", "rev-parse", "--git-dir"], {
+    const gitDir = gitSpawnSync(["rev-parse", "--git-dir"], {
       cwd: path,
       stdout: "pipe",
       stderr: "pipe",
@@ -59,8 +79,7 @@ export function detectWorktree(path: string): string | null {
     const git = realpathSync(resolve(path, new TextDecoder().decode(gitDir.stdout).trim()));
 
     if (common !== git) {
-      // We're in a worktree — use the directory name as the worktree identifier
-      const toplevel = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
+      const toplevel = gitSpawnSync(["rev-parse", "--show-toplevel"], {
         cwd: path,
         stdout: "pipe",
         stderr: "pipe",

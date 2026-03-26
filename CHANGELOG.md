@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.24.0] - 2026-03-26
+
+### Added
+
+- **Worktree agent isolation** — three mechanisms to prevent Orchestra-spawned agents from interfering with running instances:
+  - **Nested instance guard** — `ORCHESTRA_MANAGED=1` env marker blocks agents from accidentally starting another Orchestra instance; overridable via `--allow-nested` for self-development
+  - **Env var scrubbing** — deletes `ORCHESTRA_PORT`, `ORCHESTRA_DATA_DIR`, `ORCHESTRA_HOST`, `ORCHESTRA_ALLOW_NESTED` from `process.env` after startup so agent subprocesses can't inherit config that causes port collisions
+  - **Prompt preamble injection** — worktree-isolated threads receive operational context (Orchestra's port, working directory, isolation rules) prepended to the first prompt; sanitizes cwd to prevent prompt injection
+- **Centralized `gitSpawn`/`gitSpawnSync` helpers** — all git command execution routed through helpers that prepend `--no-optional-locks`, reducing index.lock contention when agents run concurrent git operations
+
 ## [0.1.23.3] - 2026-03-26
 
 ### Added
