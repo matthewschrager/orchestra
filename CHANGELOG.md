@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.24.1] - 2026-03-26
+
+### Added
+
+- **Code Conductor logo** — new `OrchestraLogo` SVG component (terminal chevron + cursor + conductor sweep) integrated across the app: header nav, auth gate, and welcome empty state
+- **SVG favicon** — browser tab icon with logo on dark rounded-rect background
+- **PWA icon refresh** — regenerated 192px and 512px icons with the Code Conductor design; added SVG icon entry to web app manifest
+
 ## [0.1.24.0] - 2026-03-26
 
 ### Added
