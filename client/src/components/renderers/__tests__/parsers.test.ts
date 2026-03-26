@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseDiff } from "../DiffRenderer";
+import { computeDiff } from "../../../lib/diffCompute";
 import { parseBash } from "../BashRenderer";
 import { parseRead } from "../ReadRenderer";
 import { parseSearch, searchSummary } from "../SearchRenderer";
@@ -76,6 +77,127 @@ describe("parseDiff", () => {
       new_string: "bar",
     });
     expect(parseDiff(input)).toBeNull();
+  });
+
+  test("returns language field from file extension", () => {
+    const input = JSON.stringify({
+      file_path: "/src/app.py",
+      old_string: "x = 1",
+      new_string: "x = 2",
+    });
+    const result = parseDiff(input);
+    expect(result).not.toBeNull();
+    expect(result!.language).toBe("python");
+  });
+
+  test("returns oldString and newString raw fields", () => {
+    const input = JSON.stringify({
+      file_path: "/src/test.ts",
+      old_string: "const a = 1;",
+      new_string: "const a = 2;",
+    });
+    const result = parseDiff(input);
+    expect(result).not.toBeNull();
+    expect(result!.oldString).toBe("const a = 1;");
+    expect(result!.newString).toBe("const a = 2;");
+  });
+
+  test("identical old and new produces zero additions/removals", () => {
+    const input = JSON.stringify({
+      file_path: "/src/test.ts",
+      old_string: "const x = 1;",
+      new_string: "const x = 1;",
+    });
+    const result = parseDiff(input);
+    expect(result).not.toBeNull();
+    expect(result!.additions).toBe(0);
+    expect(result!.removals).toBe(0);
+  });
+});
+
+// ── computeDiff ──────────────────────────────────────
+
+describe("computeDiff", () => {
+  test("identical strings produce all context lines", () => {
+    const result = computeDiff("a\nb\nc", "a\nb\nc");
+    expect(result.additions).toBe(0);
+    expect(result.removals).toBe(0);
+    expect(result.lines).toHaveLength(3);
+    expect(result.lines.every((l) => l.type === "context")).toBe(true);
+  });
+
+  test("completely different strings produce all remove then all add", () => {
+    const result = computeDiff("a\nb", "x\ny");
+    expect(result.removals).toBe(2);
+    expect(result.additions).toBe(2);
+    expect(result.lines).toHaveLength(4);
+  });
+
+  test("partial overlap: single line changed in middle", () => {
+    const result = computeDiff("a\nb\nc\nd", "a\nX\nc\nd");
+    expect(result.additions).toBe(1);
+    expect(result.removals).toBe(1);
+    // Should be: context(a), remove(b), add(X), context(c), context(d)
+    expect(result.lines).toHaveLength(5);
+    expect(result.lines[0]).toMatchObject({ type: "context", content: "a" });
+    expect(result.lines[1]).toMatchObject({ type: "remove", content: "b" });
+    expect(result.lines[2]).toMatchObject({ type: "add", content: "X" });
+    expect(result.lines[3]).toMatchObject({ type: "context", content: "c" });
+    expect(result.lines[4]).toMatchObject({ type: "context", content: "d" });
+  });
+
+  test("empty old string produces all adds (no phantom blank)", () => {
+    const result = computeDiff("", "foo\nbar");
+    expect(result.additions).toBe(2);
+    expect(result.removals).toBe(0);
+    expect(result.lines).toHaveLength(2);
+    expect(result.lines[0].content).toBe("foo");
+    expect(result.lines[1].content).toBe("bar");
+  });
+
+  test("empty new string produces all removes (no phantom blank)", () => {
+    const result = computeDiff("foo\nbar", "");
+    expect(result.removals).toBe(2);
+    expect(result.additions).toBe(0);
+    expect(result.lines).toHaveLength(2);
+  });
+
+  test("both empty strings produce empty result", () => {
+    const result = computeDiff("", "");
+    expect(result.lines).toHaveLength(0);
+    expect(result.additions).toBe(0);
+    expect(result.removals).toBe(0);
+  });
+
+  test("trailing newline normalization: no phantom diff", () => {
+    const result = computeDiff("foo\n", "foo");
+    expect(result.additions).toBe(0);
+    expect(result.removals).toBe(0);
+    expect(result.lines).toHaveLength(1);
+    expect(result.lines[0].type).toBe("context");
+  });
+
+  test("line numbers increment correctly through mixed types", () => {
+    const result = computeDiff("a\nb\nc", "a\nX\nc");
+    // context(a) old=1,new=1 | remove(b) old=2 | add(X) new=2 | context(c) old=3,new=3
+    expect(result.lines[0]).toMatchObject({ oldLineNum: 1, newLineNum: 1 });
+    expect(result.lines[1]).toMatchObject({ type: "remove", oldLineNum: 2 });
+    expect(result.lines[2]).toMatchObject({ type: "add", newLineNum: 2 });
+    expect(result.lines[3]).toMatchObject({ oldLineNum: 3, newLineNum: 3 });
+  });
+
+  test("large input falls back to block diff", () => {
+    const oldLines = Array.from({ length: 300 }, (_, i) => `old-line-${i}`).join("\n");
+    const newLines = Array.from({ length: 300 }, (_, i) => `new-line-${i}`).join("\n");
+    const result = computeDiff(oldLines, newLines);
+    // Should bail out: 300 + 300 > 500
+    expect(result.removals).toBe(300);
+    expect(result.additions).toBe(300);
+    expect(result.lines).toHaveLength(600);
+    // All removes come first in block diff
+    expect(result.lines[0].type).toBe("remove");
+    expect(result.lines[299].type).toBe("remove");
+    expect(result.lines[300].type).toBe("add");
   });
 });
 
