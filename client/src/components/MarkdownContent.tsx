@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import type { Components } from "react-markdown";
 import type { Highlighter } from "shiki";
+import { wrapAsciiArt } from "../lib/asciiArt";
 
 let highlighterPromise: Promise<Highlighter> | null = null;
 let cachedHighlighter: Highlighter | null = null;
@@ -82,10 +83,11 @@ const components: Components = {
 };
 
 export const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
+  const processed = wrapAsciiArt(content);
   return (
     <div className="md-content">
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
-        {content}
+        {processed}
       </ReactMarkdown>
     </div>
   );
