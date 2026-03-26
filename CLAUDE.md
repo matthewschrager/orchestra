@@ -116,6 +116,7 @@ cd server && bun run src/index.ts  # Production server
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
 - Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings` with typed `Settings` interface; gear icon in sidebar footer + header; WorktreeManager updated live on save
 - File attachments: paste/drag-drop/picker in InputBar → upload to DATA_DIR/uploads/ → file paths appended to Claude prompt so it can Read them → rendered inline in chat messages
+- Unread thread indicator: client-side `Set<string>` tracks threads with unseen `thread_updated` WS events; blue dot shown in ProjectSidebar and MobileSessions; cleared on thread selection; `activeThreadRef` handles WS race where event arrives before React state update
 - Integrated terminal: xterm.js v6 (client) + Bun native PTY via `Bun.spawn({ terminal })` (server); TerminalManager uses event-emitter pattern (like SessionManager) with 50KB replay buffer for reconnect viewport restore, output batching at ~60fps, 15-min idle timeout, max 20 concurrent PTYs; toggle via `Ctrl+`` or header button; terminal panel sits below InputBar; PTY persists per-thread across switches (idempotent `terminal_create` returns existing); desktop only (hidden on mobile); server-side `closeForThread()` on thread archive prevents zombie PTYs
 
 ## Testing
