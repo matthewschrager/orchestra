@@ -13,6 +13,12 @@ import type {
 /** Tool names that trigger attention events */
 const ASK_USER_TOOLS = new Set(["AskUserQuestion", "AskUserTool"]);
 
+/** Tool names that require auto-approval on turn end.
+ *  ExitPlanMode has requiresUserInteraction()=true in the CLI, which short-circuits
+ *  the bypassPermissions check, causing the tool to be denied in headless SDK mode.
+ *  We detect it in the stream and auto-approve by sending a follow-up message. */
+const PLAN_APPROVAL_TOOLS = new Set(["ExitPlanMode"]);
+
 export class ClaudeAdapter implements AgentAdapter {
   name = "claude";
 
@@ -203,6 +209,10 @@ class ClaudeParser {
         if (messages.length === 0) return { messages: [], deltas: [] };
         const result: ParseResult = { messages, deltas: [] };
         if (attention) result.attention = attention;
+        // Detect ExitPlanMode tool_use for auto-approval
+        if (messages.some((m) => m.toolName && PLAN_APPROVAL_TOOLS.has(m.toolName))) {
+          result.exitPlanMode = true;
+        }
         return result;
       }
 
@@ -509,11 +519,16 @@ class ClaudeParser {
             );
           }
 
-          return {
+          const result: ParseResult = {
             messages: [msg],
             deltas: [{ deltaType: "tool_end" }],
             attention,
           };
+          // Detect ExitPlanMode tool_use for auto-approval
+          if (PLAN_APPROVAL_TOOLS.has(toolBlock.name)) {
+            result.exitPlanMode = true;
+          }
+          return result;
         }
 
         // Handle completed text blocks — persist accumulated text
