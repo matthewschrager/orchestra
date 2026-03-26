@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.21.0] - 2026-03-25
+
+### Added
+
+- **Model name display in StickyRunBar** — shows the active model (e.g. `claude-sonnet-4`) in both running and idle states, extracted from SDK events with no hard-coded model list
+- **Model extraction from SDK events** — captures model name from `system` init event (session start), `message_start` stream event (per-message), and `modelUsage` result keys (end-of-turn)
+- **`modelName` in StreamDelta and TurnMetrics** — new field flows model identity through the streaming pipeline to the client
+- **`formatModelName` utility** — strips date suffixes from raw model IDs for clean display; full ID available on hover tooltip
+
+### Changed
+
+- **Token counting** — aggregate tokens across all models in `modelUsage` instead of only the primary model, for more accurate total usage display
+- **Metrics delta turn counting** — model-info-only deltas no longer inflate `turnCount`; only deltas with cost/duration/token data count as turns
+
 ## [0.1.20.0] - 2026-03-25
 
 ### Added
