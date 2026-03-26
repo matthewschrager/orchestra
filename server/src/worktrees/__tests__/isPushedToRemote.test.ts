@@ -109,7 +109,7 @@ describe("WorktreeManager.isPushedToRemote", () => {
     expect(result.pushed).toBe(true);
   });
 
-  test("returns pushed=false when branch has uncommitted changes", async () => {
+  test("returns pushed=false when branch has uncommitted changes to tracked files", async () => {
     const wt = await mgr.create("uncommitted", repos.local);
     insertThread(db, "uncommitted", {
       worktree: wt.path,
@@ -117,14 +117,34 @@ describe("WorktreeManager.isPushedToRemote", () => {
       repo_path: repos.local,
     });
 
-    // Push the branch, then add uncommitted changes
-    Bun.spawnSync(["git", "commit", "--allow-empty", "-m", "work"], { cwd: wt.path });
+    // Push the branch, then modify a tracked file without committing
+    writeFileSync(join(wt.path, "file.txt"), "initial");
+    Bun.spawnSync(["git", "add", "file.txt"], { cwd: wt.path });
+    Bun.spawnSync(["git", "commit", "-m", "add file"], { cwd: wt.path });
     Bun.spawnSync(["git", "push", "-u", "origin", wt.branch], { cwd: wt.path });
-    writeFileSync(join(wt.path, "dirty.txt"), "uncommitted");
+    writeFileSync(join(wt.path, "file.txt"), "modified");
 
     const result = await mgr.isPushedToRemote("uncommitted");
     expect(result.pushed).toBe(false);
     expect(result.reason).toBe("uncommitted_changes");
+  });
+
+  test("returns pushed=true when only untracked files exist (regression)", async () => {
+    const wt = await mgr.create("untracked-only", repos.local);
+    insertThread(db, "untracked-only", {
+      worktree: wt.path,
+      branch: wt.branch,
+      repo_path: repos.local,
+    });
+
+    // Push the branch, then add untracked files (e.g. PLAN.md, temp files from other agents)
+    Bun.spawnSync(["git", "commit", "--allow-empty", "-m", "work"], { cwd: wt.path });
+    Bun.spawnSync(["git", "push", "-u", "origin", wt.branch], { cwd: wt.path });
+    writeFileSync(join(wt.path, "PLAN.md"), "untracked plan file");
+    writeFileSync(join(wt.path, "temp-test.ts"), "untracked test file");
+
+    const result = await mgr.isPushedToRemote("untracked-only");
+    expect(result.pushed).toBe(true);
   });
 
   test("returns pushed=false when branch has not been pushed at all", async () => {

@@ -84,6 +84,8 @@ export interface StreamDelta {
   outputTokens?: number;
   /** Model context window size (from the primary model used) */
   contextWindow?: number;
+  /** Primary model name (e.g. "claude-sonnet-4-20250514") */
+  modelName?: string;
 }
 
 // ── Turn Metrics ──────────────────────────────────────
@@ -98,6 +100,8 @@ export interface TurnMetrics {
   outputTokens: number;
   /** Model context window size (latest reported) */
   contextWindow: number;
+  /** Primary model name (latest reported, e.g. "claude-sonnet-4-20250514") */
+  modelName: string | null;
 }
 
 // ── WebSocket Messages ──────────────────────────────────

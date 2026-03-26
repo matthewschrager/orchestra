@@ -61,6 +61,13 @@ export class TerminalManager {
     }
 
     const shell = process.env.SHELL || "/bin/bash";
+    // Bun's PTY mode ignores the `cwd` option, and shell init files (e.g.
+    // .zshrc) can override the working directory even with `cd + exec`.
+    // Workaround: queue a `cd` into the PTY input buffer after spawn.
+    // The terminal driver buffers it until the shell finishes initialization.
+    // Leading space suppresses history (bash HISTCONTROL=ignorespace / zsh
+    // HIST_IGNORE_SPACE). `clear` resets the screen for a clean start.
+    const escapedCwd = cwd.replace(/'/g, "'\\''");
 
     const session: TerminalSession = {
       proc: null!,
@@ -108,6 +115,10 @@ export class TerminalManager {
 
     this.sessions.set(terminalId, session);
     this.resetIdleTimer(terminalId);
+
+    // Queue cd into the PTY input buffer — runs after shell init completes.
+    session.proc.terminal.write(` cd '${escapedCwd}' && clear\n`);
+
     return { created: true, reconnect: false };
   }
 

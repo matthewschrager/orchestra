@@ -1,10 +1,36 @@
 # Changelog
 
-## [0.1.20.1] - 2026-03-25
+## [0.1.21.1] - 2026-03-25
 
 ### Fixed
 
 - **Tailscale auto-detection permanently cached on failure** — if `tailscale` CLI wasn't found at server startup (e.g., installed after boot), detection was stuck returning `installed: false` forever, even when the UI "Refresh" button was clicked; now `refresh()` resets the CLI path cache and failed lookups retry automatically on the next detection cycle
+
+## [0.1.21.0] - 2026-03-25
+
+### Added
+
+- **Model name display in StickyRunBar** — shows the active model (e.g. `claude-sonnet-4`) in both running and idle states, extracted from SDK events with no hard-coded model list
+- **Model extraction from SDK events** — captures model name from `system` init event (session start), `message_start` stream event (per-message), and `modelUsage` result keys (end-of-turn)
+- **`modelName` in StreamDelta and TurnMetrics** — new field flows model identity through the streaming pipeline to the client
+- **`formatModelName` utility** — strips date suffixes from raw model IDs for clean display; full ID available on hover tooltip
+
+### Changed
+
+- **Token counting** — aggregate tokens across all models in `modelUsage` instead of only the primary model, for more accurate total usage display
+- **Metrics delta turn counting** — model-info-only deltas no longer inflate `turnCount`; only deltas with cost/duration/token data count as turns
+
+## [0.1.20.2] - 2026-03-25
+
+### Added
+
+- **QA testing from worktrees documentation** — added note to CLAUDE.md and AGENTS.md clarifying that worktree instances must build and launch their own server (can't test against the main-branch instance)
+
+## [0.1.20.1] - 2026-03-25
+
+### Added
+
+- **Unread thread indicator** — blue dot appears next to threads in the sidebar and mobile sessions list when new activity arrives (status changes, completion, errors) while the user is viewing a different thread; clears instantly on thread selection
 
 ## [0.1.20.0] - 2026-03-25
 

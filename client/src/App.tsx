@@ -64,7 +64,7 @@ const initialStreamingState: StreamingState = {
   turnEnded: new Set(),
 };
 
-const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0 };
+const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0, modelName: null };
 
 type StreamingAction =
   | { type: "delta"; delta: StreamDelta }
@@ -116,13 +116,16 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
         case "metrics": {
           const metrics = new Map(state.metrics);
           const prev = state.metrics.get(delta.threadId) ?? { ...EMPTY_METRICS };
+          // Only count as a turn if there's actual turn data (not just model info)
+          const hasTurnData = delta.costUsd !== undefined || delta.durationMs !== undefined || delta.inputTokens !== undefined;
           metrics.set(delta.threadId, {
             costUsd: prev.costUsd + (delta.costUsd ?? 0),
             durationMs: prev.durationMs + (delta.durationMs ?? 0),
-            turnCount: prev.turnCount + 1,
+            turnCount: prev.turnCount + (hasTurnData ? 1 : 0),
             inputTokens: delta.inputTokens ?? prev.inputTokens,
             outputTokens: delta.outputTokens ?? prev.outputTokens,
             contextWindow: Math.max(delta.contextWindow ?? 0, prev.contextWindow),
+            modelName: delta.modelName ?? prev.modelName,
           });
           return { ...state, metrics };
         }
@@ -204,9 +207,12 @@ function AppInner() {
     () => localStorage.getItem("orchestra_push_dismissed") === "1",
   );
   const [streaming, dispatchStreaming] = useReducer(streamingReducer, initialStreamingState);
+  const [unreadThreadIds, setUnreadThreadIds] = useState<Set<string>>(new Set());
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
   const wasConnectedRef = useRef<boolean | null>(null);
+  const activeThreadRef = useRef<string | null>(null);
+  activeThreadRef.current = activeThreadId;
   const chatViewRef = useRef<ChatViewHandle>(null);
 
   // Attention system — cross-thread pending questions/permissions
@@ -296,6 +302,15 @@ function AppInner() {
       });
       if (thread.status === "done" || thread.status === "error") {
         dispatchStreaming({ type: "clear_all", threadId: thread.id });
+      }
+      // Mark as unread if this thread isn't currently being viewed
+      if (!thread.archivedAt && thread.id !== activeThreadRef.current) {
+        setUnreadThreadIds((prev) => {
+          if (prev.has(thread.id)) return prev;
+          const next = new Set(prev);
+          next.add(thread.id);
+          return next;
+        });
       }
     }, []),
     onStreamDelta: useCallback((delta: StreamDelta) => {
@@ -436,6 +451,7 @@ function AppInner() {
       // Guard against duplicate: WS broadcast from server may arrive before this HTTP response
       setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
       setActiveThreadId(thread.id);
+      clearUnread(thread.id); // WS race: thread_updated may arrive before setActiveThreadId takes effect
       setActiveProjectId(pid);
       setSidebarOpen(false);
       turnStartRef.current = Date.now();
@@ -466,8 +482,18 @@ function AppInner() {
     send({ type: "resolve_attention", attentionId, resolution });
   };
 
+  const clearUnread = useCallback((threadId: string) => {
+    setUnreadThreadIds((prev) => {
+      if (!prev.has(threadId)) return prev;
+      const next = new Set(prev);
+      next.delete(threadId);
+      return next;
+    });
+  }, []);
+
   const handleNavigateToThread = (threadId: string) => {
     setActiveThreadId(threadId);
+    clearUnread(threadId);
     setMobileTab("sessions");
   };
 
@@ -489,6 +515,7 @@ function AppInner() {
 
   const handleSelectThread = (threadId: string) => {
     setActiveThreadId(threadId);
+    clearUnread(threadId);
     // Also set the project to the thread's project
     const thread = threads.find((t) => t.id === threadId);
     if (thread?.projectId) {
@@ -504,6 +531,7 @@ function AppInner() {
         setError("Thread archived, but worktree cleanup failed — the worktree may still exist on disk.");
       }
       setThreads((prev) => prev.filter((t) => t.id !== threadId));
+      clearUnread(threadId);
       if (activeThreadId === threadId) {
         setActiveThreadId(null);
       }
@@ -704,6 +732,7 @@ function AppInner() {
           threads={threads}
           activeProjectId={activeProjectId}
           activeThreadId={activeThreadId}
+          unreadThreadIds={unreadThreadIds}
           onSelectProject={setActiveProjectId}
           onSelectThread={handleSelectThread}
           onNewThread={handleNewThreadFromSidebar}
@@ -828,6 +857,7 @@ function AppInner() {
               projects={projects}
               threads={threads}
               activeThreadId={activeThreadId}
+              unreadThreadIds={unreadThreadIds}
               onSelectThread={(threadId) => {
                 handleSelectThread(threadId);
                 setMobileTab("sessions");

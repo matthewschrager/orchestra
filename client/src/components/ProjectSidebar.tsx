@@ -6,6 +6,7 @@ interface Props {
   threads: Thread[];
   activeProjectId: string | null;
   activeThreadId: string | null;
+  unreadThreadIds: Set<string>;
   onSelectProject: (id: string) => void;
   onSelectThread: (id: string) => void;
   onNewThread: (projectId: string) => void;
@@ -39,6 +40,7 @@ export function ProjectSidebar({
   threads,
   activeProjectId,
   activeThreadId,
+  unreadThreadIds,
   onSelectProject,
   onSelectThread,
   onNewThread,
@@ -240,6 +242,9 @@ export function ProjectSidebar({
                               <span className={`text-sm truncate flex-1 ${isDone ? "text-content-2" : ""}`}>
                                 {thread.title}
                               </span>
+                              {unreadThreadIds.has(thread.id) && thread.id !== activeThreadId && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                              )}
                             </div>
                             {/* Line 2: metadata */}
                             <div className="flex items-center gap-1.5 mt-1 ml-3.5">
