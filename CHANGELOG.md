@@ -6,6 +6,19 @@
 
 - **ExitPlanMode stuck threads** — SDK bug where `requiresUserInteraction()` short-circuits `bypassPermissions` causes ExitPlanMode to be denied in headless mode; Orchestra now detects ExitPlanMode in the SDK stream and auto-approves by sending "Plan approved. Proceed with implementation." on turn end, preventing the denial/retry loop that caused threads to hang
 
+## [0.1.22.2] - 2026-03-26
+
+### Fixed
+
+- **Context window indicator showing inflated >1M usage** — `modelUsage` in SDK result events reports cumulative token totals across ALL API calls in a session (each turn re-sends conversation history), so the context bar was comparing cumulative totals against the per-request context window limit; now extracts per-request `input_tokens` from `message_start` stream events (primary model only via `parent_tool_use_id === null`) which represent actual context occupancy; context bar also updates in real-time during streaming instead of waiting for the turn to complete
+- **Turn count inflated by intermediate metrics** — metrics deltas from `message_start` stream events were incorrectly incrementing the turn counter; now only result events (with cost/duration) count as turns
+
+## [0.1.22.1] - 2026-03-25
+
+### Fixed
+
+- **Thread sort order not updating in real-time** — sidebar threads only sorted by `updatedAt` on page refresh; now threads bubble to the top when they receive updates (new messages, status changes) without requiring a refresh, in both desktop sidebar and mobile sessions view
+
 ## [0.1.22.0] - 2026-03-25
 
 ### Fixed
