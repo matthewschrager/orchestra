@@ -6,7 +6,7 @@ import { createDb, getThread } from "../../db";
 import { SessionManager } from "../manager";
 import { AgentRegistry } from "../../agents/registry";
 import { WorktreeManager } from "../../worktrees/manager";
-import type { AgentAdapter, AgentSession, ParseResult, StartOpts } from "../../agents/types";
+import type { AgentAdapter, AgentSession, ParseResult, PersistentSession, StartOpts } from "../../agents/types";
 
 const tmpDirs: string[] = [];
 function makeTmpDir(prefix: string): string {
@@ -110,7 +110,8 @@ function setupSessionManager(adapter: AgentAdapter) {
   registry.register(adapter);
 
   const wtManager = new WorktreeManager(db);
-  const sessionManager = new SessionManager(db, registry, wtManager);
+  const uploadsDir = join(dbDir, "uploads");
+  const sessionManager = new SessionManager(db, registry, wtManager, uploadsDir);
 
   return { db, repoDir, sessionManager };
 }
@@ -249,6 +250,351 @@ describe("SDK Session lifecycle", () => {
     const updated = getThread(db, thread.id);
     expect(updated?.status).toBe("error");
     expect(updated?.error_message).toContain("SDK connection lost");
+
+    sessionManager.stopAll();
+  });
+});
+
+// ── Persistent Session Tests ────────────────────────────────────
+
+/** Message parser shared across persistent mock tests */
+function mockParseMessage(msg: unknown): ParseResult {
+  const m = msg as Record<string, unknown>;
+  const type = m.type as string;
+
+  if (type === "system") {
+    return { messages: [], deltas: [], sessionId: m.session_id as string | undefined };
+  }
+  if (type === "assistant") {
+    const message = m.message as { content?: Array<{ type: string; text?: string }> };
+    const textBlocks = message?.content?.filter(b => b.type === "text") ?? [];
+    const text = textBlocks.map(b => b.text ?? "").join("");
+    return { messages: text ? [{ role: "assistant", content: text }] : [], deltas: [] };
+  }
+  if (type === "result") {
+    return {
+      messages: [],
+      deltas: [
+        { deltaType: "metrics", costUsd: m.total_cost_usd as number | undefined, durationMs: m.duration_ms as number | undefined },
+        { deltaType: "turn_end", text: m.session_id as string | undefined },
+      ],
+      sessionId: m.session_id as string | undefined,
+    };
+  }
+  return { messages: [], deltas: [] };
+}
+
+/**
+ * Creates a mock persistent adapter that keeps the iterator alive.
+ * `pushMessage()` injects messages into the living stream.
+ * `finish()` ends the iterator.
+ */
+function createPersistentMockAdapter() {
+  let pushMessage: (msg: Record<string, unknown>) => void;
+  let finish: () => void;
+  let injectCalls: Array<{ text: string; sessionId: string }> = [];
+  let closed = false;
+  let resetCalls = 0;
+
+  const adapter: AgentAdapter = {
+    name: "mock",
+    detect: async () => true,
+    getVersion: async () => "1.0.0-mock",
+    supportsResume: () => true,
+    supportsPersistent: () => true,
+
+    // Legacy start — should not be called for persistent adapters
+    start(_opts: StartOpts): AgentSession {
+      throw new Error("Should not call start() on persistent adapter");
+    },
+
+    startPersistent(_opts: StartOpts): PersistentSession {
+      // Create a push-based async generator
+      let resolve: ((value: IteratorResult<Record<string, unknown>>) => void) | null = null;
+      const queue: Record<string, unknown>[] = [];
+      let done = false;
+
+      pushMessage = (msg) => {
+        if (resolve) {
+          const r = resolve;
+          resolve = null;
+          r({ value: msg, done: false });
+        } else {
+          queue.push(msg);
+        }
+      };
+
+      finish = () => {
+        done = true;
+        if (resolve) {
+          const r = resolve;
+          resolve = null;
+          r({ value: undefined as any, done: true });
+        }
+      };
+
+      const iterator: AsyncIterableIterator<Record<string, unknown>> = {
+        [Symbol.asyncIterator]() { return this; },
+        next() {
+          if (queue.length > 0) {
+            return Promise.resolve({ value: queue.shift()!, done: false });
+          }
+          if (done) {
+            return Promise.resolve({ value: undefined as any, done: true as const });
+          }
+          return new Promise((r) => { resolve = r; });
+        },
+      };
+
+      return {
+        messages: iterator as AsyncIterable<unknown>,
+        abort: () => { closed = true; finish(); },
+        parseMessage: mockParseMessage,
+        sessionId: _opts.resumeSessionId,
+        close: () => { closed = true; finish(); },
+        resetTurnState: () => { resetCalls++; },
+        async injectMessage(text: string, sessionId: string): Promise<void> {
+          injectCalls.push({ text, sessionId });
+        },
+      };
+    },
+  };
+
+  return {
+    adapter,
+    pushMessage: (msg: Record<string, unknown>) => pushMessage(msg),
+    finish: () => finish(),
+    getInjectCalls: () => injectCalls,
+    isClosed: () => closed,
+    getResetCalls: () => resetCalls,
+  };
+}
+
+describe("Persistent Session lifecycle", () => {
+  test("persistent session: turn completes → idle, session stays alive", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "hello persistent",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Emit first turn messages
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-p1", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Turn 1 response" }] },
+      session_id: "sess-p1",
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.01,
+      duration_ms: 100,
+      session_id: "sess-p1",
+      permission_denials: [],
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Thread should be "done" (turn complete) but session still in map
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("done");
+
+    // Session_id should be persisted
+    const row = db.query("SELECT session_id FROM threads WHERE id = ?").get(thread.id) as any;
+    expect(row.session_id).toBe("sess-p1");
+
+    // Session should still be tracked (persistent — stays alive)
+    expect(sessionManager.isRunning(thread.id)).toBe(true);
+
+    // Check messages persisted
+    const msgs = db.query("SELECT * FROM messages WHERE thread_id = ? ORDER BY seq").all(thread.id) as any[];
+    expect(msgs[0].role).toBe("user");
+    expect(msgs[0].content).toBe("hello persistent");
+    const assistantMsg = msgs.find((m: any) => m.content === "Turn 1 response");
+    expect(assistantMsg).toBeDefined();
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: sendMessage injects via streamInput", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "first turn",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Complete first turn
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-p2", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Ready for more" }] },
+      session_id: "sess-p2",
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-p2",
+      permission_denials: [],
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Now send a follow-up message — should use streamInput, not spawn new subprocess
+    sessionManager.sendMessage(thread.id, "follow-up question");
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Check injectMessage was called
+    const injectCalls = mock.getInjectCalls();
+    expect(injectCalls.length).toBe(1);
+    expect(injectCalls[0].text).toBe("follow-up question");
+    expect(injectCalls[0].sessionId).toBe("sess-p2");
+
+    // User message should be persisted
+    const msgs = db.query("SELECT * FROM messages WHERE thread_id = ? ORDER BY seq").all(thread.id) as any[];
+    const userMsgs = msgs.filter((m: any) => m.role === "user");
+    expect(userMsgs.length).toBe(2);
+    expect(userMsgs[1].content).toBe("follow-up question");
+
+    // Thread should be back to running
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("running");
+
+    // resetTurnState should have been called before inject
+    expect(mock.getResetCalls()).toBe(1);
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: stopThread calls close()", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "will stop",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Emit init so the session is alive
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-p3", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Stop the thread
+    sessionManager.stopThread(thread.id);
+    await new Promise((r) => setTimeout(r, 100));
+
+    // close() should have been called
+    expect(mock.isClosed()).toBe(true);
+
+    // Thread should be done
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("done");
+
+    // Session should be removed from tracking
+    expect(sessionManager.isRunning(thread.id)).toBe(false);
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: rejects message while agent is thinking", async () => {
+    const mock = createPersistentMockAdapter();
+    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "thinking test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Emit init but NOT the result — agent is still "thinking"
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-p4", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Sending a message while thinking should throw
+    expect(() => {
+      sessionManager.sendMessage(thread.id, "impatient message");
+    }).toThrow("Agent is still processing");
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: subprocess death mid-turn marks error", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "crash test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Emit init and some work, then kill the iterator without a result event
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-p5", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Working on it..." }] },
+      session_id: "sess-p5",
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Kill the iterator (simulates subprocess crash)
+    mock.finish();
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Thread should be in error state
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("error");
+    expect(updated?.error_message).toContain("unexpectedly");
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: idle subprocess exit does not mark error", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "idle exit test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Complete a turn → state becomes idle
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-p6", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Done" }] },
+      session_id: "sess-p6",
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-p6",
+      permission_denials: [],
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Now the subprocess exits while idle (e.g., normal cleanup)
+    mock.finish();
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Thread should still be "done" — not "error"
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("done");
 
     sessionManager.stopAll();
   });

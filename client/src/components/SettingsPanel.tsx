@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Settings } from "shared";
 import { api } from "../hooks/useApi";
+import { RemoteAccessSettings } from "./RemoteAccessSettings";
 
 interface Props {
   onClose: () => void;
@@ -93,6 +94,9 @@ export function SettingsPanel({ onClose }: Props) {
           <div className="py-8 text-center text-sm text-content-3">Loading...</div>
         ) : (
           <div className="space-y-5">
+            {/* Remote Access */}
+            <RemoteAccessSettings />
+
             {/* Worktree Root */}
             <div>
               <label className="block text-sm font-medium text-content-2 mb-1.5">

@@ -18,6 +18,7 @@ function resolveSettings(db: DB): Settings {
     inactivityTimeoutMinutes: Number.isFinite(timeoutParsed) && timeoutParsed > 0
       ? timeoutParsed
       : DEFAULT_INACTIVITY_TIMEOUT_MINUTES,
+    remoteUrl: raw.remoteUrl || "",
   };
 }
 
@@ -74,6 +75,19 @@ export function createSettingsRoutes(db: DB, worktreeManager: WorktreeManager) {
       resolvedWorktreeRoot = resolved;
     }
 
+    let validatedRemoteUrl: string | undefined;
+    if (body.remoteUrl !== undefined) {
+      if (typeof body.remoteUrl !== "string") {
+        return c.json({ error: "remoteUrl must be a string" }, 400);
+      }
+      const trimmed = body.remoteUrl.trim();
+      // Allow empty string (to clear the URL)
+      if (trimmed && !trimmed.startsWith("https://")) {
+        return c.json({ error: "remoteUrl must be an HTTPS URL" }, 400);
+      }
+      validatedRemoteUrl = trimmed;
+    }
+
     // ── Phase 2: Apply (all validated) ────────────────────
     if (validatedTimeout !== undefined) {
       setSetting(db, "inactivityTimeoutMinutes", String(validatedTimeout));
@@ -81,6 +95,9 @@ export function createSettingsRoutes(db: DB, worktreeManager: WorktreeManager) {
     if (resolvedWorktreeRoot !== undefined) {
       setSetting(db, "worktreeRoot", resolvedWorktreeRoot);
       worktreeManager.setWorktreeRoot(resolvedWorktreeRoot);
+    }
+    if (validatedRemoteUrl !== undefined) {
+      setSetting(db, "remoteUrl", validatedRemoteUrl);
     }
 
     return c.json(resolveSettings(db));

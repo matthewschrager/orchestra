@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.1.19.0] - 2026-03-25
+
+### Changed
+
+- **Improved empty state UX** — redesigned the "new thread" launch view with project path display, recent threads list (clickable, with status dots and relative timestamps), and a subtle radial glow background
+- **Always-visible thread options** — model selector and "Isolate to worktree" checkbox are now permanently visible in the InputBar when creating a new thread, instead of hidden behind an "Options" toggle
+- **Send button alignment** — fixed subtle 1px misalignment between the Send button and text input by matching border box models
+
+## [0.1.18.0] - 2026-03-25
+
+### Added
+
+- **Always-on remote access via Tailscale** — TailscaleDetector class detects Tailscale installation, IP, hostname, and `tailscale serve` HTTPS configuration with multi-platform CLI detection and 10s cache
+- **Remote Access section in Settings panel** — 3-state UI (Not Detected → Detected → HTTPS Ready) with guided setup instructions, copy buttons, and manual URL fallback
+- **`/api/tailscale/status` endpoint** — exposes Tailscale detection status for the Settings panel with refresh support
+- **Per-subscription push notification origins** — each push subscription stores the browser origin it was created from; deep-link URLs are computed per-subscription so each device gets links to its own URL
+- **Cross-origin notification clicks** — service worker handles `targetUrl` from push payload, correctly opening new windows for cross-origin clicks
+- **`remoteUrl` setting** — display-only HTTPS URL in Settings, validated to HTTPS-only scheme
+- **Tailnet ACL warning** — Settings panel and startup output warn that any device on the tailnet can access Orchestra without a token when using `tailscale serve`
+
+### Changed
+
+- **Push notification payloads** now include per-subscription `targetUrl` in the `data` field
+- **Push subscription API** accepts optional `origin` field from clients
+- **`push_subscriptions` table** gains `origin` column (auto-migrated)
+
+## [0.1.17.0] - 2026-03-25
+
+### Added
+
+- **Persistent query architecture** — Claude Code sessions now keep a long-lived `Query` object per thread; subprocess stays alive between turns and follow-ups are injected via `streamInput()`, eliminating MCP reconnection delay on every follow-up message
+- **`PersistentSession` interface** — extends `AgentSession` with `injectMessage()`, `close()`, and `resetTurnState()` methods; adapters opt in via `supportsPersistent()`
+- **Session state machine** — `ActiveSession` tracks `thinking → idle/waiting → thinking` state; rejects messages while agent is mid-turn, properly handles attention queue transitions
+- **Auto-restart with circuit breaker** — persistent sessions that crash mid-turn auto-restart via resume (max 2 attempts) with fallback to legacy per-turn mode
+- **Parser turn-state reset** — `ClaudeParser.resetTurnState()` clears dedup sets between turns to prevent memory growth in long-lived sessions
+- 6 new persistent session tests covering lifecycle, streamInput injection, close, thinking guard, crash detection, and idle exit
+
+### Changed
+
+- **`sendMessage()` persistent path** — injects follow-up messages into living subprocess instead of aborting and restarting; falls back to restart on `streamInput()` failure
+- **`stopThread()` uses `close()`** for persistent sessions instead of `AbortController.abort()`
+- **`consumeStream()` stays alive across turns** — `result` events transition state to idle instead of ending the stream loop; iterator end signals subprocess death
+- **Inactivity timeout skips idle/waiting** persistent sessions — subprocess staying alive between user messages is expected behavior
+
 ## [0.1.16.0] - 2026-03-25
 
 ### Added

@@ -41,31 +41,36 @@ self.addEventListener("notificationclick", (event) => {
 
   const data = event.notification.data || {};
 
-  // Build the URL to navigate to
-  let targetUrl = "/";
-  if (data.threadId) {
+  // Use server-provided targetUrl (per-subscription origin), fallback to relative path
+  let targetUrl = data.targetUrl || "/";
+  if (!data.targetUrl && data.threadId) {
     targetUrl = `/?thread=${data.threadId}`;
     if (data.attentionId) {
       targetUrl += `&attention=${data.attentionId}`;
     }
   }
 
+  // Check if targetUrl is same-origin (can focus existing window)
+  const isSameOrigin = targetUrl.startsWith("/") || targetUrl.startsWith(self.location.origin);
+
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-      // If there's already an open window, focus it and navigate
-      for (const client of clientList) {
-        if (client.url.includes(self.registration.scope)) {
-          client.focus();
-          client.postMessage({
-            type: "notification-click",
-            threadId: data.threadId,
-            attentionId: data.attentionId,
-            action: event.action || null,
-          });
-          return;
+      if (isSameOrigin) {
+        // Same-origin: try to focus existing window and navigate via postMessage
+        for (const client of clientList) {
+          if (client.url.includes(self.registration.scope)) {
+            client.focus();
+            client.postMessage({
+              type: "notification-click",
+              threadId: data.threadId,
+              attentionId: data.attentionId,
+              action: event.action || null,
+            });
+            return;
+          }
         }
       }
-      // Otherwise open a new window
+      // Cross-origin or no existing window: open new window
       return clients.openWindow(targetUrl);
     }),
   );

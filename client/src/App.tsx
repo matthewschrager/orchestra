@@ -198,7 +198,6 @@ function AppInner() {
   const [error, setError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const [terminalEnabled, setTerminalEnabled] = useState(true);
   const [lastTerminalMsg, setLastTerminalMsg] = useState<WSServerMessage | null>(null);
   const [latestTodos, setLatestTodos] = useState<Map<string, TodoItem[]>>(new Map());
   const [pushBannerDismissed, setPushBannerDismissed] = useState(
@@ -226,6 +225,15 @@ function AppInner() {
   const activeMetrics = activeThreadId ? streaming.metrics.get(activeThreadId) ?? EMPTY_METRICS : EMPTY_METRICS;
   const activeTurnEnded = activeThreadId ? streaming.turnEnded.has(activeThreadId) : false;
   const activeTodos = activeThreadId ? latestTodos.get(activeThreadId) ?? null : null;
+
+  // Recent non-archived threads for the active project (empty-state display)
+  const recentProjectThreads = useMemo(() =>
+    threads
+      .filter((t) => t.projectId === activeProjectId && !t.archivedAt)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .slice(0, 5),
+    [threads, activeProjectId],
+  );
 
   // Detect unanswered ask-user tool calls — check if there's one after the last user message
   const pendingQuestion = useMemo(() => {
@@ -320,24 +328,14 @@ function AppInner() {
     }
   }, [lastTerminalMsg]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch terminal enabled status
-  useEffect(() => {
-    fetch("/api/status")
-      .then((r) => r.ok ? r.json() : null)
-      .then((s) => { if (s?.terminalEnabled !== undefined) setTerminalEnabled(s.terminalEnabled); })
-      .catch(() => {}); // Ignore — old server without /api/status
-  }, []);
-
   // Keyboard shortcut: Ctrl+` / Cmd+` to toggle terminal
-  const terminalEnabledRef = useRef(terminalEnabled);
-  terminalEnabledRef.current = terminalEnabled;
   const activeThreadIdRef = useRef(activeThreadId);
   activeThreadIdRef.current = activeThreadId;
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "`") {
         e.preventDefault();
-        if (!terminalEnabledRef.current || !activeThreadIdRef.current) return;
+        if (!activeThreadIdRef.current) return;
         setTerminalOpen((prev) => !prev);
       }
     };
@@ -627,16 +625,14 @@ function AppInner() {
           />
           <button
             onClick={() => setTerminalOpen(!terminalOpen)}
-            disabled={!activeThread || !terminalEnabled}
+            disabled={!activeThread}
             className="hidden md:block px-3 py-1.5 hover:bg-surface-3 rounded-lg text-sm text-content-2 hover:text-content-1 disabled:opacity-30 disabled:cursor-not-allowed font-mono"
             title={
-              !terminalEnabled
-                ? "Terminal disabled in tunnel mode"
-                : !activeThread
-                  ? "Select a thread to open terminal"
-                  : terminalOpen
-                    ? "Close terminal (Ctrl+`)"
-                    : "Open terminal (Ctrl+`)"
+              !activeThread
+                ? "Select a thread to open terminal"
+                : terminalOpen
+                  ? "Close terminal (Ctrl+`)"
+                  : "Open terminal (Ctrl+`)"
             }
           >
             &gt;_
@@ -756,7 +752,7 @@ function AppInner() {
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
               />
-              {activeThread && terminalEnabled && (
+              {activeThread && (
                 <TerminalPanel
                   threadId={activeThread.id}
                   visible={terminalOpen}
@@ -775,7 +771,11 @@ function AppInner() {
             </>
           ) : activeProject ? (
             <>
-              <ProjectEmptyState project={activeProject} />
+              <ProjectEmptyState
+                project={activeProject}
+                recentThreads={recentProjectThreads}
+                onSelectThread={handleSelectThread}
+              />
               <InputBar
                 agents={agents}
                 thread={null}
@@ -885,23 +885,108 @@ function AppInner() {
   );
 }
 
-// ── Project-aware empty state (header only — InputBar is reused below) ───
+// ── Project-aware empty state with recent threads ───
 
-function ProjectEmptyState({ project }: { project: ProjectWithStatus }) {
+const EMPTY_STATUS_DOT: Record<string, string> = {
+  // "running" handled separately with a spinner element
+  pending: "bg-amber-400",
+  waiting: "bg-amber-400 animate-pulse",
+  paused: "bg-content-3",
+  done: "bg-accent/60",
+  error: "bg-red-400 shadow-[0_0_4px_rgba(248,113,113,0.5)]",
+};
+
+function shortenPath(path: string): string {
+  const home = path.match(/^\/(?:Users|home)\/([^/]+)/);
+  if (home) return path.replace(home[0], "~");
+  return path;
+}
+
+function formatRelativeTime(dateStr: string): string {
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d`;
+  return `${Math.floor(days / 7)}w`;
+}
+
+function ProjectEmptyState({
+  project,
+  recentThreads,
+  onSelectThread,
+}: {
+  project: ProjectWithStatus;
+  recentThreads: Thread[];
+  onSelectThread: (id: string) => void;
+}) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8">
-      <div className="text-center">
-        <h2 className="text-2xl font-semibold mb-2">{project.name}</h2>
-        <div className="flex items-center justify-center gap-2 text-xs text-content-3">
-          <span className="font-mono bg-surface-3 px-2 py-0.5 rounded">{project.currentBranch}</span>
-          <span>&middot;</span>
-          <span>
+    <div className="flex-1 flex flex-col items-center justify-center p-6 md:p-8 relative overflow-y-auto">
+      {/* Subtle radial glow */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(34,211,238,0.03)_0%,_transparent_60%)] pointer-events-none" />
+
+      <div className="relative w-full max-w-lg space-y-6">
+        {/* Project header */}
+        <div className="text-center">
+          <h2 className="text-2xl font-semibold tracking-tight mb-2">{project.name}</h2>
+          <div className="flex items-center justify-center gap-2 text-xs text-content-3 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 font-mono bg-surface-3 px-2 py-0.5 rounded">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-content-3">
+                <path d="M6 3L3 8l3 5M10 3l3 5-3 5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              {project.currentBranch}
+            </span>
+            <span>&middot;</span>
+            <span className="font-mono truncate max-w-[240px]" title={project.path}>
+              {shortenPath(project.path)}
+            </span>
+          </div>
+          <div className="mt-2.5 text-xs text-content-3">
             {project.threadCount} thread{project.threadCount !== 1 ? "s" : ""}
             {project.activeThreadCount > 0 && (
-              <span className="text-emerald-400 ml-1">{project.activeThreadCount} running</span>
+              <span className="text-emerald-400 ml-1">&middot; {project.activeThreadCount} running</span>
             )}
-          </span>
+          </div>
         </div>
+
+        {/* Recent threads */}
+        {recentThreads.length > 0 && (
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-content-3 mb-2 px-1">Recent threads</div>
+            <div className="bg-surface-2/50 border border-edge-1 rounded-xl overflow-hidden divide-y divide-edge-1/50">
+              {recentThreads.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => onSelectThread(t.id)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-surface-3/50 text-left group transition-colors"
+                >
+                  {t.status === "running" ? (
+                    <span className="w-2 h-2 shrink-0 rounded-full border border-emerald-400/40 border-t-emerald-400 animate-spin" />
+                  ) : (
+                    <span className={`w-2 h-2 shrink-0 rounded-full ${EMPTY_STATUS_DOT[t.status] ?? "bg-content-3"}`} />
+                  )}
+                  <span className="text-sm text-content-2 group-hover:text-content-1 truncate flex-1 transition-colors">
+                    {t.title}
+                  </span>
+                  {t.worktree && (
+                    <span className="text-[10px] font-mono bg-surface-4 px-1.5 py-0.5 rounded text-content-3 shrink-0">wt</span>
+                  )}
+                  <span className="text-[11px] text-content-3 shrink-0 tabular-nums">
+                    {formatRelativeTime(t.updatedAt)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Prompt hint */}
+        <p className="text-center text-[11px] text-content-3">
+          Enter a prompt below to start a new thread
+        </p>
       </div>
     </div>
   );
