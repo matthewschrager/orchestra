@@ -21,6 +21,7 @@ import { useTerminal } from "./hooks/useTerminal";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { MobileThreadHeader } from "./components/MobileThreadHeader";
+import { parseTodos } from "./components/renderers/TodoRenderer";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -117,8 +118,9 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
         case "metrics": {
           const metrics = new Map(state.metrics);
           const prev = state.metrics.get(delta.threadId) ?? { ...EMPTY_METRICS };
-          // Only count as a turn if there's actual turn data (not just model info)
-          const hasTurnData = delta.costUsd !== undefined || delta.durationMs !== undefined || delta.inputTokens !== undefined;
+          // Only count as a turn on result events (cost/duration), not intermediate
+          // context updates from message_start stream events
+          const hasTurnData = delta.costUsd !== undefined || delta.durationMs !== undefined;
           metrics.set(delta.threadId, {
             costUsd: prev.costUsd + (delta.costUsd ?? 0),
             durationMs: prev.durationMs + (delta.durationMs ?? 0),
@@ -275,16 +277,14 @@ function AppInner() {
         dispatchStreaming({ type: "clear_tool", threadId: msg.threadId });
         // Track latest TodoWrite state per thread
         if (msg.toolName === "TodoWrite" && msg.toolInput) {
-          try {
-            const parsed = JSON.parse(msg.toolInput);
-            if (Array.isArray(parsed.todos)) {
-              setLatestTodos((prev) => {
-                const next = new Map(prev);
-                next.set(msg.threadId, parsed.todos as TodoItem[]);
-                return next;
-              });
-            }
-          } catch { /* ignore malformed input */ }
+          const todosParsed = parseTodos(msg.toolInput);
+          if (todosParsed) {
+            setLatestTodos((prev) => {
+              const next = new Map(prev);
+              next.set(msg.threadId, todosParsed.items);
+              return next;
+            });
+          }
         }
       }
     }, []),
@@ -435,6 +435,22 @@ function AppInner() {
         next.set(activeThreadId, msgs);
         return next;
       });
+      // Hydrate latestTodos from loaded history (scan backwards for last TodoWrite).
+      // Guard: skip if streaming already provided newer state for this thread.
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].toolName === "TodoWrite" && msgs[i].toolInput) {
+          const todosParsed = parseTodos(msgs[i].toolInput);
+          if (todosParsed) {
+            setLatestTodos((prev) => {
+              if (prev.has(activeThreadId)) return prev; // streaming set newer data
+              const next = new Map(prev);
+              next.set(activeThreadId, todosParsed.items);
+              return next;
+            });
+            break;
+          }
+        }
+      }
     });
   }, [activeThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
