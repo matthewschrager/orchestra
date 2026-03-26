@@ -37,6 +37,8 @@ orchestra/
 │       │   └── manager.ts  VAPID keys, subscriptions, dispatch
 │       ├── tailscale/      Tailscale detection
 │       │   └── detector.ts CLI detection, IP/hostname, serve config parsing
+│       ├── titles/         AI title generation
+│       │   └── generator.ts Fire-and-forget title gen via Agent SDK query()
 │       ├── tunnel/         Cloudflare Tunnel integration
 │       │   └── manager.ts  Tunnel lifecycle, URL capture
 │       └── ws/handler.ts   WebSocket handler + attention events
@@ -53,10 +55,13 @@ orchestra/
 │       │       ├── BashRenderer.tsx    Bash → terminal block
 │       │       ├── ReadRenderer.tsx    Read → syntax-highlighted file
 │       │       ├── SearchRenderer.tsx  Grep/Glob → match list
-│       │       └── SubAgentCard.tsx    Agent → status card
+│       │       ├── SubAgentCard.tsx    Agent → status card
+│       │       └── TodoCard.tsx        TodoWrite → task checklist card
 │       │   ├── AttentionInbox.tsx  Attention queue inbox
 │       │   ├── SettingsPanel.tsx   Settings modal dialog
 │       │   ├── RemoteAccessSettings.tsx Remote Access section (Tailscale detection + guided setup)
+│       │   ├── MobileThreadHeader.tsx Mobile sticky header with back + editable title
+│       │   ├── EditableTitle.tsx  Click-to-edit title (shared mobile/desktop)
 │       │   ├── MobileNav.tsx      Bottom tab navigation
 │       │   ├── MobileSessions.tsx Thread list for mobile
 │       │   ├── MobileNewSession.tsx New session form for mobile
@@ -89,25 +94,32 @@ cd server && bun run src/index.ts  # Production server
 - Real-time streaming via ephemeral WebSocket deltas (not persisted to DB)
 - Complete messages persisted to SQLite with WAL mode, seq-based replay on reconnect
 - Token auth enforced for non-localhost requests (and always when `--tunnel` is active)
-- Rich tool renderers parse stream-json tool data into visual components (diffs, terminal blocks, search results)
-- Shiki syntax highlighting lazy-loaded via module-level singleton with DOMPurify sanitization
+- Rich tool renderers parse stream-json tool data into visual components (diffs, terminal blocks, search results); special tools (AskUser, Agent, TodoWrite) registered in declarative `TOOL_RENDERERS` map
+- TodoWrite rendering: latest TodoWrite renders as prominent card with all tasks, per-task status (✓ completed/▸ running/○ queued), progress bar, ARIA roles; prior TodoWrites collapse to expandable summary lines; `parseTodos()` normalizes both Claude SDK `{todos}` and Codex `{items}` shapes; `latestTodos` hydrated from REST history with streaming race guard
+- Shiki syntax highlighting lazy-loaded via shared module-level singleton (`lib/shiki.ts`) with DOMPurify sanitization; ReadRenderer uses `codeToHtml`, DiffRenderer uses `codeToTokens` (per-line control for diff backgrounds)
+- DiffRenderer: Myers LCS diff algorithm (`lib/diffCompute.ts`) with line numbers, syntax highlighting, context lines; empty-string guards, trailing newline normalization, 500-line bail-out, 100-line outer truncation; mobile hides line numbers <640px; fallback semantic colors when Shiki unavailable
 - Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
 - Cost/duration/token metrics extracted from Claude result events and displayed in StickyRunBar
-- Context window indicator: token usage (input+output) vs model context window shown as color-coded progress bar; uses replacement semantics (SDK reports cumulative totals); `Math.max` for contextWindow to prevent sub-agent regression
-- Model name display: extracted from SDK events (`system` init, `message_start` stream, `modelUsage` result keys); streamed via `modelName` field on `StreamDelta`/`TurnMetrics`; displayed in StickyRunBar with date-suffix stripping (`formatModelName`); no hard-coded model list
+- Context window indicator: token usage (input+output) vs model context window shown as color-coded progress bar; uses **per-request** tokens from `message_start` stream events (not cumulative `modelUsage` which inflates across turns); `Math.max` for contextWindow to prevent sub-agent regression; primary-model filtering via `parent_tool_use_id === null`
+- Model name display: extracted from SDK events (`system` init, `modelUsage` result keys); streamed via `modelName` field on `StreamDelta`/`TurnMetrics`; displayed in StickyRunBar with date-suffix stripping (`formatModelName`); no hard-coded model list
 - Attention queue: AskUserQuestion/permission tool_use events detected in SDK message stream, persisted to `attention_required` table, broadcast to ALL WS clients (cross-thread), resolvable via REST or WS with first-caller-wins race guard
+- ExitPlanMode auto-approval: SDK bug where `requiresUserInteraction()` short-circuits `bypassPermissions` causes ExitPlanMode to be denied in headless SDK mode. Workaround: detect ExitPlanMode tool_use in stream via `exitPlanMode` flag on `ParseResult`, then auto-send "Plan approved. Proceed with implementation." on turn end
 - Session IDs persisted to `session_id` column on threads table (survives server restart)
 - Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
 - Push notifications: VAPID keys auto-generated, Web Push dispatch on attention events; per-subscription `origin` column on `push_subscriptions` table enables per-sub `targetUrl` in push payloads for cross-origin notification deep-links
 - Service worker (`sw.js`): handles push display + notification click; uses server-provided `targetUrl` (per-subscription origin) with cross-origin fallback via `clients.openWindow`
 - Tailscale detection: `TailscaleDetector` checks CLI installation, `tailscale status --json` for IP/hostname, `tailscale serve status --json` for HTTPS config; cached with configurable TTL; results shown at startup and via `/api/tailscale/status` endpoint
 - Remote access settings: `RemoteAccessSettings` component in Settings panel shows Tailscale state (not detected / detected / HTTPS ready) with guided `tailscale serve` setup; `remoteUrl` setting (HTTPS-only, display-only) stored in settings table
-- Mobile UI: bottom tab navigation (Inbox/Sessions/New), attention inbox with interactive cards
+- Mobile UI: bottom tab navigation (Inbox/Sessions/New), attention inbox with interactive cards; `MobileThreadHeader` provides sticky thread title with back button and editable title on mobile
+- AI thread titles: `generateTitle()` in `titles/generator.ts` uses `query()` from the Agent SDK (fire-and-forget) to produce 3-6 word summaries; race guard compares current title against original `prompt.slice(0, 80)` to avoid overwriting user edits; PATCH `/threads/:id` broadcasts via `notifyThread()` for cross-client sync
+- Inline title editing: `EditableTitle` component renders click-to-edit title with Enter/Escape/blur handling; used in both `MobileThreadHeader` and `ChatView`; optimistic update + WS broadcast
 - Input: Enter sends, Shift+Enter for newline (with IME composition guard for CJK input)
 - AskUserQuestion rendered inline as interactive cards with answer buttons
 - WebSocket heartbeat prevents idle disconnection
 - Slash command autocompletion: scoped per project via `installed_plugins.json` + `settings.json` (global + project-level merge); `.agents/` internal skills excluded; cached per projectId
 - Worktree isolation: detectWorktree returns name for port/data separation, expanded port hash range (9999 slots)
+- Worktree agent isolation: three-layer defense — (1) nested instance guard (`ORCHESTRA_MANAGED=1` blocks agents from relaunching Orchestra, override with `--allow-nested`), (2) env scrubbing (deletes `ORCHESTRA_PORT/DATA_DIR/HOST/ALLOW_NESTED` from `process.env` after startup), (3) prompt preamble injection (worktree threads get isolation context — port, cwd, rules — prepended to first prompt only; cwd sanitized for prompt injection)
+- Git spawn helpers: all git command execution centralized via `gitSpawn()`/`gitSpawnSync()` in `utils/git.ts` — automatically prepends `--no-optional-locks` to reduce index.lock contention with concurrent agent operations
 - Worktree branching: `git worktree add` always branches from detected main/master, not HEAD — prevents inheriting polluted checkout state from non-isolated agents
 - Cross-client thread sync: thread creation and archival broadcast `thread_updated` via WS to all clients; client deduplicates optimistic inserts
 - Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag

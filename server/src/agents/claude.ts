@@ -1,5 +1,5 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AgentAdapter,
   AgentSession,
@@ -12,6 +12,27 @@ import type {
 
 /** Tool names that trigger attention events */
 const ASK_USER_TOOLS = new Set(["AskUserQuestion", "AskUserTool"]);
+
+const DEBUG = process.env.ORCHESTRA_DEBUG === "1";
+
+/** Tool names that require auto-approval on turn end.
+ *  ExitPlanMode has requiresUserInteraction()=true in the CLI, which short-circuits
+ *  the bypassPermissions check, causing the tool to be denied in headless SDK mode.
+ *  We detect it in the stream and auto-approve by sending a follow-up message. */
+const PLAN_APPROVAL_TOOLS = new Set(["ExitPlanMode"]);
+
+/**
+ * Custom permission handler: allows all tools except AskUserQuestion/AskUserTool,
+ * which are denied with `interrupt: true` to stop the SDK from retrying.
+ * This prevents duplicate AskUserQuestion events that occur with `bypassPermissions`.
+ */
+const orchestraCanUseTool: CanUseTool = async (toolName, _input, _options) => {
+  if (ASK_USER_TOOLS.has(toolName)) {
+    if (DEBUG) console.log(`[claude] canUseTool: denying ${toolName} with interrupt`);
+    return { behavior: "deny", message: "Handled by Orchestra", interrupt: true };
+  }
+  return { behavior: "allow" };
+};
 
 export class ClaudeAdapter implements AgentAdapter {
   name = "claude";
@@ -50,6 +71,7 @@ export class ClaudeAdapter implements AgentAdapter {
         allowDangerouslySkipPermissions: true,
         includePartialMessages: true,
         settingSources: ["user", "project", "local"],
+        canUseTool: orchestraCanUseTool,
         abortController,
       },
     });
@@ -75,6 +97,7 @@ export class ClaudeAdapter implements AgentAdapter {
         allowDangerouslySkipPermissions: true,
         includePartialMessages: true,
         settingSources: ["user", "project", "local"],
+        canUseTool: orchestraCanUseTool,
       },
     });
 
@@ -123,15 +146,24 @@ class ClaudeParser {
   /** tool_use IDs already persisted via stream_events — skip in assistant summary */
   private readonly persistedToolUseIds = new Set<string>();
   private readonly emittedAttentionKeys = new Set<string>();
+  /** Per-request input tokens from the latest primary-model message_start event.
+   *  This is the ACTUAL context occupancy — unlike modelUsage which is cumulative. */
+  private lastPrimaryInputTokens: number | undefined;
+  /** Per-request output tokens from the latest primary-model message_delta event. */
+  private lastPrimaryOutputTokens: number | undefined;
 
   /** Reset turn-level state between turns in persistent sessions.
    *  Clears active blocks (should be empty at turn boundary) and dedup sets.
-   *  Keeps toolUseNames since tool_use_ids are globally unique per session. */
+   *  Keeps toolUseNames since tool_use_ids are globally unique per session.
+   *  Clears per-request token trackers so stale values don't block cumulative fallback
+   *  if the new turn's message_start never fires (e.g. resumed session, error). */
   resetTurnState(): void {
     this.activeToolBlocks.clear();
     this.activeTextBlocks.clear();
     this.persistedToolUseIds.clear();
     this.emittedAttentionKeys.clear();
+    this.lastPrimaryInputTokens = undefined;
+    this.lastPrimaryOutputTokens = undefined;
   }
 
   handleMessage(msg: unknown): ParseResult {
@@ -203,6 +235,10 @@ class ClaudeParser {
         if (messages.length === 0) return { messages: [], deltas: [] };
         const result: ParseResult = { messages, deltas: [] };
         if (attention) result.attention = attention;
+        // Detect ExitPlanMode tool_use for auto-approval
+        if (messages.some((m) => m.toolName && PLAN_APPROVAL_TOOLS.has(m.toolName))) {
+          result.exitPlanMode = true;
+        }
         return result;
       }
 
@@ -219,14 +255,18 @@ class ClaudeParser {
         const userMessages: ParsedMessage[] = [];
         for (const block of userBlocks) {
           if (block.type === "tool_result") {
+            const toolName = block.tool_use_id
+              ? this.toolUseNames.get(block.tool_use_id)
+              : undefined;
+            // Skip tool_results for AskUser tools — the denial response from
+            // canUseTool(interrupt:true) is noise, not useful content
+            if (toolName && ASK_USER_TOOLS.has(toolName)) continue;
+
             const outputContent = typeof block.content === "string"
               ? block.content
               : Array.isArray(block.content)
                 ? block.content.filter(b => b.type === "text").map(b => b.text ?? "").join("")
                 : "";
-            const toolName = block.tool_use_id
-              ? this.toolUseNames.get(block.tool_use_id)
-              : undefined;
             const metadata = block.is_error ? { isError: true } : undefined;
             userMessages.push({
               role: "tool",
@@ -266,9 +306,7 @@ class ClaudeParser {
         let modelName: string | undefined;
 
         if (modelUsage) {
-          // Find the primary model (largest context window) — use its tokens
-          // for context occupancy. Summing across all models (including sub-agents)
-          // inflates the count far beyond the actual context window.
+          // Find the primary model (largest context window) for contextWindow + modelName.
           for (const [name, model] of Object.entries(modelUsage)) {
             if (model.contextWindow && (!contextWindow || model.contextWindow > contextWindow)) {
               contextWindow = model.contextWindow;
@@ -276,12 +314,24 @@ class ClaudeParser {
             }
           }
 
-          if (modelName && modelUsage[modelName]) {
+          // IMPORTANT: modelUsage reports CUMULATIVE token totals across all API calls
+          // in the session. Over multiple turns, cumulative inputTokens far exceeds the
+          // context window (because conversation history is re-sent each turn).
+          //
+          // For context occupancy, we use per-request tokens extracted from message_start
+          // stream events (set in handleStreamEvent). These represent the actual context
+          // size for the latest API call — what the model actually "sees" right now.
+          if (this.lastPrimaryInputTokens !== undefined) {
+            inputTokens = this.lastPrimaryInputTokens;
+            outputTokens = this.lastPrimaryOutputTokens ?? 0;
+          } else if (modelName && modelUsage[modelName]) {
+            // Fallback: no stream events seen (e.g. resumed session) — use cumulative
+            // from primary model. Not ideal but better than nothing.
             const pm = modelUsage[modelName];
             inputTokens = (pm.inputTokens ?? 0) + (pm.cacheReadInputTokens ?? 0) + (pm.cacheCreationInputTokens ?? 0);
             outputTokens = pm.outputTokens ?? 0;
           } else {
-            // No context window info — fall back to summing all models
+            // No stream events AND no contextWindow info — fall back to summing all models
             inputTokens = 0;
             outputTokens = 0;
             for (const model of Object.values(modelUsage)) {
@@ -301,25 +351,20 @@ class ClaudeParser {
 
         const resultParse: ParseResult = { messages: [], deltas };
 
-        // Detect SDK error results or zero-turn successes (no model interaction)
-        const numTurns = event.num_turns as number | undefined;
-        if (isError || (subtype && subtype.startsWith("error_"))) {
-          const errorDetail = errors?.join("; ") || subtype || "unknown SDK error";
-          resultParse.error = errorDetail;
-        } else if (subtype === "success" && numTurns === 0) {
-          const resultText = event.result as string | undefined;
-          resultParse.error = resultText || "SDK completed with zero model turns";
-        }
-
-        // Check permission_denials for AskUserQuestion (fallback detection)
+        // Check permission_denials for AskUserQuestion (before error detection —
+        // an interrupted AskUser denial is expected, not an error)
         const denials = event.permission_denials as Array<{
           tool_name: string;
           tool_use_id: string;
           tool_input: Record<string, unknown>;
         }> | undefined;
 
+        let hasAskUserDenial = false;
         if (denials && Array.isArray(denials)) {
           for (const denial of denials) {
+            if (ASK_USER_TOOLS.has(denial.tool_name)) {
+              hasAskUserDenial = true;
+            }
             const attention = this.maybeExtractAskUserAttention(
               denial.tool_name,
               denial.tool_input,
@@ -329,6 +374,20 @@ class ClaudeParser {
               resultParse.attention = attention;
               break;
             }
+          }
+        }
+
+        // Detect SDK error results or zero-turn successes (no model interaction).
+        // Skip error surfacing when the result is from an expected AskUser denial
+        // (canUseTool deny+interrupt produces an error-shaped result that isn't a real error).
+        const numTurns = event.num_turns as number | undefined;
+        if (!hasAskUserDenial) {
+          if (isError || (subtype && subtype.startsWith("error_"))) {
+            const errorDetail = errors?.join("; ") || subtype || "unknown SDK error";
+            resultParse.error = errorDetail;
+          } else if (subtype === "success" && numTurns === 0) {
+            const resultText = event.result as string | undefined;
+            resultParse.error = resultText || "SDK completed with zero model turns";
           }
         }
 
@@ -509,11 +568,16 @@ class ClaudeParser {
             );
           }
 
-          return {
+          const result: ParseResult = {
             messages: [msg],
             deltas: [{ deltaType: "tool_end" }],
             attention,
           };
+          // Detect ExitPlanMode tool_use for auto-approval
+          if (PLAN_APPROVAL_TOOLS.has(toolBlock.name)) {
+            result.exitPlanMode = true;
+          }
+          return result;
         }
 
         // Handle completed text blocks — persist accumulated text
@@ -531,12 +595,48 @@ class ClaudeParser {
         return { messages: [], deltas: [] };
       }
 
-      // message_start model info intentionally NOT extracted here — sub-agent
-      // messages interleave and would cause model label to flicker. Model name
-      // is reliably provided by system init (session start) and result (turn end).
-      case "message_start":
+      case "message_start": {
+        // Extract per-request input tokens from primary-model messages only.
+        // parent_tool_use_id is null for the primary model, non-null for sub-agents.
+        // These per-request values represent actual context occupancy (vs cumulative
+        // modelUsage which inflates over multiple turns).
+        const parentToolUseId = event.parent_tool_use_id as string | null;
+        if (parentToolUseId === null) {
+          const msg = inner.message as {
+            usage?: {
+              input_tokens?: number;
+              cache_read_input_tokens?: number;
+              cache_creation_input_tokens?: number;
+            };
+          } | undefined;
+          if (msg?.usage) {
+            const u = msg.usage;
+            this.lastPrimaryInputTokens =
+              (u.input_tokens ?? 0) +
+              (u.cache_read_input_tokens ?? 0) +
+              (u.cache_creation_input_tokens ?? 0);
+            // Emit metrics delta so context indicator updates in real-time during streaming.
+            // Include outputTokens: 0 to reset stale output from previous turn (#3).
+            return {
+              messages: [],
+              deltas: [{ deltaType: "metrics", inputTokens: this.lastPrimaryInputTokens, outputTokens: 0 }],
+            };
+          }
+        }
+        return { messages: [], deltas: [] };
+      }
+      case "message_delta": {
+        // Extract per-request output tokens from primary-model message_delta.
+        const parentId = event.parent_tool_use_id as string | null;
+        if (parentId === null) {
+          const deltaUsage = inner.usage as { output_tokens?: number } | undefined;
+          if (deltaUsage?.output_tokens !== undefined) {
+            this.lastPrimaryOutputTokens = deltaUsage.output_tokens;
+          }
+        }
+        return { messages: [], deltas: [] };
+      }
       case "message_stop":
-      case "message_delta":
         return { messages: [], deltas: [] };
 
       default:

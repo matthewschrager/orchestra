@@ -1,5 +1,78 @@
 # Changelog
 
+## [0.1.24.0] - 2026-03-26
+
+### Added
+
+- **Worktree agent isolation** — three mechanisms to prevent Orchestra-spawned agents from interfering with running instances:
+  - **Nested instance guard** — `ORCHESTRA_MANAGED=1` env marker blocks agents from accidentally starting another Orchestra instance; overridable via `--allow-nested` for self-development
+  - **Env var scrubbing** — deletes `ORCHESTRA_PORT`, `ORCHESTRA_DATA_DIR`, `ORCHESTRA_HOST`, `ORCHESTRA_ALLOW_NESTED` from `process.env` after startup so agent subprocesses can't inherit config that causes port collisions
+  - **Prompt preamble injection** — worktree-isolated threads receive operational context (Orchestra's port, working directory, isolation rules) prepended to the first prompt; sanitizes cwd to prevent prompt injection
+- **Centralized `gitSpawn`/`gitSpawnSync` helpers** — all git command execution routed through helpers that prepend `--no-optional-locks`, reducing index.lock contention when agents run concurrent git operations
+
+## [0.1.23.3] - 2026-03-26
+
+### Added
+
+- **Syntax-highlighted inline diffs** — DiffRenderer now uses Shiki `codeToTokens` API for per-token syntax coloring within diff lines, matching Claude Code's terminal diff quality
+- **Real diff algorithm** — replaced naive "all old = red, all new = green" with Myers LCS diff that identifies context lines, additions, and removals accurately
+- **Line numbers in diff gutter** — relative 1-based line numbers for both old and new sides, hidden on mobile (<640px)
+- **Accessible diff markers** — `+`/`-` gutter markers use `aria-label` instead of `aria-hidden` for screen reader support
+- **Empty diff handling** — shows "No changes" message when `old_string === new_string`
+- **Large diff protection** — Myers bail-out at 500+ lines, outer truncation at 100 lines to prevent DOM/CPU blowup
+- **Shared Shiki singleton** — extracted `getHighlighter()` and `detectLanguage()` from ReadRenderer into `lib/shiki.ts` for reuse
+
+### Changed
+
+- **Diff background opacity** — increased from 8% to 18% for bolder red/green bands matching Claude Code's visual style
+- **Diff line height** — increased from 1.5 to 1.6 with 19px minimum height for consistent row sizing
+- **Context line styling** — context lines now use `var(--color-content-2)` with subtle 2% white background to distinguish from container
+
+## [0.1.23.2] - 2026-03-26
+
+### Changed
+
+- **Worktree badge shows identifying name** — thread sidebar badge now displays the worktree name (extracted from branch) with a git-branch icon instead of a generic "wt" label; applies to both desktop and mobile views; full branch name shown on hover tooltip
+
+## [0.1.23.1] - 2026-03-26
+
+### Fixed
+
+- **Terminal panel not working on first open** — xterm.js initialization effect only depended on `threadId`, so when the panel first opened (visibility changed but thread didn't), the terminal instance was never created; added `visible` to the effect's dependency array so the terminal initializes correctly on first toggle
+
+## [0.1.23.0] - 2026-03-26
+
+### Fixed
+
+- **TodoWrite rendering broken (missing import)** — `ChatView.tsx` referenced `<TodoRenderer>` without importing it, causing TodoWrite tool results to silently fail to render
+- **Codex TodoWrite data shape mismatch** — Codex adapter emits `{ items: [{ text, completed }] }` but the parser only accepted Claude SDK's `{ todos: [{ content, status, activeForm }] }`; `parseTodos()` now normalizes both shapes with explicit `String()` coercion for type safety
+- **`latestTodos` not hydrated from message history** — after page reload, StickyRunBar showed no task state because `latestTodos` was only populated from live WebSocket messages, not REST-loaded history
+- **History hydration race condition** — added guard to prevent slower REST history load from overwriting newer streaming todo state
+- **Duplicate AskUserQuestion cards** — when the agent asked the user a question (via AskUserQuestion tool), the same question appeared 2-3 times in the chat before the user answered; replaced `permissionMode: "bypassPermissions"` with a `canUseTool` callback that denies AskUserQuestion with `interrupt: true`, preventing SDK internal retries
+- **Turn-end state bug** — after AskUserQuestion, the session state was set to `idle` instead of `waiting` because the turn_end handler relied on a per-message variable that missed attention created in earlier messages; now checks the database for pending attention items
+- **AskUser denial noise** — suppressed the SDK's tool_result denial message and `ede_diagnostic` error that were rendered as visual noise below the QuestionCard
+- **ExitPlanMode stuck threads** — SDK bug where `requiresUserInteraction()` short-circuits `bypassPermissions` causes ExitPlanMode to be denied in headless mode; Orchestra now detects ExitPlanMode in the SDK stream and auto-approves by sending "Plan approved. Proceed with implementation." on turn end, preventing the denial/retry loop that caused threads to hang
+
+### Added
+
+- **Prominent TodoCard rendering** — latest TodoWrite renders as a full-width card showing all tasks with per-task status (✓ completed, ▸ running, ○ queued), progress bar, and ARIA accessibility roles; prior TodoWrites collapse to clickable `✓ Updated tasks (X/Y)` lines expandable for history inspection
+- **StickyRunBar active task display** — shows the currently running task description (e.g., `▸ Running integration tests (3/5)`) instead of just `3/5 tasks`
+- **`TOOL_RENDERERS` declarative registry** — replaces ad-hoc if/switch pattern in `ToolLine` for special tool rendering (AskUser, Agent, TodoWrite); adding new special tools is now a one-line registry entry
+- **Codex TodoWrite normalization tests** — 7 new parser tests covering Codex shape, `completed` boolean mapping, `todos`-over-`items` preference, and empty array handling
+
+## [0.1.22.2] - 2026-03-26
+
+### Fixed
+
+- **Context window indicator showing inflated >1M usage** — `modelUsage` in SDK result events reports cumulative token totals across ALL API calls in a session (each turn re-sends conversation history), so the context bar was comparing cumulative totals against the per-request context window limit; now extracts per-request `input_tokens` from `message_start` stream events (primary model only via `parent_tool_use_id === null`) which represent actual context occupancy; context bar also updates in real-time during streaming instead of waiting for the turn to complete
+- **Turn count inflated by intermediate metrics** — metrics deltas from `message_start` stream events were incorrectly incrementing the turn counter; now only result events (with cost/duration) count as turns
+
+## [0.1.22.1] - 2026-03-25
+
+### Fixed
+
+- **Thread sort order not updating in real-time** — sidebar threads only sorted by `updatedAt` on page refresh; now threads bubble to the top when they receive updates (new messages, status changes) without requiring a refresh, in both desktop sidebar and mobile sessions view
+
 ## [0.1.22.0] - 2026-03-25
 
 ### Fixed

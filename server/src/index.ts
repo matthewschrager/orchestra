@@ -31,6 +31,20 @@ import { detectWorktree } from "./utils/git";
 import { join } from "path";
 import { homedir } from "os";
 
+// ── Nested instance guard ─────────────────────────────────
+// Block agents spawned by Orchestra from accidentally starting another instance.
+// Override with --allow-nested or ORCHESTRA_ALLOW_NESTED=1 (useful when developing Orchestra itself).
+if (process.env.ORCHESTRA_MANAGED === "1") {
+  const allowNested =
+    process.env.ORCHESTRA_ALLOW_NESTED === "1" ||
+    process.argv.includes("--allow-nested");
+  if (!allowNested) {
+    console.error("Refusing to start: this process was spawned by Orchestra.");
+    console.error("Override with --allow-nested or ORCHESTRA_ALLOW_NESTED=1");
+    process.exit(1);
+  }
+}
+
 // ── Worktree isolation ──────────────────────────────────
 // When running from a git worktree (e.g., dev:server in a worktree), auto-isolate
 // to prevent sharing the DB/port with the main server or other worktrees.
@@ -58,6 +72,16 @@ const PORT = effectivePort;
 const HOST = process.env.ORCHESTRA_HOST || "127.0.0.1";
 const DATA_DIR = effectiveDataDir;
 const useTunnel = process.argv.includes("--tunnel");
+
+// ── Env scrubbing for agent subprocesses ──────────────────
+// Delete ORCHESTRA_* config vars so spawned agents don't inherit them
+// (prevents accidental port collisions when an agent starts Orchestra elsewhere).
+// Safe: server has already consumed these into PORT/HOST/DATA_DIR constants above.
+for (const key of ["ORCHESTRA_PORT", "ORCHESTRA_DATA_DIR", "ORCHESTRA_HOST", "ORCHESTRA_ALLOW_NESTED"]) {
+  delete process.env[key];
+}
+// Mark child processes as Orchestra-managed (enables startup guard above)
+process.env.ORCHESTRA_MANAGED = "1";
 // When tunnel is active, force auth on ALL requests — tunnel makes remote traffic appear local
 const isExternal = useTunnel || HOST !== "127.0.0.1" && HOST !== "localhost";
 
@@ -67,7 +91,7 @@ const db = createDb(DATA_DIR);
 const registry = new AgentRegistry();
 const worktreeManager = new WorktreeManager(db, getWorktreeRoot(db));
 const uploadsDir = join(DATA_DIR || join(homedir(), ".orchestra"), "uploads");
-const sessionManager = new SessionManager(db, registry, worktreeManager, uploadsDir);
+const sessionManager = new SessionManager(db, registry, worktreeManager, uploadsDir, PORT);
 const pushManager = new PushManager(db);
 const terminalManager = new TerminalManager();
 const tailscaleDetector = new TailscaleDetector(PORT);
@@ -132,7 +156,7 @@ app.get("*", async (c) => {
 
 // ── Server ──────────────────────────────────────────────
 
-const wsHandler = createWSHandler(sessionManager, db, terminalManager);
+const wsHandler = createWSHandler(sessionManager, db);
 
 let server: ReturnType<typeof Bun.serve>;
 try {
