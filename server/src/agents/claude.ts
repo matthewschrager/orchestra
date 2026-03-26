@@ -67,6 +67,7 @@ export class ClaudeAdapter implements AgentAdapter {
       options: {
         cwd: opts.cwd,
         resume: opts.resumeSessionId,
+        permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         includePartialMessages: true,
         settingSources: ["user", "project", "local"],
@@ -92,6 +93,7 @@ export class ClaudeAdapter implements AgentAdapter {
       options: {
         cwd: opts.cwd,
         resume: opts.resumeSessionId,
+        permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         includePartialMessages: true,
         settingSources: ["user", "project", "local"],
