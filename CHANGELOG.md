@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.23.0] - 2026-03-26
+
+### Added
+
+- **Syntax-highlighted inline diffs** — DiffRenderer now uses Shiki `codeToTokens` API for per-token syntax coloring within diff lines, matching Claude Code's terminal diff quality
+- **Real diff algorithm** — replaced naive "all old = red, all new = green" with Myers LCS diff that identifies context lines, additions, and removals accurately
+- **Line numbers in diff gutter** — relative 1-based line numbers for both old and new sides, hidden on mobile (<640px)
+- **Accessible diff markers** — `+`/`-` gutter markers use `aria-label` instead of `aria-hidden` for screen reader support
+- **Empty diff handling** — shows "No changes" message when `old_string === new_string`
+- **Large diff protection** — Myers bail-out at 500+ lines, outer truncation at 100 lines to prevent DOM/CPU blowup
+- **Shared Shiki singleton** — extracted `getHighlighter()` and `detectLanguage()` from ReadRenderer into `lib/shiki.ts` for reuse
+
+### Changed
+
+- **Diff background opacity** — increased from 8% to 18% for bolder red/green bands matching Claude Code's visual style
+- **Diff line height** — increased from 1.5 to 1.6 with 19px minimum height for consistent row sizing
+- **Context line styling** — context lines now use `var(--color-content-2)` with subtle 2% white background to distinguish from container
+
 ## [0.1.22.0] - 2026-03-25
 
 ### Fixed
