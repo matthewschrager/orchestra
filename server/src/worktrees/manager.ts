@@ -225,8 +225,9 @@ export class WorktreeManager {
       return { pushed: false, reason: "worktree_missing" };
     }
 
-    // Check for uncommitted changes
-    const statusProc = Bun.spawn(["git", "status", "--porcelain"], {
+    // Check for uncommitted changes (ignore untracked files — they're artifacts
+    // like PLAN.md, temp files, or test files from other agents)
+    const statusProc = Bun.spawn(["git", "status", "--porcelain", "-uno"], {
       cwd: thread.worktree, stdout: "pipe", stderr: "pipe",
     });
     const statusText = await new Response(statusProc.stdout).text();
