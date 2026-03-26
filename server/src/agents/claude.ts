@@ -123,15 +123,24 @@ class ClaudeParser {
   /** tool_use IDs already persisted via stream_events — skip in assistant summary */
   private readonly persistedToolUseIds = new Set<string>();
   private readonly emittedAttentionKeys = new Set<string>();
+  /** Per-request input tokens from the latest primary-model message_start event.
+   *  This is the ACTUAL context occupancy — unlike modelUsage which is cumulative. */
+  private lastPrimaryInputTokens: number | undefined;
+  /** Per-request output tokens from the latest primary-model message_delta event. */
+  private lastPrimaryOutputTokens: number | undefined;
 
   /** Reset turn-level state between turns in persistent sessions.
    *  Clears active blocks (should be empty at turn boundary) and dedup sets.
-   *  Keeps toolUseNames since tool_use_ids are globally unique per session. */
+   *  Keeps toolUseNames since tool_use_ids are globally unique per session.
+   *  Clears per-request token trackers so stale values don't block cumulative fallback
+   *  if the new turn's message_start never fires (e.g. resumed session, error). */
   resetTurnState(): void {
     this.activeToolBlocks.clear();
     this.activeTextBlocks.clear();
     this.persistedToolUseIds.clear();
     this.emittedAttentionKeys.clear();
+    this.lastPrimaryInputTokens = undefined;
+    this.lastPrimaryOutputTokens = undefined;
   }
 
   handleMessage(msg: unknown): ParseResult {
@@ -266,9 +275,7 @@ class ClaudeParser {
         let modelName: string | undefined;
 
         if (modelUsage) {
-          // Find the primary model (largest context window) — use its tokens
-          // for context occupancy. Summing across all models (including sub-agents)
-          // inflates the count far beyond the actual context window.
+          // Find the primary model (largest context window) for contextWindow + modelName.
           for (const [name, model] of Object.entries(modelUsage)) {
             if (model.contextWindow && (!contextWindow || model.contextWindow > contextWindow)) {
               contextWindow = model.contextWindow;
@@ -276,12 +283,24 @@ class ClaudeParser {
             }
           }
 
-          if (modelName && modelUsage[modelName]) {
+          // IMPORTANT: modelUsage reports CUMULATIVE token totals across all API calls
+          // in the session. Over multiple turns, cumulative inputTokens far exceeds the
+          // context window (because conversation history is re-sent each turn).
+          //
+          // For context occupancy, we use per-request tokens extracted from message_start
+          // stream events (set in handleStreamEvent). These represent the actual context
+          // size for the latest API call — what the model actually "sees" right now.
+          if (this.lastPrimaryInputTokens !== undefined) {
+            inputTokens = this.lastPrimaryInputTokens;
+            outputTokens = this.lastPrimaryOutputTokens ?? 0;
+          } else if (modelName && modelUsage[modelName]) {
+            // Fallback: no stream events seen (e.g. resumed session) — use cumulative
+            // from primary model. Not ideal but better than nothing.
             const pm = modelUsage[modelName];
             inputTokens = (pm.inputTokens ?? 0) + (pm.cacheReadInputTokens ?? 0) + (pm.cacheCreationInputTokens ?? 0);
             outputTokens = pm.outputTokens ?? 0;
           } else {
-            // No context window info — fall back to summing all models
+            // No stream events AND no contextWindow info — fall back to summing all models
             inputTokens = 0;
             outputTokens = 0;
             for (const model of Object.values(modelUsage)) {
@@ -531,12 +550,48 @@ class ClaudeParser {
         return { messages: [], deltas: [] };
       }
 
-      // message_start model info intentionally NOT extracted here — sub-agent
-      // messages interleave and would cause model label to flicker. Model name
-      // is reliably provided by system init (session start) and result (turn end).
-      case "message_start":
+      case "message_start": {
+        // Extract per-request input tokens from primary-model messages only.
+        // parent_tool_use_id is null for the primary model, non-null for sub-agents.
+        // These per-request values represent actual context occupancy (vs cumulative
+        // modelUsage which inflates over multiple turns).
+        const parentToolUseId = event.parent_tool_use_id as string | null;
+        if (parentToolUseId === null) {
+          const msg = inner.message as {
+            usage?: {
+              input_tokens?: number;
+              cache_read_input_tokens?: number;
+              cache_creation_input_tokens?: number;
+            };
+          } | undefined;
+          if (msg?.usage) {
+            const u = msg.usage;
+            this.lastPrimaryInputTokens =
+              (u.input_tokens ?? 0) +
+              (u.cache_read_input_tokens ?? 0) +
+              (u.cache_creation_input_tokens ?? 0);
+            // Emit metrics delta so context indicator updates in real-time during streaming.
+            // Include outputTokens: 0 to reset stale output from previous turn (#3).
+            return {
+              messages: [],
+              deltas: [{ deltaType: "metrics", inputTokens: this.lastPrimaryInputTokens, outputTokens: 0 }],
+            };
+          }
+        }
+        return { messages: [], deltas: [] };
+      }
+      case "message_delta": {
+        // Extract per-request output tokens from primary-model message_delta.
+        const parentId = event.parent_tool_use_id as string | null;
+        if (parentId === null) {
+          const deltaUsage = inner.usage as { output_tokens?: number } | undefined;
+          if (deltaUsage?.output_tokens !== undefined) {
+            this.lastPrimaryOutputTokens = deltaUsage.output_tokens;
+          }
+        }
+        return { messages: [], deltas: [] };
+      }
       case "message_stop":
-      case "message_delta":
         return { messages: [], deltas: [] };
 
       default:
