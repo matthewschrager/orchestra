@@ -3,6 +3,7 @@ import type { DB, MessageRow, ThreadRow, AttentionRow } from "../db";
 import {
   getThread,
   getAttentionItem,
+  getPendingAttention,
   getSetting,
   insertMessage,
   updateThread,
@@ -16,6 +17,7 @@ import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage, Persist
 import type { WorktreeManager } from "../worktrees/manager";
 import type { Attachment, AttentionItem, StreamDelta } from "shared";
 import { resolveAttachmentPaths } from "../routes/uploads";
+import { generateTitle } from "../titles/generator";
 
 /** State machine for persistent sessions: thinking → idle/waiting → thinking */
 export type SessionState = "thinking" | "idle" | "waiting";
@@ -138,6 +140,22 @@ export class SessionManager {
 
     // Broadcast to all WS clients so other devices see the new thread
     this.notifyThread(threadId);
+
+    // Fire-and-forget: generate AI title from prompt (unless user supplied one)
+    if (!opts.title) {
+      const originalTitle = title;
+      generateTitle(opts.prompt)
+        .then((aiTitle) => {
+          if (!aiTitle) return;
+          // Race guard: only update if user hasn't manually edited the title
+          const current = getThread(this.db, threadId);
+          if (current && current.title === originalTitle) {
+            updateThread(this.db, threadId, { title: aiTitle });
+            this.notifyThread(threadId);
+          }
+        })
+        .catch(() => {});
+    }
 
     return thread;
   }
@@ -491,6 +509,10 @@ export class SessionManager {
     const { threadId } = activeSession;
     let messageCount = 0;
     let turnMessageCount = 0;
+    /** Tracks whether ExitPlanMode was called during the current turn.
+     *  SDK bug: requiresUserInteraction() short-circuits bypassPermissions, causing
+     *  ExitPlanMode to be denied in headless mode. We auto-approve on turn end. */
+    let sawExitPlanMode = false;
     const startTime = Date.now();
     if (DEBUG) console.log(`[stream] Thread ${threadId} — consumeStream started (persistent=${activeSession.persistent})`);
 
@@ -514,7 +536,7 @@ export class SessionManager {
 
         activeSession.lastMessageAt = Date.now();
 
-        const { messages, deltas, attention, sessionId, error: sdkError } =
+        const { messages, deltas, attention, sessionId, error: sdkError, exitPlanMode } =
           activeSession.session.parseMessage(msg);
 
         if (sessionId) {
@@ -551,27 +573,50 @@ export class SessionManager {
           });
         }
 
-        let attentionHandled = false;
         if (attention) {
-          attentionHandled = this.handleAttentionEvent(activeSession, attention);
+          this.handleAttentionEvent(activeSession, attention);
         }
+
+        // Track ExitPlanMode for auto-approval at turn end
+        if (exitPlanMode) sawExitPlanMode = true;
 
         // ── Turn boundary for persistent sessions ──
         // On turn_end, transition to idle (or waiting if attention pending).
         // The iterator stays alive — next message arrives when user sends follow-up.
         if (isTurnEnd && activeSession.persistent) {
-          // Only set "waiting" if attention was successfully handled; otherwise idle (#8)
-          const newState: SessionState = (attention && attentionHandled) ? "waiting" : "idle";
+          // Check DB for pending attention — more reliable than per-message variable,
+          // which misses attention created in earlier messages of the same turn (#9)
+          const hasPendingAttention = getPendingAttention(this.db, threadId).length > 0;
+          const newState: SessionState = hasPendingAttention ? "waiting" : "idle";
           activeSession.state = newState;
           turnMessageCount = 0;
 
           if (DEBUG) console.log(`[stream] Thread ${threadId} — persistent turn ended, state → ${newState}`);
 
-          if (!attention) {
+          if (hasPendingAttention) {
+            // Turn ended with attention event — status already set to "waiting"
+          } else if (sawExitPlanMode) {
+            // ── ExitPlanMode auto-approval ──
+            // SDK bug: ExitPlanMode.requiresUserInteraction() returns true, which
+            // short-circuits bypassPermissions in the CLI permission flow. The tool
+            // gets denied with "Permission prompts are not available in this context".
+            // We auto-approve by sending a follow-up that tells the agent to proceed.
+            sawExitPlanMode = false;
+            if (DEBUG) console.log(`[stream] Thread ${threadId} — auto-approving ExitPlanMode`);
+            try {
+              this.sendMessage(threadId, "Plan approved. Proceed with implementation.");
+            } catch (err) {
+              console.error(`[stream] Thread ${threadId} — failed to auto-approve ExitPlanMode:`, err);
+              updateThread(this.db, threadId, { status: "done", pid: null });
+              this.notifyThread(threadId);
+            }
+          } else {
             // Turn completed normally — mark done but keep session alive
             updateThread(this.db, threadId, { status: "done", pid: null });
             this.notifyThread(threadId);
           }
+          // Reset per-turn tracking
+          sawExitPlanMode = false;
           // Don't break — iterator stays alive for next turn
         }
       }

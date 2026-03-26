@@ -95,7 +95,7 @@ export function TerminalPanel({
   // ── Initialize xterm.js ────────────────────────────────
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!visible || !containerRef.current) return;
 
     const term = new Terminal({
       fontSize: 13,
@@ -142,7 +142,7 @@ export function TerminalPanel({
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [threadId]); // Re-create xterm instance when thread changes
+  }, [threadId, visible]); // Re-create xterm instance when thread changes or panel opens
 
   // ── Handle replay buffer on reconnect ──────────────────
 

@@ -53,6 +53,17 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
     );
   }
 
+  // Compute active task label for todos
+  const todoLabel = todos && todos.length > 0
+    ? (() => {
+        const active = todos.find((t) => t.status === "in_progress");
+        const completed = todos.filter((t) => t.status === "completed").length;
+        return active
+          ? `▸ ${active.activeForm} (${completed}/${todos.length})`
+          : `${completed}/${todos.length} tasks`;
+      })()
+    : null;
+
   // Active state — full metrics strip (tap bar body to scroll to bottom)
   return (
     <div className="sticky-run-bar sticky-run-bar-active" role="status" aria-live="polite">
@@ -78,9 +89,12 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
             ? formatToolAction(currentTool, currentAction)
             : "Thinking…"}
         </span>
-        {todos && todos.length > 0 && (
-          <span className="text-[10px] text-accent/70 shrink-0">
-            {todos.filter((t) => t.status === "completed").length}/{todos.length} tasks
+        {todoLabel && (
+          <span
+            className="text-[10px] text-accent/70 shrink-0 truncate max-w-[200px]"
+            title={todoLabel}
+          >
+            {todoLabel}
           </span>
         )}
       </div>
