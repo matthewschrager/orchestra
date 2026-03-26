@@ -191,4 +191,92 @@ describe("TailscaleDetector", () => {
     expect(callCount).toBeGreaterThan(firstCalls);
     restoreMocks();
   });
+
+  test("retries CLI detection after initial failure", async () => {
+    // First detect: CLI not found
+    mockCli({ whichResult: 1 });
+    const detector = new TailscaleDetector(3847, 0); // 0ms TTL forces re-detect
+    const first = await detector.detect();
+    expect(first.installed).toBe(false);
+
+    // Second detect: CLI now available (installed after server start)
+    mockCli({
+      statusJson: {
+        Self: { TailscaleIPs: ["100.1.2.3"], DNSName: "a.ts.net." },
+      },
+    });
+    const second = await detector.detect();
+    expect(second.installed).toBe(true);
+    expect(second.running).toBe(true);
+    expect(second.ip).toBe("100.1.2.3");
+    restoreMocks();
+  });
+
+  test("detects HTTPS-to-HTTP proxy mismatch", async () => {
+    mockCli({
+      statusJson: {
+        Self: { TailscaleIPs: ["100.1.2.3"], DNSName: "host.tail.ts.net." },
+      },
+      serveJson: {
+        TCP: { "443": { HTTPS: true } },
+        Web: {
+          "host.tail.ts.net:443": {
+            Handlers: {
+              "/": { Proxy: "https://localhost:3847" }, // Wrong! Should be http://
+            },
+          },
+        },
+      },
+    });
+    const detector = new TailscaleDetector(3847);
+    const status = await detector.detect();
+    expect(status.proxyMismatch).toBe(true);
+    expect(status.portMatch).toBe(true); // Port matches, but protocol is wrong
+    expect(status.httpsUrl).toBeNull(); // URL should NOT be shown — it won't work
+    restoreMocks();
+  });
+
+  test("no mismatch when proxy target is HTTP", async () => {
+    mockCli({
+      statusJson: {
+        Self: { TailscaleIPs: ["100.1.2.3"], DNSName: "host.tail.ts.net." },
+      },
+      serveJson: {
+        TCP: { "443": { HTTPS: true } },
+        Web: {
+          "host.tail.ts.net:443": {
+            Handlers: {
+              "/": { Proxy: "http://localhost:3847" }, // Correct!
+            },
+          },
+        },
+      },
+    });
+    const detector = new TailscaleDetector(3847);
+    const status = await detector.detect();
+    expect(status.proxyMismatch).toBe(false);
+    expect(status.portMatch).toBe(true);
+    expect(status.httpsUrl).toBe("https://host.tail.ts.net/");
+    restoreMocks();
+  });
+
+  test("refresh() resets CLI path cache after initial failure", async () => {
+    // First detect: CLI not found
+    mockCli({ whichResult: 1 });
+    const detector = new TailscaleDetector(3847, 60_000); // long TTL
+    const first = await detector.detect();
+    expect(first.installed).toBe(false);
+
+    // refresh() should re-discover CLI even within TTL
+    mockCli({
+      statusJson: {
+        Self: { TailscaleIPs: ["100.5.6.7"], DNSName: "b.ts.net." },
+      },
+    });
+    const refreshed = await detector.refresh();
+    expect(refreshed.installed).toBe(true);
+    expect(refreshed.running).toBe(true);
+    expect(refreshed.ip).toBe("100.5.6.7");
+    restoreMocks();
+  });
 });

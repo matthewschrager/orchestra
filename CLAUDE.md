@@ -93,7 +93,8 @@ cd server && bun run src/index.ts  # Production server
 - Shiki syntax highlighting lazy-loaded via module-level singleton with DOMPurify sanitization
 - Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
 - Cost/duration/token metrics extracted from Claude result events and displayed in StickyRunBar
-- Context window indicator: token usage (input+output) vs model context window shown as color-coded progress bar; uses replacement semantics (SDK reports cumulative totals); only primary model tokens used (largest contextWindow) to avoid inflated counts from sub-agent aggregate; `Math.max` for contextWindow to prevent sub-agent regression
+- Context window indicator: token usage (input+output) vs model context window shown as color-coded progress bar; uses replacement semantics (SDK reports cumulative totals); `Math.max` for contextWindow to prevent sub-agent regression
+- Model name display: extracted from SDK events (`system` init, `message_start` stream, `modelUsage` result keys); streamed via `modelName` field on `StreamDelta`/`TurnMetrics`; displayed in StickyRunBar with date-suffix stripping (`formatModelName`); no hard-coded model list
 - Attention queue: AskUserQuestion/permission tool_use events detected in SDK message stream, persisted to `attention_required` table, broadcast to ALL WS clients (cross-thread), resolvable via REST or WS with first-caller-wins race guard
 - Session IDs persisted to `session_id` column on threads table (survives server restart)
 - Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
@@ -110,11 +111,14 @@ cd server && bun run src/index.ts  # Production server
 - Worktree branching: `git worktree add` always branches from detected main/master, not HEAD — prevents inheriting polluted checkout state from non-isolated agents
 - Cross-client thread sync: thread creation and archival broadcast `thread_updated` via WS to all clients; client deduplicates optimistic inserts
 - Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag
+- Bulk cleanup pushed: POST /projects/:id/cleanup-pushed archives all non-active threads whose worktree branches are fully pushed to remote (no uncommitted changes, no unpushed commits); project hamburger menu in sidebar triggers it
 - Session abort: persistent sessions use `Query.close()`; legacy sessions use AbortController. `aborted` flag distinguishes user-stop from SDK error
 - Inactivity timeout (default 30 min, configurable via Settings) replaces PID-based health check for hung SDK iterators
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
 - Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings` with typed `Settings` interface; gear icon in sidebar footer + header; WorktreeManager updated live on save
 - File attachments: paste/drag-drop/picker in InputBar → upload to DATA_DIR/uploads/ → file paths appended to Claude prompt so it can Read them → rendered inline in chat messages
+- Unread thread indicator: client-side `Set<string>` tracks threads with unseen `thread_updated` WS events; blue dot shown in ProjectSidebar and MobileSessions; cleared on thread selection; `activeThreadRef` handles WS race where event arrives before React state update
+- **QA testing from worktrees**: You CANNOT test against the already-running main-branch instance. Each worktree gets its own port (via hash), so you must `cd` into the worktree, build the client (`cd client && bun run build`), and start a fresh server (`cd server && bun run src/index.ts`) there. Only then browse to the worktree's port for QA.
 - Integrated terminal: xterm.js v6 (client) + Bun native PTY via `Bun.spawn({ terminal })` (server); TerminalManager uses event-emitter pattern (like SessionManager) with 50KB replay buffer for reconnect viewport restore, output batching at ~60fps, 15-min idle timeout, max 20 concurrent PTYs; toggle via `Ctrl+`` or header button; terminal panel sits below InputBar; PTY persists per-thread across switches (idempotent `terminal_create` returns existing); desktop only (hidden on mobile); server-side `closeForThread()` on thread archive prevents zombie PTYs
 
 ## Testing

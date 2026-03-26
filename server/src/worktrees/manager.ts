@@ -215,6 +215,58 @@ export class WorktreeManager {
     });
   }
 
+  /** Check if a worktree thread's branch has been fully pushed to remote */
+  async isPushedToRemote(threadId: string): Promise<{ pushed: boolean; reason?: string }> {
+    const thread = getThread(this.db, threadId) as ThreadRow | null;
+    if (!thread?.worktree || !thread.branch) {
+      return { pushed: false, reason: "no_worktree" };
+    }
+    if (!existsSync(thread.worktree)) {
+      return { pushed: false, reason: "worktree_missing" };
+    }
+
+    // Check for uncommitted changes (ignore untracked files — they're artifacts
+    // like PLAN.md, temp files, or test files from other agents)
+    const statusProc = Bun.spawn(["git", "status", "--porcelain", "-uno"], {
+      cwd: thread.worktree, stdout: "pipe", stderr: "pipe",
+    });
+    const statusText = await new Response(statusProc.stdout).text();
+    await statusProc.exited;
+    if (statusProc.exitCode !== 0) {
+      return { pushed: false, reason: "git_error" };
+    }
+    if (statusText.trim()) {
+      return { pushed: false, reason: "uncommitted_changes" };
+    }
+
+    // Check if branch exists on remote
+    const remoteRef = `origin/${thread.branch}`;
+    const refProc = Bun.spawn(["git", "rev-parse", "--verify", remoteRef], {
+      cwd: thread.worktree, stdout: "pipe", stderr: "pipe",
+    });
+    await refProc.exited;
+    if (refProc.exitCode !== 0) {
+      return { pushed: false, reason: "not_on_remote" };
+    }
+
+    // Check for unpushed commits
+    const logProc = Bun.spawn(
+      ["git", "rev-list", "--count", `${remoteRef}..HEAD`],
+      { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
+    );
+    const countText = await new Response(logProc.stdout).text();
+    await logProc.exited;
+    if (logProc.exitCode !== 0) {
+      return { pushed: false, reason: "git_error" };
+    }
+    const unpushed = parseInt(countText.trim(), 10);
+    if (isNaN(unpushed) || unpushed > 0) {
+      return { pushed: false, reason: unpushed > 0 ? "unpushed_commits" : "git_error" };
+    }
+
+    return { pushed: true };
+  }
+
   private async detectMainBranch(cwd: string): Promise<string> {
     const proc = Bun.spawn(
       ["git", "rev-parse", "--verify", "main"],

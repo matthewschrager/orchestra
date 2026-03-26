@@ -26,6 +26,7 @@ import {
 import { TunnelManager, generateQRCodeAscii } from "./tunnel/manager";
 import { TailscaleDetector } from "./tailscale/detector";
 import { createTailscaleRoutes } from "./routes/tailscale";
+import { TerminalManager } from "./terminal/manager";
 import { detectWorktree } from "./utils/git";
 import { join } from "path";
 import { homedir } from "os";
@@ -68,6 +69,7 @@ const worktreeManager = new WorktreeManager(db, getWorktreeRoot(db));
 const uploadsDir = join(DATA_DIR || join(homedir(), ".orchestra"), "uploads");
 const sessionManager = new SessionManager(db, registry, worktreeManager, uploadsDir);
 const pushManager = new PushManager(db);
+const terminalManager = new TerminalManager();
 const tailscaleDetector = new TailscaleDetector(PORT);
 
 // Wire push notifications to attention events
@@ -105,8 +107,8 @@ app.use("/api/*", async (c, next) => {
 });
 
 // API routes
-app.route("/api/projects", createProjectRoutes(db));
-app.route("/api/threads", createThreadRoutes(db, sessionManager, worktreeManager));
+app.route("/api/projects", createProjectRoutes(db, sessionManager, worktreeManager, terminalManager));
+app.route("/api/threads", createThreadRoutes(db, sessionManager, worktreeManager, terminalManager));
 app.route("/api/agents", createAgentRoutes(registry));
 app.route("/api/commands", createCommandRoutes(db));
 app.route("/api/fs", createFilesystemRoutes());
@@ -223,16 +225,19 @@ tailscaleDetector.detect().then((ts) => {
 
   console.log(`\n[tailscale] Detected: ${ts.hostname || ts.ip || "unknown"}`);
 
-  if (ts.httpsAvailable && ts.portMatch && ts.httpsUrl) {
+  if (ts.proxyMismatch) {
+    console.log(`[tailscale] ⚠ tailscale serve is proxying to HTTPS but Orchestra is HTTP — this causes 502 errors.`);
+    console.log(`[tailscale] Fix: tailscale serve reset && tailscale serve --bg ${PORT}`);
+  } else if (ts.httpsAvailable && ts.portMatch && ts.httpsUrl) {
     console.log(`[tailscale] HTTPS active: ${ts.httpsUrl}`);
     console.log(`[tailscale] Remote access ready — open this URL on your phone.`);
     console.log(`[tailscale] ⚠ Any device on your tailnet can access Orchestra without a token.`);
   } else if (ts.httpsAvailable && !ts.portMatch) {
     console.log(`[tailscale] ⚠ tailscale serve is active but not mapped to port ${PORT}.`);
-    console.log(`[tailscale] Fix: tailscale serve --bg https / http://localhost:${PORT}`);
+    console.log(`[tailscale] Fix: tailscale serve --bg ${PORT}`);
   } else {
     console.log(`[tailscale] Enable remote access with push notifications:`);
-    console.log(`  tailscale serve --bg https / http://localhost:${PORT}`);
+    console.log(`  tailscale serve --bg ${PORT}`);
     if (ts.hostname) {
       console.log(`  Then access via: https://${ts.hostname}/`);
     }

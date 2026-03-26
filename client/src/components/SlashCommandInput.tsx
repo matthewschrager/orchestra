@@ -251,7 +251,7 @@ export function SlashCommandInput({
           rows={rows}
           className={[
             "w-full border border-edge-2 rounded-lg px-3 py-2 text-sm",
-            "resize-none focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent",
+            "relative resize-none focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent",
             "placeholder:text-content-3",
             hasHighlights
               ? "bg-transparent text-transparent selection:bg-accent/20"

@@ -84,6 +84,8 @@ export interface StreamDelta {
   outputTokens?: number;
   /** Model context window size (from the primary model used) */
   contextWindow?: number;
+  /** Primary model name (e.g. "claude-sonnet-4-20250514") */
+  modelName?: string;
 }
 
 // ── Turn Metrics ──────────────────────────────────────
@@ -98,6 +100,8 @@ export interface TurnMetrics {
   outputTokens: number;
   /** Model context window size (latest reported) */
   contextWindow: number;
+  /** Primary model name (latest reported, e.g. "claude-sonnet-4-20250514") */
+  modelName: string | null;
 }
 
 // ── WebSocket Messages ──────────────────────────────────
@@ -199,6 +203,8 @@ export interface TailscaleStatus {
   httpsUrl: string | null;
   /** Whether tailscale serve maps to this Orchestra instance's port */
   portMatch: boolean;
+  /** Proxy target uses HTTPS but Orchestra is HTTP — will cause 502 */
+  proxyMismatch: boolean;
   /** Orchestra server port (for generating correct tailscale serve command) */
   orchestraPort: number;
   /** Current remoteUrl setting value */

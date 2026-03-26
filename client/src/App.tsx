@@ -64,7 +64,7 @@ const initialStreamingState: StreamingState = {
   turnEnded: new Set(),
 };
 
-const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0 };
+const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0, modelName: null };
 
 type StreamingAction =
   | { type: "delta"; delta: StreamDelta }
@@ -116,13 +116,16 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
         case "metrics": {
           const metrics = new Map(state.metrics);
           const prev = state.metrics.get(delta.threadId) ?? { ...EMPTY_METRICS };
+          // Only count as a turn if there's actual turn data (not just model info)
+          const hasTurnData = delta.costUsd !== undefined || delta.durationMs !== undefined || delta.inputTokens !== undefined;
           metrics.set(delta.threadId, {
             costUsd: prev.costUsd + (delta.costUsd ?? 0),
             durationMs: prev.durationMs + (delta.durationMs ?? 0),
-            turnCount: prev.turnCount + 1,
+            turnCount: prev.turnCount + (hasTurnData ? 1 : 0),
             inputTokens: delta.inputTokens ?? prev.inputTokens,
             outputTokens: delta.outputTokens ?? prev.outputTokens,
             contextWindow: Math.max(delta.contextWindow ?? 0, prev.contextWindow),
+            modelName: delta.modelName ?? prev.modelName,
           });
           return { ...state, metrics };
         }
@@ -204,9 +207,12 @@ function AppInner() {
     () => localStorage.getItem("orchestra_push_dismissed") === "1",
   );
   const [streaming, dispatchStreaming] = useReducer(streamingReducer, initialStreamingState);
+  const [unreadThreadIds, setUnreadThreadIds] = useState<Set<string>>(new Set());
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
   const wasConnectedRef = useRef<boolean | null>(null);
+  const activeThreadRef = useRef<string | null>(null);
+  activeThreadRef.current = activeThreadId;
   const chatViewRef = useRef<ChatViewHandle>(null);
 
   // Attention system — cross-thread pending questions/permissions
@@ -296,6 +302,15 @@ function AppInner() {
       });
       if (thread.status === "done" || thread.status === "error") {
         dispatchStreaming({ type: "clear_all", threadId: thread.id });
+      }
+      // Mark as unread if this thread isn't currently being viewed
+      if (!thread.archivedAt && thread.id !== activeThreadRef.current) {
+        setUnreadThreadIds((prev) => {
+          if (prev.has(thread.id)) return prev;
+          const next = new Set(prev);
+          next.add(thread.id);
+          return next;
+        });
       }
     }, []),
     onStreamDelta: useCallback((delta: StreamDelta) => {
@@ -436,6 +451,7 @@ function AppInner() {
       // Guard against duplicate: WS broadcast from server may arrive before this HTTP response
       setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
       setActiveThreadId(thread.id);
+      clearUnread(thread.id); // WS race: thread_updated may arrive before setActiveThreadId takes effect
       setActiveProjectId(pid);
       setSidebarOpen(false);
       turnStartRef.current = Date.now();
@@ -466,8 +482,18 @@ function AppInner() {
     send({ type: "resolve_attention", attentionId, resolution });
   };
 
+  const clearUnread = useCallback((threadId: string) => {
+    setUnreadThreadIds((prev) => {
+      if (!prev.has(threadId)) return prev;
+      const next = new Set(prev);
+      next.delete(threadId);
+      return next;
+    });
+  }, []);
+
   const handleNavigateToThread = (threadId: string) => {
     setActiveThreadId(threadId);
+    clearUnread(threadId);
     setMobileTab("sessions");
   };
 
@@ -489,6 +515,7 @@ function AppInner() {
 
   const handleSelectThread = (threadId: string) => {
     setActiveThreadId(threadId);
+    clearUnread(threadId);
     // Also set the project to the thread's project
     const thread = threads.find((t) => t.id === threadId);
     if (thread?.projectId) {
@@ -504,6 +531,7 @@ function AppInner() {
         setError("Thread archived, but worktree cleanup failed — the worktree may still exist on disk.");
       }
       setThreads((prev) => prev.filter((t) => t.id !== threadId));
+      clearUnread(threadId);
       if (activeThreadId === threadId) {
         setActiveThreadId(null);
       }
@@ -532,6 +560,49 @@ function AppInner() {
         setActiveProjectId(null);
         setActiveThreadId(null);
       }
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const handleCleanupPushed = async (projectId: string) => {
+    try {
+      setError(null);
+      const result = await api.cleanupPushedThreads(projectId);
+      if (result.cleaned.length === 0) {
+        const reasons = result.skipped.map((s) => `  ${s.title}: ${s.reason.replace(/_/g, " ")}`);
+        alert(
+          `No threads to clean up.` +
+            (reasons.length > 0 ? `\n\nSkipped:\n${reasons.join("\n")}` : ""),
+        );
+        return;
+      }
+      // Remove cleaned threads from local state
+      const cleanedIds = new Set(result.cleaned.map((c) => c.id));
+      setThreads((prev) => prev.filter((t) => !cleanedIds.has(t.id)));
+      if (activeThreadId && cleanedIds.has(activeThreadId)) {
+        setActiveThreadId(null);
+      }
+      // Clean up cached messages
+      setMessages((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const id of cleanedIds) {
+          if (next.has(id)) {
+            next.delete(id);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+      // Refresh projects to update counts
+      api.listProjects().then(setProjects).catch(console.error);
+
+      const skippedMsg =
+        result.skipped.length > 0
+          ? `\n\nSkipped ${result.skipped.length} thread(s) with unpushed work.`
+          : "";
+      alert(`Cleaned up ${result.cleaned.length} thread(s) and worktrees.${skippedMsg}`);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -607,9 +678,9 @@ function AppInner() {
             className="hidden md:flex p-1.5 hover:bg-surface-3 rounded-lg text-content-3 hover:text-content-1"
             title="Settings"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="8" cy="8" r="2.5" />
-              <path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85" />
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+              <circle cx="12" cy="12" r="3" />
             </svg>
           </button>
         </div>
@@ -661,11 +732,13 @@ function AppInner() {
           threads={threads}
           activeProjectId={activeProjectId}
           activeThreadId={activeThreadId}
+          unreadThreadIds={unreadThreadIds}
           onSelectProject={setActiveProjectId}
           onSelectThread={handleSelectThread}
           onNewThread={handleNewThreadFromSidebar}
           onArchiveThread={handleArchiveThread}
           onRemoveProject={handleRemoveProject}
+          onCleanupPushed={handleCleanupPushed}
           onAddProject={() => setShowAddProject(true)}
           onOpenSettings={() => setShowSettings(true)}
           open={sidebarOpen}
@@ -784,6 +857,7 @@ function AppInner() {
               projects={projects}
               threads={threads}
               activeThreadId={activeThreadId}
+              unreadThreadIds={unreadThreadIds}
               onSelectThread={(threadId) => {
                 handleSelectThread(threadId);
                 setMobileTab("sessions");

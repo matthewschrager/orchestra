@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.1.22.0] - 2026-03-25
+
+### Fixed
+
+- **Tailscale HTTPS-to-HTTP proxy mismatch detection** — when `tailscale serve` proxies to `https://localhost:PORT` but Orchestra runs plain HTTP, the TLS-to-plaintext mismatch causes a 502 (mobile browsers download this as "document.txt"); the server now detects this misconfiguration and the Settings panel shows a red warning with a one-click-copy fix command
+- **Updated tailscale serve command syntax** — suggested command changed from old `tailscale serve --bg https / http://...` to current `tailscale serve --bg PORT` (compatible with Tailscale v1.96+)
+- **Port regex prefix-match false positive** — port detection regex could match e.g. port 38470 when looking for 3847; added negative lookahead to prevent
+
+## [0.1.21.1] - 2026-03-25
+
+### Fixed
+
+- **Tailscale auto-detection permanently cached on failure** — if `tailscale` CLI wasn't found at server startup (e.g., installed after boot), detection was stuck returning `installed: false` forever, even when the UI "Refresh" button was clicked; now `refresh()` resets the CLI path cache and failed lookups retry automatically on the next detection cycle
+
+## [0.1.21.0] - 2026-03-25
+
+### Added
+
+- **Model name display in StickyRunBar** — shows the active model (e.g. `claude-sonnet-4`) in both running and idle states, extracted from SDK events with no hard-coded model list
+- **Model extraction from SDK events** — captures model name from `system` init event (session start), `message_start` stream event (per-message), and `modelUsage` result keys (end-of-turn)
+- **`modelName` in StreamDelta and TurnMetrics** — new field flows model identity through the streaming pipeline to the client
+- **`formatModelName` utility** — strips date suffixes from raw model IDs for clean display; full ID available on hover tooltip
+
+### Changed
+
+- **Token counting** — aggregate tokens across all models in `modelUsage` instead of only the primary model, for more accurate total usage display
+- **Metrics delta turn counting** — model-info-only deltas no longer inflate `turnCount`; only deltas with cost/duration/token data count as turns
+
+## [0.1.20.2] - 2026-03-25
+
+### Added
+
+- **QA testing from worktrees documentation** — added note to CLAUDE.md and AGENTS.md clarifying that worktree instances must build and launch their own server (can't test against the main-branch instance)
+
+## [0.1.20.1] - 2026-03-25
+
+### Added
+
+- **Unread thread indicator** — blue dot appears next to threads in the sidebar and mobile sessions list when new activity arrives (status changes, completion, errors) while the user is viewing a different thread; clears instantly on thread selection
+
+## [0.1.20.0] - 2026-03-25
+
+### Added
+
+- **Bulk cleanup of pushed worktree threads** — new `POST /projects/:id/cleanup-pushed` endpoint archives all non-active threads whose worktree branches are fully pushed to remote (no uncommitted changes, no unpushed commits), cleaning up worktrees and branches
+- **Project hamburger menu** — vertical dots dropdown on each project header in the sidebar with "Clean up pushed" and "Remove project" actions (replaces previous X button)
+- **`isPushedToRemote` check** — WorktreeManager method validates git status, remote ref existence, and unpushed commit count with proper exit code handling (fail-safe on git errors)
+
+## [0.1.19.2] - 2026-03-25
+
+### Fixed
+
+- **Cursor invisible after typing slash command** — added `position: relative` to the slash command input textarea so it stacks above the absolutely-positioned highlight backdrop overlay, making the caret visible
+
+## [0.1.19.1] - 2026-03-25
+
+### Fixed
+
+- **Settings icon** — replaced sun-like icon (circle with radiating lines) with a standard gear/cog icon in both the header and sidebar
+
 ## [0.1.19.0] - 2026-03-25
 
 ### Changed

@@ -647,7 +647,7 @@ describe("ClaudeParser", () => {
 
     const metrics = deltas.find((d) => d.deltaType === "metrics");
     expect(metrics).toBeDefined();
-    // Only primary model (opus, largest contextWindow) tokens — not aggregated with sub-agents
+    // Only primary model (opus, largest contextWindow) tokens
     // input: 10000 + 5000 + 0 = 15000
     expect(metrics!.inputTokens).toBe(15000);
     // output: 2000 (opus only)
@@ -696,6 +696,106 @@ describe("ClaudeParser", () => {
     expect(metrics!.inputTokens).toBe(4000);
     expect(metrics!.outputTokens).toBe(800);
     expect(metrics!.contextWindow).toBeUndefined();
+  });
+
+  test("extracts modelName from modelUsage in result event", () => {
+    const parser = createParser();
+    const { deltas } = parser.handleMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.10,
+      duration_ms: 2000,
+      session_id: "sess-model",
+      permission_denials: [],
+      modelUsage: {
+        "claude-sonnet-4-20250514": {
+          inputTokens: 5000,
+          outputTokens: 1200,
+          contextWindow: 200000,
+        },
+      },
+    });
+
+    const metrics = deltas.find((d) => d.deltaType === "metrics");
+    expect(metrics).toBeDefined();
+    expect(metrics!.modelName).toBe("claude-sonnet-4-20250514");
+  });
+
+  test("picks modelName of model with largest contextWindow", () => {
+    const parser = createParser();
+    const { deltas } = parser.handleMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.20,
+      duration_ms: 3000,
+      session_id: "sess-multi-model",
+      permission_denials: [],
+      modelUsage: {
+        "claude-haiku-4-20250514": {
+          inputTokens: 1000,
+          outputTokens: 500,
+          contextWindow: 8192,
+        },
+        "claude-opus-4-20250514": {
+          inputTokens: 10000,
+          outputTokens: 2000,
+          contextWindow: 200000,
+        },
+      },
+    });
+
+    const metrics = deltas.find((d) => d.deltaType === "metrics");
+    expect(metrics!.modelName).toBe("claude-opus-4-20250514");
+  });
+
+  test("extracts model from system init event as metrics delta", () => {
+    const parser = createParser();
+    const { messages, deltas } = parser.handleMessage({
+      type: "system",
+      subtype: "init",
+      model: "claude-sonnet-4-20250514",
+      session_id: "sess-init-model",
+      tools: [],
+      cwd: "/tmp",
+    });
+
+    expect(messages).toHaveLength(0);
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0].deltaType).toBe("metrics");
+    expect(deltas[0].modelName).toBe("claude-sonnet-4-20250514");
+  });
+
+  test("system init without model field emits no deltas", () => {
+    const parser = createParser();
+    const { deltas } = parser.handleMessage({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-no-model",
+      tools: [],
+      cwd: "/tmp",
+    });
+
+    expect(deltas).toHaveLength(0);
+  });
+
+  test("message_start does not extract model (avoids sub-agent flicker)", () => {
+    const parser = createParser();
+    const { messages, deltas } = parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          id: "msg_123",
+          model: "claude-sonnet-4-20250514",
+          type: "message",
+          role: "assistant",
+          content: [],
+        },
+      },
+    });
+
+    expect(messages).toHaveLength(0);
+    expect(deltas).toHaveLength(0);
   });
 
   test("result error event still emits metrics and turn_end", () => {

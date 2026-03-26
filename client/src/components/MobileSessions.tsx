@@ -4,6 +4,7 @@ interface MobileSessionsProps {
   projects: ProjectWithStatus[];
   threads: Thread[];
   activeThreadId: string | null;
+  unreadThreadIds: Set<string>;
   onSelectThread: (threadId: string) => void;
   onNewThread: (projectId: string) => void;
 }
@@ -27,6 +28,7 @@ export function MobileSessions({
   projects,
   threads,
   activeThreadId,
+  unreadThreadIds,
   onSelectThread,
   onNewThread,
 }: MobileSessionsProps) {
@@ -109,7 +111,12 @@ export function MobileSessions({
 
                   {/* Content */}
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm text-content-1 truncate">{thread.title}</div>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-sm text-content-1 truncate">{thread.title}</span>
+                      {unreadThreadIds.has(thread.id) && thread.id !== activeThreadId && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                      )}
+                    </div>
                     <div className="flex items-center gap-2 mt-1">
                       <span className="text-[10px] text-content-3">
                         {STATUS_LABEL[thread.status] || thread.status}
