@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.20.1] - 2026-03-25
+
+### Added
+
+- **QA testing from worktrees documentation** — added note to CLAUDE.md and AGENTS.md clarifying that worktree instances must build and launch their own server (can't test against the main-branch instance)
+
 ## [0.1.20.0] - 2026-03-25
 
 ### Added
