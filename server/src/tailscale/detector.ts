@@ -92,6 +92,7 @@ export class TailscaleDetector {
       httpsAvailable: false,
       httpsUrl: null,
       portMatch: false,
+      proxyMismatch: false,
       orchestraPort: this.orchestraPort,
       remoteUrl: "",
     };
@@ -141,10 +142,11 @@ export class TailscaleDetector {
       if (exitCode === 0 && stdout.trim()) {
         const serveConfig = JSON.parse(stdout);
         // Check if serve is configured and maps to our port
-        const { httpsAvailable, httpsUrl, portMatch } = this.parseServeConfig(serveConfig, base.hostname);
+        const { httpsAvailable, httpsUrl, portMatch, proxyMismatch } = this.parseServeConfig(serveConfig, base.hostname);
         base.httpsAvailable = httpsAvailable;
         base.httpsUrl = httpsUrl;
         base.portMatch = portMatch;
+        base.proxyMismatch = proxyMismatch;
       }
     } catch {
       // tailscale serve status --json may not exist in older versions
@@ -162,19 +164,25 @@ export class TailscaleDetector {
     httpsAvailable: boolean;
     httpsUrl: string | null;
     portMatch: boolean;
+    proxyMismatch: boolean;
   } {
     try {
       // Look for any HTTPS handler that proxies to our port
       const configStr = JSON.stringify(config);
-      const portPattern = new RegExp(`localhost:${this.orchestraPort}|127\\.0\\.0\\.1:${this.orchestraPort}`);
+      const portPattern = new RegExp(`localhost:${this.orchestraPort}(?![0-9])|127\\.0\\.0\\.1:${this.orchestraPort}(?![0-9])`);
       const hasPortMapping = portPattern.test(configStr);
+
+      // Detect HTTPS-to-HTTP mismatch: proxy target uses https:// but Orchestra is plain HTTP
+      // This causes a 502 because tailscale speaks TLS to a non-TLS backend
+      const httpsProxyPattern = new RegExp(`"Proxy"\\s*:\\s*"https://(localhost|127\\.0\\.0\\.1):${this.orchestraPort}(/|")`);
+      const proxyMismatch = httpsProxyPattern.test(configStr);
 
       // If there are any web handlers, serve is active
       const hasHandlers = configStr.includes("Handlers") || configStr.includes("handlers") ||
         configStr.includes("http://") || configStr.includes("https://");
 
       if (!hasHandlers) {
-        return { httpsAvailable: false, httpsUrl: null, portMatch: false };
+        return { httpsAvailable: false, httpsUrl: null, portMatch: false, proxyMismatch: false };
       }
 
       // Build HTTPS URL from the currently-detected hostname (not cache)
@@ -182,11 +190,12 @@ export class TailscaleDetector {
 
       return {
         httpsAvailable: true,
-        httpsUrl: hasPortMapping ? httpsUrl : null,
+        httpsUrl: hasPortMapping && !proxyMismatch ? httpsUrl : null,
         portMatch: hasPortMapping,
+        proxyMismatch,
       };
     } catch {
-      return { httpsAvailable: false, httpsUrl: null, portMatch: false };
+      return { httpsAvailable: false, httpsUrl: null, portMatch: false, proxyMismatch: false };
     }
   }
 }
