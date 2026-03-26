@@ -799,6 +799,71 @@ describe("ClaudeParser", () => {
     expect(deltas).toHaveLength(0);
   });
 
+  // ── ExitPlanMode detection ──────────────────────────────
+
+  test("detects ExitPlanMode in assistant tool_use blocks", () => {
+    const parser = createParser();
+    const result = parser.handleMessage({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use", id: "toolu_exit", name: "ExitPlanMode", input: {
+              allowedPrompts: [{ tool: "Bash", prompt: "run tests" }],
+            },
+          },
+        ],
+      },
+      session_id: "sess-plan",
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].toolName).toBe("ExitPlanMode");
+    expect(result.exitPlanMode).toBe(true);
+    // ExitPlanMode should NOT create an attention event
+    expect(result.attention).toBeUndefined();
+  });
+
+  test("detects ExitPlanMode via stream_event content_block_stop", () => {
+    const parser = createParser();
+
+    parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_exit2", name: "ExitPlanMode" } },
+      session_id: "sess-plan2",
+    });
+    parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"allowedPrompts\":[]}" } },
+      session_id: "sess-plan2",
+    });
+    const result = parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 0 },
+      session_id: "sess-plan2",
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].toolName).toBe("ExitPlanMode");
+    expect(result.exitPlanMode).toBe(true);
+    expect(result.attention).toBeUndefined();
+  });
+
+  test("does not set exitPlanMode for regular tools", () => {
+    const parser = createParser();
+    const result = parser.handleMessage({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "tool_use", id: "toolu_bash", name: "Bash", input: { command: "ls" } },
+        ],
+      },
+      session_id: "sess-1",
+    });
+
+    expect(result.exitPlanMode).toBeUndefined();
+  });
+
   test("message_start from primary model emits per-request input tokens", () => {
     const parser = createParser();
     const { messages, deltas } = parser.handleMessage({

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.23.0] - 2026-03-26
+
+### Fixed
+
+- **ExitPlanMode stuck threads** — SDK bug where `requiresUserInteraction()` short-circuits `bypassPermissions` causes ExitPlanMode to be denied in headless mode; Orchestra now detects ExitPlanMode in the SDK stream and auto-approves by sending "Plan approved. Proceed with implementation." on turn end, preventing the denial/retry loop that caused threads to hang
+
 ## [0.1.22.2] - 2026-03-26
 
 ### Fixed
