@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.23.0] - 2026-03-26
+
+### Fixed
+
+- **TodoWrite rendering broken (missing import)** — `ChatView.tsx` referenced `<TodoRenderer>` without importing it, causing TodoWrite tool results to silently fail to render
+- **Codex TodoWrite data shape mismatch** — Codex adapter emits `{ items: [{ text, completed }] }` but the parser only accepted Claude SDK's `{ todos: [{ content, status, activeForm }] }`; `parseTodos()` now normalizes both shapes with explicit `String()` coercion for type safety
+- **`latestTodos` not hydrated from message history** — after page reload, StickyRunBar showed no task state because `latestTodos` was only populated from live WebSocket messages, not REST-loaded history
+- **History hydration race condition** — added guard to prevent slower REST history load from overwriting newer streaming todo state
+
+### Added
+
+- **Prominent TodoCard rendering** — latest TodoWrite renders as a full-width card showing all tasks with per-task status (✓ completed, ▸ running, ○ queued), progress bar, and ARIA accessibility roles; prior TodoWrites collapse to clickable `✓ Updated tasks (X/Y)` lines expandable for history inspection
+- **StickyRunBar active task display** — shows the currently running task description (e.g., `▸ Running integration tests (3/5)`) instead of just `3/5 tasks`
+- **`TOOL_RENDERERS` declarative registry** — replaces ad-hoc if/switch pattern in `ToolLine` for special tool rendering (AskUser, Agent, TodoWrite); adding new special tools is now a one-line registry entry
+- **Codex TodoWrite normalization tests** — 7 new parser tests covering Codex shape, `completed` boolean mapping, `todos`-over-`items` preference, and empty array handling
+
 ## [0.1.22.0] - 2026-03-25
 
 ### Fixed
