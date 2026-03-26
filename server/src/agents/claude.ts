@@ -263,36 +263,24 @@ class ClaudeParser {
         let inputTokens: number | undefined;
         let outputTokens: number | undefined;
         let contextWindow: number | undefined;
+        let modelName: string | undefined;
 
         if (modelUsage) {
-          // Find the primary model (largest context window) — its tokens
-          // represent actual context occupancy. Summing across all models
-          // (including sub-agents) inflates the count far beyond the window.
-          let primaryKey: string | undefined;
-          for (const [key, model] of Object.entries(modelUsage)) {
+          inputTokens = 0;
+          outputTokens = 0;
+          for (const [name, model] of Object.entries(modelUsage)) {
+            inputTokens += (model.inputTokens ?? 0) + (model.cacheReadInputTokens ?? 0) + (model.cacheCreationInputTokens ?? 0);
+            outputTokens += model.outputTokens ?? 0;
+            // Use the largest context window (primary model) and track its name
             if (model.contextWindow && (!contextWindow || model.contextWindow > contextWindow)) {
               contextWindow = model.contextWindow;
-              primaryKey = key;
-            }
-          }
-
-          if (primaryKey) {
-            const pm = modelUsage[primaryKey];
-            inputTokens = (pm.inputTokens ?? 0) + (pm.cacheReadInputTokens ?? 0) + (pm.cacheCreationInputTokens ?? 0);
-            outputTokens = pm.outputTokens ?? 0;
-          } else {
-            // No context window info — fall back to summing all models
-            inputTokens = 0;
-            outputTokens = 0;
-            for (const model of Object.values(modelUsage)) {
-              inputTokens += (model.inputTokens ?? 0) + (model.cacheReadInputTokens ?? 0) + (model.cacheCreationInputTokens ?? 0);
-              outputTokens += model.outputTokens ?? 0;
+              modelName = name;
             }
           }
         }
 
         if (costUsd !== undefined || durationMs !== undefined || inputTokens !== undefined) {
-          deltas.push({ deltaType: "metrics", costUsd, durationMs, inputTokens, outputTokens, contextWindow });
+          deltas.push({ deltaType: "metrics", costUsd, durationMs, inputTokens, outputTokens, contextWindow, modelName });
         }
         deltas.push({
           deltaType: "turn_end",
@@ -337,9 +325,16 @@ class ClaudeParser {
 
       case "system": {
         // SDKSystemMessage: { type: "system", subtype: "init" | "compact_boundary", ... }
-        // Skip init envelopes — they only carry metadata (tools, session_id, etc.)
         const subtype = event.subtype as string | undefined;
-        if (subtype === "init" || subtype === "compact_boundary") {
+        if (subtype === "init") {
+          // Extract model name from init event (available immediately at session start)
+          const model = event.model as string | undefined;
+          if (model) {
+            return { messages: [], deltas: [{ deltaType: "metrics", modelName: model }] };
+          }
+          return { messages: [], deltas: [] };
+        }
+        if (subtype === "compact_boundary") {
           return { messages: [], deltas: [] };
         }
 
@@ -524,8 +519,17 @@ class ClaudeParser {
         return { messages: [], deltas: [] };
       }
 
+      case "message_start": {
+        // Anthropic API message_start carries the model used for this message
+        const message = inner.message as { model?: string } | undefined;
+        const model = message?.model;
+        if (model) {
+          return { messages: [], deltas: [{ deltaType: "metrics", modelName: model }] };
+        }
+        return { messages: [], deltas: [] };
+      }
+
       case "message_stop":
-      case "message_start":
       case "message_delta":
         return { messages: [], deltas: [] };
 
