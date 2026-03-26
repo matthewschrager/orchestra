@@ -1,5 +1,4 @@
 import { nanoid } from "nanoid";
-import { AbortError } from "@anthropic-ai/claude-agent-sdk";
 import type { DB, MessageRow, ThreadRow, AttentionRow } from "../db";
 import {
   getThread,
@@ -13,10 +12,16 @@ import {
   attentionRowToApi,
 } from "../db";
 import type { AgentRegistry } from "../agents/registry";
-import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage } from "../agents/types";
+import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage, PersistentSession } from "../agents/types";
 import type { WorktreeManager } from "../worktrees/manager";
 import type { Attachment, AttentionItem, StreamDelta } from "shared";
 import { resolveAttachmentPaths } from "../routes/uploads";
+
+/** State machine for persistent sessions: thinking → idle/waiting → thinking */
+export type SessionState = "thinking" | "idle" | "waiting";
+
+/** Max auto-restart attempts before giving up (prevents infinite restart loops) */
+const MAX_AUTO_RESTARTS = 2;
 
 export interface ActiveSession {
   threadId: string;
@@ -24,10 +29,16 @@ export interface ActiveSession {
   adapter: AgentAdapter;
   sessionId: string | null;
   cwd: string;
-  /** Set to true before calling abort() so the catch block knows this was intentional */
+  /** Set to true before calling abort()/close() so the catch block knows this was intentional */
   aborted: boolean;
   /** Timestamp of last message received — used for inactivity timeout */
   lastMessageAt: number;
+  /** Whether this is a persistent (long-lived) session using streamInput() */
+  persistent: boolean;
+  /** State machine for persistent sessions */
+  state: SessionState;
+  /** Number of auto-restarts attempted (circuit breaker for restart loops) */
+  restartCount: number;
 }
 
 type MessageListener = (threadId: string, message: MessageRow) => void;
@@ -110,8 +121,12 @@ export class SessionManager {
       metadata: validAttachments?.length ? { attachments: validAttachments } : undefined,
     });
 
-    // Start agent session
-    this.startTurn(threadId, adapter, cwd, agentPrompt, null);
+    // Start agent session — use persistent mode when supported
+    if (adapter.supportsPersistent?.()) {
+      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, null);
+    } else {
+      this.startTurn(threadId, adapter, cwd, agentPrompt, null);
+    }
 
     const thread = getThread(this.db, threadId)!;
 
@@ -128,11 +143,19 @@ export class SessionManager {
     this.sessions.delete(threadId);
     // 2. Mark as aborted so catch block knows this was intentional
     active.aborted = true;
-    // 3. Then abort (may cause iterator to throw AbortError)
-    try {
-      active.session.abort();
-    } catch {
-      // Already aborted or completed
+    // 3. Close or abort the session
+    if (active.persistent) {
+      try {
+        (active.session as PersistentSession).close();
+      } catch {
+        // Already closed
+      }
+    } else {
+      try {
+        active.session.abort();
+      } catch {
+        // Already aborted or completed
+      }
     }
     // 4. Cleanup
     this.clearMainWorktreeLock(threadId);
@@ -144,7 +167,7 @@ export class SessionManager {
   stopAll(): void {
     this.shuttingDown = true;
     if (this.inactivityCheckInterval) clearInterval(this.inactivityCheckInterval);
-    for (const [id] of this.sessions) {
+    for (const id of [...this.sessions.keys()]) {
       this.stopThread(id);
     }
   }
@@ -157,17 +180,11 @@ export class SessionManager {
     const adapter = this.registry.get(thread.agent);
     if (!adapter) throw new Error(`Unknown agent: ${thread.agent}`);
 
-    // If there's already a running session for this thread, abort it first
     const existing = this.sessions.get(threadId);
-    if (existing) {
-      // Delete from map FIRST, then abort
-      this.sessions.delete(threadId);
-      existing.aborted = true;
-      try {
-        existing.session.abort();
-      } catch {
-        // Already aborted or completed
-      }
+
+    // Guard: reject messages while persistent session is mid-turn (BEFORE persisting)
+    if (existing?.persistent && existing.state === "thinking") {
+      throw new Error("Agent is still processing — wait for it to finish");
     }
 
     // Validate attachments and persist user message
@@ -184,15 +201,75 @@ export class SessionManager {
     // Get the cwd — use worktree if isolated, otherwise repo_path
     const cwd = thread.worktree || thread.repo_path;
 
+    // ── PERSISTENT PATH: inject into living subprocess ──
+    if (existing?.persistent) {
+
+      // Transition to thinking + refresh inactivity timestamp
+      existing.state = "thinking";
+      existing.lastMessageAt = Date.now();
+      updateThread(this.db, threadId, { status: "running", error_message: null });
+      this.notifyThread(threadId);
+
+      // Reset parser turn-level state for clean dedup
+      (existing.session as PersistentSession).resetTurnState();
+
+      const sessionId = existing.sessionId ?? this.getPersistedSessionId(threadId);
+      if (!sessionId) {
+        // No session_id — can't inject. Fall back to restart.
+        console.warn(`[session] No sessionId for persistent inject on ${threadId}, falling back to restart`);
+        this.teardownSession(threadId);
+        this.startTurn(threadId, adapter, cwd, agentPrompt, null);
+        return;
+      }
+
+      // Wrap injectMessage in try/catch to handle both sync throws and async rejections (#3)
+      try {
+        const injectPromise = (existing.session as PersistentSession).injectMessage(agentPrompt, sessionId);
+        injectPromise.catch((err) => {
+          // Check if session was stopped while inject was pending (#6)
+          if (existing.aborted || !this.sessions.has(threadId)) {
+            if (DEBUG) console.log(`[session] streamInput failed for ${threadId} but session already stopped, ignoring`);
+            return;
+          }
+          console.error(`[session] streamInput failed for ${threadId}, falling back to resume:`, err);
+          this.teardownSession(threadId);
+          this.restartWithResume(threadId, adapter, cwd, agentPrompt);
+        });
+      } catch (err) {
+        // Synchronous throw from injectMessage (#3) — same fallback path
+        if (existing.aborted || !this.sessions.has(threadId)) return;
+        console.error(`[session] streamInput threw synchronously for ${threadId}, falling back to resume:`, err);
+        this.teardownSession(threadId);
+        this.restartWithResume(threadId, adapter, cwd, agentPrompt);
+      }
+      return;
+    }
+
+    // ── NO ACTIVE SESSION: start fresh ──
+    if (existing) {
+      // Abort non-persistent existing session
+      this.sessions.delete(threadId);
+      existing.aborted = true;
+      try {
+        existing.session.abort();
+      } catch {
+        // Already aborted or completed
+      }
+    }
+
     // Get session_id: prefer in-memory (still running), fall back to DB
     const sessionId = existing?.sessionId
       ?? this.getPersistedSessionId(threadId)
       ?? null;
 
-    // Start a new turn with resume
+    // Start a new session — prefer persistent when available
     updateThread(this.db, threadId, { status: "running", error_message: null });
     this.notifyThread(threadId);
-    this.startTurn(threadId, adapter, cwd, agentPrompt, sessionId);
+    if (adapter.supportsPersistent?.()) {
+      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, sessionId);
+    } else {
+      this.startTurn(threadId, adapter, cwd, agentPrompt, sessionId);
+    }
   }
 
   isRunning(threadId: string): boolean {
@@ -291,6 +368,7 @@ export class SessionManager {
     return `${prompt}\n\n[The user has attached the following file(s):]\n${fileLines.join("\n")}`;
   }
 
+  /** Legacy per-turn session — creates a new subprocess for this turn */
   private startTurn(
     threadId: string,
     adapter: AgentAdapter,
@@ -315,6 +393,9 @@ export class SessionManager {
       cwd,
       aborted: false,
       lastMessageAt: Date.now(),
+      persistent: false,
+      state: "thinking",
+      restartCount: 0,
     };
     this.sessions.set(threadId, active);
 
@@ -334,11 +415,65 @@ export class SessionManager {
     });
   }
 
+  /** Persistent session — subprocess stays alive between turns, follow-ups via streamInput() */
+  private startPersistentSession(
+    threadId: string,
+    adapter: AgentAdapter,
+    cwd: string,
+    prompt: string,
+    resumeSessionId: string | null,
+    restartCount: number = 0,
+  ): void {
+    if (DEBUG) console.log(`[session] startPersistentSession thread=${threadId} resume=${resumeSessionId ?? "new"} cwd=${cwd} restarts=${restartCount}`);
+
+    // Fix #11: Validate startPersistent exists before calling
+    if (!adapter.startPersistent) {
+      throw new Error(`Adapter "${adapter.name}" claims supportsPersistent() but has no startPersistent method`);
+    }
+
+    const session = adapter.startPersistent({
+      cwd,
+      prompt,
+      resumeSessionId: resumeSessionId ?? undefined,
+    });
+
+    updateThread(this.db, threadId, { pid: null, status: "running" });
+
+    const active: ActiveSession = {
+      threadId,
+      session,
+      adapter,
+      sessionId: resumeSessionId,
+      cwd,
+      aborted: false,
+      lastMessageAt: Date.now(),
+      persistent: true,
+      state: "thinking",
+      restartCount,
+    };
+    this.sessions.set(threadId, active);
+
+    // consumeStream runs for the LIFETIME of the persistent session
+    this.consumeStream(active).catch((err) => {
+      console.error(`[stream] Thread ${threadId} — unhandled persistent stream error:`, err);
+      if (this.sessions.get(threadId) === active) {
+        this.sessions.delete(threadId);
+        updateThread(this.db, threadId, {
+          status: "error",
+          pid: null,
+          error_message: `Persistent session error: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
+        });
+        this.notifyThread(threadId);
+      }
+    });
+  }
+
   private async consumeStream(activeSession: ActiveSession): Promise<void> {
     const { threadId } = activeSession;
     let messageCount = 0;
+    let turnMessageCount = 0;
     const startTime = Date.now();
-    if (DEBUG) console.log(`[stream] Thread ${threadId} — consumeStream started`);
+    if (DEBUG) console.log(`[stream] Thread ${threadId} — consumeStream started (persistent=${activeSession.persistent})`);
 
     try {
       for await (const msg of activeSession.session.messages) {
@@ -349,6 +484,7 @@ export class SessionManager {
         }
 
         messageCount++;
+        turnMessageCount++;
         const m = msg as Record<string, unknown>;
         if (DEBUG && (messageCount <= 3 || m.type === "result")) {
           const extra = m.type === "result"
@@ -376,34 +512,94 @@ export class SessionManager {
           });
         }
 
-        for (const msg of messages) {
-          this.persistMessage(threadId, msg);
+        for (const parsed of messages) {
+          this.persistMessage(threadId, parsed);
         }
+
+        // Track if this message contains a turn_end
+        let isTurnEnd = false;
         for (const delta of deltas) {
-          if (delta.deltaType === "turn_end" && delta.text) {
-            activeSession.sessionId = delta.text;
-            this.persistSessionId(threadId, delta.text);
+          if (delta.deltaType === "turn_end") {
+            isTurnEnd = true;
+            if (delta.text) {
+              activeSession.sessionId = delta.text;
+              this.persistSessionId(threadId, delta.text);
+            }
           }
           this.notifyStreamDelta(threadId, {
             ...delta,
             threadId,
           });
         }
+
+        let attentionHandled = false;
         if (attention) {
-          this.handleAttentionEvent(activeSession, attention);
+          attentionHandled = this.handleAttentionEvent(activeSession, attention);
+        }
+
+        // ── Turn boundary for persistent sessions ──
+        // On turn_end, transition to idle (or waiting if attention pending).
+        // The iterator stays alive — next message arrives when user sends follow-up.
+        if (isTurnEnd && activeSession.persistent) {
+          // Only set "waiting" if attention was successfully handled; otherwise idle (#8)
+          const newState: SessionState = (attention && attentionHandled) ? "waiting" : "idle";
+          activeSession.state = newState;
+          turnMessageCount = 0;
+
+          if (DEBUG) console.log(`[stream] Thread ${threadId} — persistent turn ended, state → ${newState}`);
+
+          if (!attention) {
+            // Turn completed normally — mark done but keep session alive
+            updateThread(this.db, threadId, { status: "done", pid: null });
+            this.notifyThread(threadId);
+          }
+          // Don't break — iterator stays alive for next turn
         }
       }
 
-      // ── Iterator completed normally ──
+      // ── Iterator completed ──
       if (DEBUG) console.log(`[stream] Thread ${threadId} — iterator completed after ${messageCount} msgs (${Date.now() - startTime}ms)`);
-      // CRITICAL: Final identity check after loop (prevents marking superseded thread as "done")
+      // CRITICAL: Final identity check after loop
       if (this.sessions.get(threadId) !== activeSession) return;
 
+      // ── Persistent session: iterator end = subprocess died ──
+      if (activeSession.persistent) {
+        this.sessions.delete(threadId);
+        this.clearMainWorktreeLock(threadId);
+
+        if (activeSession.aborted) {
+          // User stopped the session — already handled in stopThread()
+          return;
+        }
+
+        if (activeSession.state === "idle" || activeSession.state === "waiting") {
+          // Subprocess exited while idle — could be normal (inactivity) or unexpected.
+          // Don't overwrite status if already "done"/"waiting".
+          if (DEBUG) console.log(`[stream] Thread ${threadId} — persistent session ended while ${activeSession.state}`);
+          return;
+        }
+
+        // Subprocess died mid-turn — surface error, enable resume on next message
+        console.warn(`[stream] Thread ${threadId} — persistent session died mid-turn after ${turnMessageCount} msgs`);
+        orphanAttentionItems(this.db, threadId);
+        this.persistMessage(threadId, {
+          role: "assistant",
+          content: "**Session ended unexpectedly.** Send a follow-up message to resume.",
+        });
+        updateThread(this.db, threadId, {
+          status: "error",
+          pid: null,
+          error_message: "Subprocess ended unexpectedly during turn",
+        });
+        this.notifyThread(threadId);
+        return;
+      }
+
+      // ── Legacy (non-persistent): existing completion logic ──
       this.sessions.delete(threadId);
       this.clearMainWorktreeLock(threadId);
 
-      // Detect silent failure: if the SDK produced 0 messages (or only system init),
-      // something went wrong — mark as error instead of "done"
+      // Detect silent failure
       if (messageCount <= 1) {
         console.warn(`[stream] Thread ${threadId} — SDK produced ${messageCount} messages, treating as error`);
         orphanAttentionItems(this.db, threadId);
@@ -422,7 +618,6 @@ export class SessionManager {
 
       const thread = getThread(this.db, threadId);
       if (thread?.status === "waiting") {
-        // Process ended while waiting for user input — expected
         updateThread(this.db, threadId, { pid: null });
       } else {
         const orphaned = orphanAttentionItems(this.db, threadId);
@@ -436,7 +631,7 @@ export class SessionManager {
     } catch (err) {
       // Check if this was a user-initiated abort or session superseded
       if (this.sessions.get(threadId) !== activeSession) return;
-      if (activeSession.aborted || err instanceof AbortError) {
+      if (activeSession.aborted || isAbortError(err)) {
         if (DEBUG) console.log(`[stream] Thread ${threadId} — aborted after ${messageCount} msgs (${Date.now() - startTime}ms)`);
         return;
       }
@@ -459,6 +654,57 @@ export class SessionManager {
         error_message: errMsg.slice(0, 200),
       });
       this.notifyThread(threadId);
+
+      // For persistent sessions, attempt auto-restart with resume (circuit breaker)
+      if (activeSession.persistent && activeSession.sessionId && !activeSession.aborted) {
+        if (activeSession.restartCount >= MAX_AUTO_RESTARTS) {
+          console.error(`[stream] Thread ${threadId} — restart limit reached (${activeSession.restartCount}), giving up`);
+        } else {
+          const nextRestartCount = activeSession.restartCount + 1;
+          if (DEBUG) console.log(`[stream] Thread ${threadId} — auto-restart attempt ${nextRestartCount}/${MAX_AUTO_RESTARTS}`);
+          this.restartWithResume(threadId, activeSession.adapter, activeSession.cwd, "Continue from where you left off.", nextRestartCount);
+        }
+      }
+    }
+  }
+
+  /** Tear down a session (persistent or legacy) without updating thread status */
+  private teardownSession(threadId: string): void {
+    const active = this.sessions.get(threadId);
+    if (!active) return;
+    this.sessions.delete(threadId);
+    active.aborted = true;
+    if (active.persistent) {
+      try { (active.session as PersistentSession).close(); } catch {}
+    } else {
+      try { active.session.abort(); } catch {}
+    }
+    this.clearMainWorktreeLock(threadId);
+  }
+
+  /** Restart a session with resume from persisted session_id — prefers persistent mode */
+  private restartWithResume(
+    threadId: string,
+    adapter: AgentAdapter,
+    cwd: string,
+    prompt: string,
+    restartCount: number = 0,
+  ): void {
+    const sessionId = this.getPersistedSessionId(threadId);
+    if (!sessionId) {
+      updateThread(this.db, threadId, {
+        status: "error",
+        error_message: "No session to resume — send a new message to start fresh",
+      });
+      this.notifyThread(threadId);
+      return;
+    }
+    updateThread(this.db, threadId, { status: "running", error_message: null });
+    this.notifyThread(threadId);
+    if (adapter.supportsPersistent?.()) {
+      this.startPersistentSession(threadId, adapter, cwd, prompt, sessionId, restartCount);
+    } else {
+      this.startTurn(threadId, adapter, cwd, prompt, sessionId);
     }
   }
 
@@ -495,7 +741,8 @@ export class SessionManager {
     }
   }
 
-  private handleAttentionEvent(session: ActiveSession, event: AttentionEvent): void {
+  /** Returns true if attention was successfully created, false on error */
+  private handleAttentionEvent(session: ActiveSession, event: AttentionEvent): boolean {
     try {
       const continuationToken = session.sessionId
         ?? this.getPersistedSessionId(session.threadId);
@@ -516,10 +763,12 @@ export class SessionManager {
       // Notify attention listeners
       const item = attentionRowToApi(row);
       this.notifyAttention(session.threadId, item);
+      return true;
     } catch (err) {
       console.error(`Failed to create attention item for thread ${session.threadId}:`, err);
       updateThread(this.db, session.threadId, { status: "error" });
       this.notifyThread(session.threadId);
+      return false;
     }
   }
 
@@ -594,6 +843,10 @@ export class SessionManager {
     const active = this.sessions.get(threadId);
     if (!active) return;
 
+    // For persistent sessions in idle/waiting state, inactivity is expected — don't timeout
+    // (idle = waiting for user follow-up; waiting = AskUserQuestion pending)
+    if (active.persistent && (active.state === "idle" || active.state === "waiting")) return;
+
     const timeoutMin = Math.round(this.getInactivityTimeoutMs() / 60_000);
     const errMsg = `Session timed out after ${Math.round(elapsedSec)}s of inactivity (limit: ${timeoutMin}min). Long-running sub-agents may need a higher timeout — adjust in Settings.`;
 
@@ -601,11 +854,11 @@ export class SessionManager {
     this.sessions.delete(threadId);
     active.aborted = true;
 
-    // 2. Abort the SDK session
-    try {
-      active.session.abort();
-    } catch {
-      // Already aborted or completed
+    // 2. Close or abort the session
+    if (active.persistent) {
+      try { (active.session as PersistentSession).close(); } catch {}
+    } else {
+      try { active.session.abort(); } catch {}
     }
 
     // 3. Cleanup
@@ -660,4 +913,11 @@ export class SessionManager {
       });
     }
   }
+}
+
+/** Adapter-agnostic check for abort errors from any SDK */
+function isAbortError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === "AbortError") return true;
+  if (err instanceof Error && err.name === "AbortError") return true;
+  return false;
 }

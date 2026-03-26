@@ -588,6 +588,116 @@ describe("ClaudeParser", () => {
     expect(deltas).toHaveLength(0);
   });
 
+  // ── Token usage extraction from modelUsage ──────────────
+
+  test("extracts token usage and contextWindow from modelUsage in result event", () => {
+    const parser = createParser();
+    const { deltas } = parser.handleMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.10,
+      duration_ms: 2000,
+      session_id: "sess-tok",
+      permission_denials: [],
+      modelUsage: {
+        "claude-opus-4-6": {
+          inputTokens: 5000,
+          outputTokens: 1200,
+          cacheReadInputTokens: 3000,
+          cacheCreationInputTokens: 800,
+          contextWindow: 200000,
+        },
+      },
+    });
+
+    const metrics = deltas.find((d) => d.deltaType === "metrics");
+    expect(metrics).toBeDefined();
+    // inputTokens = 5000 + 3000 + 800 = 8800
+    expect(metrics!.inputTokens).toBe(8800);
+    expect(metrics!.outputTokens).toBe(1200);
+    expect(metrics!.contextWindow).toBe(200000);
+  });
+
+  test("uses primary model tokens only (not sub-agent aggregate) and picks largest contextWindow", () => {
+    const parser = createParser();
+    const { deltas } = parser.handleMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.20,
+      duration_ms: 3000,
+      session_id: "sess-multi",
+      permission_denials: [],
+      modelUsage: {
+        "claude-opus-4-6": {
+          inputTokens: 10000,
+          outputTokens: 2000,
+          cacheReadInputTokens: 5000,
+          cacheCreationInputTokens: 0,
+          contextWindow: 200000,
+        },
+        "claude-haiku-3-5": {
+          inputTokens: 1000,
+          outputTokens: 500,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          contextWindow: 8192,
+        },
+      },
+    });
+
+    const metrics = deltas.find((d) => d.deltaType === "metrics");
+    expect(metrics).toBeDefined();
+    // Only primary model (opus, largest contextWindow) tokens — not aggregated with sub-agents
+    // input: 10000 + 5000 + 0 = 15000
+    expect(metrics!.inputTokens).toBe(15000);
+    // output: 2000 (opus only)
+    expect(metrics!.outputTokens).toBe(2000);
+    // largest context window wins
+    expect(metrics!.contextWindow).toBe(200000);
+  });
+
+  test("handles result with empty modelUsage object", () => {
+    const parser = createParser();
+    const { deltas } = parser.handleMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.01,
+      duration_ms: 500,
+      session_id: "sess-empty",
+      permission_denials: [],
+      modelUsage: {},
+    });
+
+    const metrics = deltas.find((d) => d.deltaType === "metrics");
+    expect(metrics).toBeDefined();
+    expect(metrics!.inputTokens).toBe(0);
+    expect(metrics!.outputTokens).toBe(0);
+    expect(metrics!.contextWindow).toBeUndefined();
+  });
+
+  test("handles modelUsage with missing optional fields", () => {
+    const parser = createParser();
+    const { deltas } = parser.handleMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-partial",
+      permission_denials: [],
+      modelUsage: {
+        "claude-opus-4-6": {
+          inputTokens: 4000,
+          outputTokens: 800,
+          // no cache fields, no contextWindow
+        },
+      },
+    });
+
+    const metrics = deltas.find((d) => d.deltaType === "metrics");
+    expect(metrics).toBeDefined();
+    expect(metrics!.inputTokens).toBe(4000);
+    expect(metrics!.outputTokens).toBe(800);
+    expect(metrics!.contextWindow).toBeUndefined();
+  });
+
   test("result error event still emits metrics and turn_end", () => {
     const parser = createParser();
     const { deltas } = parser.handleMessage({

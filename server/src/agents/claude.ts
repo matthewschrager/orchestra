@@ -1,10 +1,12 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AgentAdapter,
   AgentSession,
   AttentionEvent,
   ParsedMessage,
   ParseResult,
+  PersistentSession,
   StartOpts,
 } from "./types";
 
@@ -35,6 +37,7 @@ export class ClaudeAdapter implements AgentAdapter {
     }
   }
 
+  /** Legacy per-turn session — creates a new subprocess per call */
   start(opts: StartOpts): AgentSession {
     const abortController = new AbortController();
 
@@ -61,7 +64,51 @@ export class ClaudeAdapter implements AgentAdapter {
     };
   }
 
+  /** Persistent session — subprocess stays alive between turns, follow-ups via streamInput() */
+  startPersistent(opts: StartOpts): PersistentSession {
+    const q: Query = query({
+      prompt: opts.prompt,
+      options: {
+        cwd: opts.cwd,
+        resume: opts.resumeSessionId,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        includePartialMessages: true,
+        settingSources: ["user", "project", "local"],
+      },
+    });
+
+    const parser = new ClaudeParser();
+
+    return {
+      messages: q, // Query extends AsyncGenerator<SDKMessage>
+      abort: () => q.close(),
+      parseMessage: (msg: unknown) => parser.handleMessage(msg),
+      sessionId: opts.resumeSessionId,
+      close: () => q.close(),
+      resetTurnState: () => parser.resetTurnState(),
+      async injectMessage(text: string, sessionId: string): Promise<void> {
+        const userMsg: SDKUserMessage = {
+          type: "user",
+          message: { role: "user", content: text },
+          parent_tool_use_id: null,
+          session_id: sessionId,
+        };
+        // streamInput expects AsyncIterable — wrap in single-element generator
+        await q.streamInput(
+          (async function* () {
+            yield userMsg;
+          })(),
+        );
+      },
+    };
+  }
+
   supportsResume(): boolean {
+    return true;
+  }
+
+  supportsPersistent(): boolean {
     return true;
   }
 }
@@ -76,6 +123,16 @@ class ClaudeParser {
   /** tool_use IDs already persisted via stream_events — skip in assistant summary */
   private readonly persistedToolUseIds = new Set<string>();
   private readonly emittedAttentionKeys = new Set<string>();
+
+  /** Reset turn-level state between turns in persistent sessions.
+   *  Clears active blocks (should be empty at turn boundary) and dedup sets.
+   *  Keeps toolUseNames since tool_use_ids are globally unique per session. */
+  resetTurnState(): void {
+    this.activeToolBlocks.clear();
+    this.activeTextBlocks.clear();
+    this.persistedToolUseIds.clear();
+    this.emittedAttentionKeys.clear();
+  }
 
   handleMessage(msg: unknown): ParseResult {
     // All SDK messages have a `type` field
@@ -194,8 +251,48 @@ class ClaudeParser {
         const isError = event.is_error as boolean | undefined;
         const errors = event.errors as string[] | undefined;
 
-        if (costUsd !== undefined || durationMs !== undefined) {
-          deltas.push({ deltaType: "metrics", costUsd, durationMs });
+        // Extract token usage from modelUsage (per-model breakdown)
+        const modelUsage = event.modelUsage as Record<string, {
+          inputTokens?: number;
+          outputTokens?: number;
+          cacheReadInputTokens?: number;
+          cacheCreationInputTokens?: number;
+          contextWindow?: number;
+        }> | undefined;
+
+        let inputTokens: number | undefined;
+        let outputTokens: number | undefined;
+        let contextWindow: number | undefined;
+
+        if (modelUsage) {
+          // Find the primary model (largest context window) — its tokens
+          // represent actual context occupancy. Summing across all models
+          // (including sub-agents) inflates the count far beyond the window.
+          let primaryKey: string | undefined;
+          for (const [key, model] of Object.entries(modelUsage)) {
+            if (model.contextWindow && (!contextWindow || model.contextWindow > contextWindow)) {
+              contextWindow = model.contextWindow;
+              primaryKey = key;
+            }
+          }
+
+          if (primaryKey) {
+            const pm = modelUsage[primaryKey];
+            inputTokens = (pm.inputTokens ?? 0) + (pm.cacheReadInputTokens ?? 0) + (pm.cacheCreationInputTokens ?? 0);
+            outputTokens = pm.outputTokens ?? 0;
+          } else {
+            // No context window info — fall back to summing all models
+            inputTokens = 0;
+            outputTokens = 0;
+            for (const model of Object.values(modelUsage)) {
+              inputTokens += (model.inputTokens ?? 0) + (model.cacheReadInputTokens ?? 0) + (model.cacheCreationInputTokens ?? 0);
+              outputTokens += model.outputTokens ?? 0;
+            }
+          }
+        }
+
+        if (costUsd !== undefined || durationMs !== undefined || inputTokens !== undefined) {
+          deltas.push({ deltaType: "metrics", costUsd, durationMs, inputTokens, outputTokens, contextWindow });
         }
         deltas.push({
           deltaType: "turn_end",

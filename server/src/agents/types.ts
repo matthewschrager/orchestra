@@ -17,6 +17,16 @@ export interface AgentSession {
   sessionId?: string;
 }
 
+/** Extended session that keeps the subprocess alive between turns */
+export interface PersistentSession extends AgentSession {
+  /** Inject a follow-up user message into the running subprocess */
+  injectMessage(text: string, sessionId: string): Promise<void>;
+  /** Cleanly close the subprocess and all MCP connections */
+  close(): void;
+  /** Reset parser turn-level state (tool dedup sets, active blocks) between turns */
+  resetTurnState(): void;
+}
+
 export interface ParsedMessage {
   role: string;
   content: string;
@@ -48,4 +58,8 @@ export interface AgentAdapter {
   getVersion(): Promise<string | null>;
   start(opts: StartOpts): AgentSession;
   supportsResume(): boolean;
+  /** Whether this adapter supports persistent (long-lived) sessions */
+  supportsPersistent?(): boolean;
+  /** Start a persistent session — subprocess stays alive between turns */
+  startPersistent?(opts: StartOpts): PersistentSession;
 }

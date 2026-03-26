@@ -12,13 +12,13 @@ export function createPushRoutes(pushManager: PushManager) {
   // Register a push subscription
   app.post("/subscribe", async (c) => {
     const body = await c.req.json();
-    const { endpoint, keys, userAgent } = body;
+    const { endpoint, keys, userAgent, origin } = body;
 
     if (!endpoint || !keys?.p256dh || !keys?.auth) {
       return c.json({ error: "Invalid subscription: endpoint and keys required" }, 400);
     }
 
-    pushManager.addSubscription({ endpoint, keys, userAgent });
+    pushManager.addSubscription({ endpoint, keys, userAgent, origin });
     return c.json({ ok: true });
   });
 

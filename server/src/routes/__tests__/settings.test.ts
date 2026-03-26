@@ -246,6 +246,60 @@ describe("PATCH /settings", () => {
     expect(body.inactivityTimeoutMinutes).toBe(30);
   });
 
+  test("GET returns default remoteUrl (empty string)", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings");
+    const body = await res.json();
+    expect(body.remoteUrl).toBe("");
+  });
+
+  test("PATCH remoteUrl accepts valid HTTPS URL", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ remoteUrl: "https://macbook.tail1234.ts.net/" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.remoteUrl).toBe("https://macbook.tail1234.ts.net/");
+  });
+
+  test("PATCH remoteUrl rejects non-HTTPS URL", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ remoteUrl: "http://evil.com" }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("HTTPS");
+  });
+
+  test("PATCH remoteUrl accepts empty string (to clear)", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    // Set a URL first
+    await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ remoteUrl: "https://test.ts.net/" }),
+    });
+    // Clear it
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ remoteUrl: "" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.remoteUrl).toBe("");
+  });
+
   test("persists across requests", async () => {
     const db = createTestDb();
     const { app } = createApp(db);

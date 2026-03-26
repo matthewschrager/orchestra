@@ -58,6 +58,12 @@ export const api = {
   deleteProject: (id: string) =>
     request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
 
+  cleanupPushedThreads: (projectId: string) =>
+    request<{
+      cleaned: Array<{ id: string; title: string }>;
+      skipped: Array<{ id: string; title: string; reason: string }>;
+    }>(`/projects/${projectId}/cleanup-pushed`, { method: "POST" }),
+
   // Threads
   listThreads: () => request<import("shared").Thread[]>("/threads"),
 
@@ -141,4 +147,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(settings),
     }),
+
+  // Tailscale
+  getTailscaleStatus: (refresh = false) =>
+    request<import("shared").TailscaleStatus>(`/tailscale/status${refresh ? "?refresh=1" : ""}`),
 };
