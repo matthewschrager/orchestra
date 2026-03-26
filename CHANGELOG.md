@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.19.2] - 2026-03-25
+
+### Fixed
+
+- **Cursor invisible after typing slash command** — added `position: relative` to the slash command input textarea so it stacks above the absolutely-positioned highlight backdrop overlay, making the caret visible
+
 ## [0.1.19.1] - 2026-03-25
 
 ### Fixed
