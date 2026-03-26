@@ -792,10 +792,281 @@ describe("ClaudeParser", () => {
           content: [],
         },
       },
+      // No parent_tool_use_id — treated as unknown origin, no extraction
     });
 
     expect(messages).toHaveLength(0);
     expect(deltas).toHaveLength(0);
+  });
+
+  test("message_start from primary model emits per-request input tokens", () => {
+    const parser = createParser();
+    const { messages, deltas } = parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          id: "msg_456",
+          model: "claude-sonnet-4-20250514",
+          type: "message",
+          role: "assistant",
+          content: [],
+          usage: {
+            input_tokens: 50000,
+            cache_read_input_tokens: 10000,
+            cache_creation_input_tokens: 5000,
+            output_tokens: 0,
+          },
+        },
+      },
+      parent_tool_use_id: null,
+      session_id: "sess-ctx",
+    });
+
+    expect(messages).toHaveLength(0);
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0].deltaType).toBe("metrics");
+    // Per-request context = 50000 + 10000 + 5000 = 65000
+    expect(deltas[0].inputTokens).toBe(65000);
+    // Output tokens reset to 0 at start of new API call (prevents stale previous-turn leak)
+    expect(deltas[0].outputTokens).toBe(0);
+    // Model name NOT extracted (avoids sub-agent flicker)
+    expect(deltas[0].modelName).toBeUndefined();
+  });
+
+  test("message_start from sub-agent does NOT emit tokens", () => {
+    const parser = createParser();
+    const { deltas } = parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          id: "msg_sub",
+          model: "claude-haiku-3-5-20250514",
+          type: "message",
+          role: "assistant",
+          content: [],
+          usage: { input_tokens: 3000, output_tokens: 0 },
+        },
+      },
+      parent_tool_use_id: "tu_agent_123",
+      session_id: "sess-sub",
+    });
+
+    expect(deltas).toHaveLength(0);
+  });
+
+  test("result event uses per-request tokens from message_start instead of cumulative", () => {
+    const parser = createParser();
+
+    // Simulate message_start from primary model with per-request tokens
+    parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          id: "msg_primary",
+          model: "claude-opus-4-6",
+          usage: {
+            input_tokens: 80000,
+            cache_read_input_tokens: 20000,
+            cache_creation_input_tokens: 0,
+          },
+        },
+      },
+      parent_tool_use_id: null,
+      session_id: "sess-perreq",
+    });
+
+    // Now the result event fires with CUMULATIVE totals (much larger)
+    const { deltas } = parser.handleMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.50,
+      duration_ms: 5000,
+      session_id: "sess-perreq",
+      permission_denials: [],
+      modelUsage: {
+        "claude-opus-4-6": {
+          inputTokens: 500000,    // Cumulative across all turns
+          outputTokens: 100000,   // Cumulative
+          cacheReadInputTokens: 200000,
+          cacheCreationInputTokens: 50000,
+          contextWindow: 200000,
+        },
+      },
+    });
+
+    const metrics = deltas.find((d) => d.deltaType === "metrics");
+    expect(metrics).toBeDefined();
+    // Should use per-request value (80000 + 20000 = 100000), NOT cumulative (500000 + 200000 + 50000)
+    expect(metrics!.inputTokens).toBe(100000);
+    // Output tokens: per-request not yet set (no message_delta), so 0
+    expect(metrics!.outputTokens).toBe(0);
+    // contextWindow still comes from modelUsage (it's a static property)
+    expect(metrics!.contextWindow).toBe(200000);
+  });
+
+  test("result event falls back to cumulative when no stream events seen", () => {
+    const parser = createParser();
+
+    // No prior message_start events — result event is the first data
+    const { deltas } = parser.handleMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.10,
+      duration_ms: 2000,
+      session_id: "sess-fallback",
+      permission_denials: [],
+      modelUsage: {
+        "claude-opus-4-6": {
+          inputTokens: 5000,
+          outputTokens: 1200,
+          cacheReadInputTokens: 3000,
+          cacheCreationInputTokens: 800,
+          contextWindow: 200000,
+        },
+      },
+    });
+
+    const metrics = deltas.find((d) => d.deltaType === "metrics");
+    expect(metrics).toBeDefined();
+    // Falls back to cumulative: 5000 + 3000 + 800 = 8800
+    expect(metrics!.inputTokens).toBe(8800);
+    expect(metrics!.outputTokens).toBe(1200);
+  });
+
+  test("message_start primary model with no usage field emits no delta", () => {
+    const parser = createParser();
+    const { deltas } = parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          id: "msg_nousage",
+          model: "claude-sonnet-4-20250514",
+          type: "message",
+          role: "assistant",
+          content: [],
+          // No usage field
+        },
+      },
+      parent_tool_use_id: null,
+      session_id: "sess-nousage",
+    });
+
+    expect(deltas).toHaveLength(0);
+  });
+
+  test("message_delta from primary model stores output tokens for result handler", () => {
+    const parser = createParser();
+
+    // message_start sets input tokens
+    parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          id: "msg_md",
+          model: "claude-opus-4-6",
+          usage: { input_tokens: 90000, cache_read_input_tokens: 10000, cache_creation_input_tokens: 0 },
+        },
+      },
+      parent_tool_use_id: null,
+      session_id: "sess-md",
+    });
+
+    // message_delta provides output tokens
+    parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { output_tokens: 3500 },
+      },
+      parent_tool_use_id: null,
+      session_id: "sess-md",
+    });
+
+    // Result event should use per-request input AND output tokens
+    const { deltas } = parser.handleMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.30,
+      duration_ms: 4000,
+      session_id: "sess-md",
+      permission_denials: [],
+      modelUsage: {
+        "claude-opus-4-6": {
+          inputTokens: 800000,
+          outputTokens: 50000,
+          cacheReadInputTokens: 100000,
+          cacheCreationInputTokens: 0,
+          contextWindow: 200000,
+        },
+      },
+    });
+
+    const metrics = deltas.find((d) => d.deltaType === "metrics");
+    expect(metrics).toBeDefined();
+    // Per-request input: 90000 + 10000 = 100000 (not cumulative 800000 + 100000)
+    expect(metrics!.inputTokens).toBe(100000);
+    // Per-request output: 3500 (not cumulative 50000)
+    expect(metrics!.outputTokens).toBe(3500);
+  });
+
+  test("message_delta from sub-agent does NOT store output tokens", () => {
+    const parser = createParser();
+
+    // Primary model message_start
+    parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: {
+          id: "msg_main",
+          model: "claude-opus-4-6",
+          usage: { input_tokens: 50000 },
+        },
+      },
+      parent_tool_use_id: null,
+      session_id: "sess-subdelta",
+    });
+
+    // Sub-agent message_delta — should be ignored
+    parser.handleMessage({
+      type: "stream_event",
+      event: {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { output_tokens: 9999 },
+      },
+      parent_tool_use_id: "tu_subagent_456",
+      session_id: "sess-subdelta",
+    });
+
+    // Result — output tokens should be 0 (sub-agent output not stored)
+    const { deltas } = parser.handleMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.10,
+      duration_ms: 2000,
+      session_id: "sess-subdelta",
+      permission_denials: [],
+      modelUsage: {
+        "claude-opus-4-6": {
+          inputTokens: 500000,
+          outputTokens: 80000,
+          contextWindow: 200000,
+        },
+      },
+    });
+
+    const metrics = deltas.find((d) => d.deltaType === "metrics");
+    expect(metrics).toBeDefined();
+    expect(metrics!.inputTokens).toBe(50000);
+    // Output should be 0 — sub-agent delta was ignored
+    expect(metrics!.outputTokens).toBe(0);
   });
 
   test("result error event still emits metrics and turn_end", () => {
