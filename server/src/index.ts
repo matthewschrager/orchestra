@@ -26,6 +26,7 @@ import {
 import { TunnelManager, generateQRCodeAscii } from "./tunnel/manager";
 import { TailscaleDetector } from "./tailscale/detector";
 import { createTailscaleRoutes } from "./routes/tailscale";
+import { TerminalManager } from "./terminal/manager";
 import { detectWorktree } from "./utils/git";
 import { join } from "path";
 import { homedir } from "os";
@@ -68,6 +69,7 @@ const worktreeManager = new WorktreeManager(db, getWorktreeRoot(db));
 const uploadsDir = join(DATA_DIR || join(homedir(), ".orchestra"), "uploads");
 const sessionManager = new SessionManager(db, registry, worktreeManager, uploadsDir);
 const pushManager = new PushManager(db);
+const terminalManager = new TerminalManager();
 const tailscaleDetector = new TailscaleDetector(PORT);
 
 // Wire push notifications to attention events
