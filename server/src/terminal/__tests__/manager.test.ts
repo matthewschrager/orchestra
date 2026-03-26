@@ -172,6 +172,25 @@ describe("TerminalManager", () => {
     expect(combined).toContain("hello_terminal_test");
   });
 
+  test("create() starts PTY in the specified cwd", async () => {
+    const outputs: string[] = [];
+    manager.onData((_id, data) => {
+      outputs.push(data);
+    });
+
+    manager.create("t-cwd", testDir);
+    // Wait for shell initialization before sending pwd
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    outputs.length = 0; // Clear init output
+    manager.write("t-cwd", "pwd\n");
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const combined = outputs.join("");
+    // The PTY should report the testDir as cwd, not $HOME or elsewhere
+    expect(combined).toContain(testDir);
+  });
+
   test("replay buffer accumulates output", async () => {
     manager.create("t1", testDir);
     manager.write("t1", "echo replay_test_marker\n");
