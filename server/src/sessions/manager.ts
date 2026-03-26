@@ -17,6 +17,7 @@ import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage, Persist
 import type { WorktreeManager } from "../worktrees/manager";
 import type { Attachment, AttentionItem, StreamDelta } from "shared";
 import { resolveAttachmentPaths } from "../routes/uploads";
+import { generateTitle } from "../titles/generator";
 
 /** State machine for persistent sessions: thinking → idle/waiting → thinking */
 export type SessionState = "thinking" | "idle" | "waiting";
@@ -133,6 +134,22 @@ export class SessionManager {
 
     // Broadcast to all WS clients so other devices see the new thread
     this.notifyThread(threadId);
+
+    // Fire-and-forget: generate AI title from prompt (unless user supplied one)
+    if (!opts.title) {
+      const originalTitle = title;
+      generateTitle(opts.prompt)
+        .then((aiTitle) => {
+          if (!aiTitle) return;
+          // Race guard: only update if user hasn't manually edited the title
+          const current = getThread(this.db, threadId);
+          if (current && current.title === originalTitle) {
+            updateThread(this.db, threadId, { title: aiTitle });
+            this.notifyThread(threadId);
+          }
+        })
+        .catch(() => {});
+    }
 
     return thread;
   }
