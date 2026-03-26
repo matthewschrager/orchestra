@@ -104,7 +104,7 @@ app.use("/api/*", async (c, next) => {
 });
 
 // API routes
-app.route("/api/projects", createProjectRoutes(db));
+app.route("/api/projects", createProjectRoutes(db, sessionManager, worktreeManager, terminalManager));
 app.route("/api/threads", createThreadRoutes(db, sessionManager, worktreeManager, terminalManager));
 app.route("/api/agents", createAgentRoutes(registry));
 app.route("/api/commands", createCommandRoutes(db));

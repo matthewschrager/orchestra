@@ -539,6 +539,49 @@ function AppInner() {
     }
   };
 
+  const handleCleanupPushed = async (projectId: string) => {
+    try {
+      setError(null);
+      const result = await api.cleanupPushedThreads(projectId);
+      if (result.cleaned.length === 0) {
+        const reasons = result.skipped.map((s) => `  ${s.title}: ${s.reason.replace(/_/g, " ")}`);
+        alert(
+          `No threads to clean up.` +
+            (reasons.length > 0 ? `\n\nSkipped:\n${reasons.join("\n")}` : ""),
+        );
+        return;
+      }
+      // Remove cleaned threads from local state
+      const cleanedIds = new Set(result.cleaned.map((c) => c.id));
+      setThreads((prev) => prev.filter((t) => !cleanedIds.has(t.id)));
+      if (activeThreadId && cleanedIds.has(activeThreadId)) {
+        setActiveThreadId(null);
+      }
+      // Clean up cached messages
+      setMessages((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const id of cleanedIds) {
+          if (next.has(id)) {
+            next.delete(id);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+      // Refresh projects to update counts
+      api.listProjects().then(setProjects).catch(console.error);
+
+      const skippedMsg =
+        result.skipped.length > 0
+          ? `\n\nSkipped ${result.skipped.length} thread(s) with unpushed work.`
+          : "";
+      alert(`Cleaned up ${result.cleaned.length} thread(s) and worktrees.${skippedMsg}`);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   const handleNewThreadFromSidebar = (projectId: string) => {
     setActiveProjectId(projectId);
     setActiveThreadId(null); // Show empty state for this project
@@ -670,6 +713,7 @@ function AppInner() {
           onNewThread={handleNewThreadFromSidebar}
           onArchiveThread={handleArchiveThread}
           onRemoveProject={handleRemoveProject}
+          onCleanupPushed={handleCleanupPushed}
           onAddProject={() => setShowAddProject(true)}
           onOpenSettings={() => setShowSettings(true)}
           open={sidebarOpen}
