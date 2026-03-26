@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.23.0] - 2026-03-26
+
+### Fixed
+
+- **Duplicate AskUserQuestion cards** — when the agent asked the user a question (via AskUserQuestion tool), the same question appeared 2-3 times in the chat before the user answered; replaced `permissionMode: "bypassPermissions"` with a `canUseTool` callback that denies AskUserQuestion with `interrupt: true`, preventing SDK internal retries
+- **Turn-end state bug** — after AskUserQuestion, the session state was set to `idle` instead of `waiting` because the turn_end handler relied on a per-message variable that missed attention created in earlier messages; now checks the database for pending attention items
+- **AskUser denial noise** — suppressed the SDK's tool_result denial message and `ede_diagnostic` error that were rendered as visual noise below the QuestionCard
+
 ## [0.1.22.0] - 2026-03-25
 
 ### Fixed
