@@ -3,6 +3,7 @@ import type { DB, MessageRow, ThreadRow, AttentionRow } from "../db";
 import {
   getThread,
   getAttentionItem,
+  getPendingAttention,
   getSetting,
   insertMessage,
   updateThread,
@@ -532,23 +533,24 @@ export class SessionManager {
           });
         }
 
-        let attentionHandled = false;
         if (attention) {
-          attentionHandled = this.handleAttentionEvent(activeSession, attention);
+          this.handleAttentionEvent(activeSession, attention);
         }
 
         // ── Turn boundary for persistent sessions ──
         // On turn_end, transition to idle (or waiting if attention pending).
         // The iterator stays alive — next message arrives when user sends follow-up.
         if (isTurnEnd && activeSession.persistent) {
-          // Only set "waiting" if attention was successfully handled; otherwise idle (#8)
-          const newState: SessionState = (attention && attentionHandled) ? "waiting" : "idle";
+          // Check DB for pending attention — more reliable than per-message variable,
+          // which misses attention created in earlier messages of the same turn (#9)
+          const hasPendingAttention = getPendingAttention(this.db, threadId).length > 0;
+          const newState: SessionState = hasPendingAttention ? "waiting" : "idle";
           activeSession.state = newState;
           turnMessageCount = 0;
 
           if (DEBUG) console.log(`[stream] Thread ${threadId} — persistent turn ended, state → ${newState}`);
 
-          if (!attention) {
+          if (!hasPendingAttention) {
             // Turn completed normally — mark done but keep session alive
             updateThread(this.db, threadId, { status: "done", pid: null });
             this.notifyThread(threadId);
