@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ProjectWithStatus, Thread } from "shared";
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
   onNewThread: (projectId: string) => void;
   onArchiveThread: (id: string, opts?: { cleanupWorktree?: boolean }) => void;
   onRemoveProject: (id: string) => void;
+  onCleanupPushed: (projectId: string) => void;
   onAddProject: () => void;
   onOpenSettings: () => void;
   open: boolean;
@@ -43,6 +44,7 @@ export function ProjectSidebar({
   onNewThread,
   onArchiveThread,
   onRemoveProject,
+  onCleanupPushed,
   onAddProject,
   onOpenSettings,
   open,
@@ -64,6 +66,21 @@ export function ProjectSidebar({
     });
     onSelectProject(projectId);
   };
+
+  const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuOpenFor) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpenFor(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [menuOpenFor]);
 
   const threadsByProject = (projectId: string) =>
     threads.filter((t) => t.projectId === projectId);
@@ -133,21 +150,57 @@ export function ProjectSidebar({
                       </span>
                     )}
                   </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (confirm(`Remove "${project.name}" from the project list? Threads will be archived.`)) {
-                        onRemoveProject(project.id);
-                      }
-                    }}
-                    className="opacity-0 group-hover/project:opacity-100 px-2 py-2.5 mr-1 text-content-3 hover:text-red-400 shrink-0"
-                    title="Remove project"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
+                  <div className="relative shrink-0" ref={menuOpenFor === project.id ? menuRef : undefined}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenFor(menuOpenFor === project.id ? null : project.id);
+                      }}
+                      className="opacity-0 group-hover/project:opacity-100 px-2 py-2.5 mr-1 text-content-3 hover:text-content-2 shrink-0"
+                      title="Project actions"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                        <circle cx="8" cy="3" r="1.5" />
+                        <circle cx="8" cy="8" r="1.5" />
+                        <circle cx="8" cy="13" r="1.5" />
+                      </svg>
+                    </button>
+                    {menuOpenFor === project.id && (
+                      <div className="absolute right-0 top-full z-50 mt-1 w-52 rounded-lg border border-edge-1 bg-surface-2 shadow-xl py-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMenuOpenFor(null);
+                            onCleanupPushed(project.id);
+                          }}
+                          className="w-full text-left px-3 py-2 text-sm text-content-2 hover:bg-surface-3 flex items-center gap-2"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          </svg>
+                          Clean up pushed
+                        </button>
+                        <div className="border-t border-edge-1 my-1" />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMenuOpenFor(null);
+                            if (confirm(`Remove "${project.name}" from the project list? Threads will be archived.`)) {
+                              onRemoveProject(project.id);
+                            }
+                          }}
+                          className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-surface-3 flex items-center gap-2"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                          Remove project
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Thread list */}

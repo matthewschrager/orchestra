@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.20.0] - 2026-03-25
+
+### Added
+
+- **Bulk cleanup of pushed worktree threads** — new `POST /projects/:id/cleanup-pushed` endpoint archives all non-active threads whose worktree branches are fully pushed to remote (no uncommitted changes, no unpushed commits), cleaning up worktrees and branches
+- **Project hamburger menu** — vertical dots dropdown on each project header in the sidebar with "Clean up pushed" and "Remove project" actions (replaces previous X button)
+- **`isPushedToRemote` check** — WorktreeManager method validates git status, remote ref existence, and unpushed commit count with proper exit code handling (fail-safe on git errors)
+
 ## [0.1.19.2] - 2026-03-25
 
 ### Fixed

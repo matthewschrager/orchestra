@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { existsSync } from "fs";
-import type { DB } from "../db";
+import type { DB, ThreadRow } from "../db";
 import {
   deleteProject,
   getProject,
@@ -12,8 +12,16 @@ import {
 } from "../db";
 import { getCurrentBranch } from "../utils/git";
 import type { ProjectWithStatus } from "shared";
+import type { SessionManager } from "../sessions/manager";
+import type { WorktreeManager } from "../worktrees/manager";
+import type { TerminalManager } from "../terminal/manager";
 
-export function createProjectRoutes(db: DB) {
+export function createProjectRoutes(
+  db: DB,
+  sessionManager?: SessionManager,
+  worktreeManager?: WorktreeManager,
+  terminalManager?: TerminalManager,
+) {
   const app = new Hono();
 
   // List all projects with enriched status
@@ -93,6 +101,87 @@ export function createProjectRoutes(db: DB) {
 
     deleteProject(db, id);
     return c.json({ ok: true });
+  });
+
+  // Cleanup all threads whose worktree branches are fully pushed to remote
+  app.post("/:id/cleanup-pushed", async (c) => {
+    if (!sessionManager || !worktreeManager) {
+      return c.json({ error: "Managers not available" }, 500);
+    }
+
+    const projectId = c.req.param("id");
+    const project = getProject(db, projectId);
+    if (!project) return c.json({ error: "Not found" }, 404);
+
+    // Fetch remote refs so isPushedToRemote uses up-to-date data
+    // Non-fatal — isPushedToRemote will still work with stale refs (conservative)
+    try {
+      const fetchProc = Bun.spawn(["git", "fetch", "origin", "--prune"], {
+        cwd: project.path,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await fetchProc.exited;
+    } catch {
+      // git not available or path invalid — continue with local refs
+    }
+
+    const threads = db
+      .query(
+        "SELECT * FROM threads WHERE project_id = ? AND archived_at IS NULL",
+      )
+      .all(projectId) as ThreadRow[];
+
+    const cleaned: Array<{ id: string; title: string }> = [];
+    const skipped: Array<{ id: string; title: string; reason: string }> = [];
+
+    for (const thread of threads) {
+      // Skip active threads
+      if (["running", "pending", "waiting"].includes(thread.status)) {
+        skipped.push({
+          id: thread.id,
+          title: thread.title,
+          reason: "still_active",
+        });
+        continue;
+      }
+
+      // Only consider threads with worktrees
+      if (!thread.worktree) continue;
+
+      const pushStatus = await worktreeManager.isPushedToRemote(thread.id);
+      if (!pushStatus.pushed) {
+        skipped.push({
+          id: thread.id,
+          title: thread.title,
+          reason: pushStatus.reason || "not_pushed",
+        });
+        continue;
+      }
+
+      // Safe to clean up
+      sessionManager.stopThread(thread.id);
+      terminalManager?.closeForThread(thread.id);
+
+      try {
+        await worktreeManager.cleanup(thread.id, thread.repo_path);
+      } catch {
+        skipped.push({
+          id: thread.id,
+          title: thread.title,
+          reason: "cleanup_failed",
+        });
+        continue;
+      }
+
+      db.query(
+        "UPDATE threads SET archived_at = datetime('now') WHERE id = ?",
+      ).run(thread.id);
+      sessionManager.notifyThread(thread.id);
+      cleaned.push({ id: thread.id, title: thread.title });
+    }
+
+    return c.json({ cleaned, skipped });
   });
 
   return app;

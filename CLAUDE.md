@@ -110,6 +110,7 @@ cd server && bun run src/index.ts  # Production server
 - Worktree branching: `git worktree add` always branches from detected main/master, not HEAD — prevents inheriting polluted checkout state from non-isolated agents
 - Cross-client thread sync: thread creation and archival broadcast `thread_updated` via WS to all clients; client deduplicates optimistic inserts
 - Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag
+- Bulk cleanup pushed: POST /projects/:id/cleanup-pushed archives all non-active threads whose worktree branches are fully pushed to remote (no uncommitted changes, no unpushed commits); project hamburger menu in sidebar triggers it
 - Session abort: persistent sessions use `Query.close()`; legacy sessions use AbortController. `aborted` flag distinguishes user-stop from SDK error
 - Inactivity timeout (default 30 min, configurable via Settings) replaces PID-based health check for hung SDK iterators
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
