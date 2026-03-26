@@ -212,6 +212,54 @@ describe("TailscaleDetector", () => {
     restoreMocks();
   });
 
+  test("detects HTTPS-to-HTTP proxy mismatch", async () => {
+    mockCli({
+      statusJson: {
+        Self: { TailscaleIPs: ["100.1.2.3"], DNSName: "host.tail.ts.net." },
+      },
+      serveJson: {
+        TCP: { "443": { HTTPS: true } },
+        Web: {
+          "host.tail.ts.net:443": {
+            Handlers: {
+              "/": { Proxy: "https://localhost:3847" }, // Wrong! Should be http://
+            },
+          },
+        },
+      },
+    });
+    const detector = new TailscaleDetector(3847);
+    const status = await detector.detect();
+    expect(status.proxyMismatch).toBe(true);
+    expect(status.portMatch).toBe(true); // Port matches, but protocol is wrong
+    expect(status.httpsUrl).toBeNull(); // URL should NOT be shown — it won't work
+    restoreMocks();
+  });
+
+  test("no mismatch when proxy target is HTTP", async () => {
+    mockCli({
+      statusJson: {
+        Self: { TailscaleIPs: ["100.1.2.3"], DNSName: "host.tail.ts.net." },
+      },
+      serveJson: {
+        TCP: { "443": { HTTPS: true } },
+        Web: {
+          "host.tail.ts.net:443": {
+            Handlers: {
+              "/": { Proxy: "http://localhost:3847" }, // Correct!
+            },
+          },
+        },
+      },
+    });
+    const detector = new TailscaleDetector(3847);
+    const status = await detector.detect();
+    expect(status.proxyMismatch).toBe(false);
+    expect(status.portMatch).toBe(true);
+    expect(status.httpsUrl).toBe("https://host.tail.ts.net/");
+    restoreMocks();
+  });
+
   test("refresh() resets CLI path cache after initial failure", async () => {
     // First detect: CLI not found
     mockCli({ whichResult: 1 });

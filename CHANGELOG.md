@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.22.0] - 2026-03-25
+
+### Fixed
+
+- **Tailscale HTTPS-to-HTTP proxy mismatch detection** — when `tailscale serve` proxies to `https://localhost:PORT` but Orchestra runs plain HTTP, the TLS-to-plaintext mismatch causes a 502 (mobile browsers download this as "document.txt"); the server now detects this misconfiguration and the Settings panel shows a red warning with a one-click-copy fix command
+- **Updated tailscale serve command syntax** — suggested command changed from old `tailscale serve --bg https / http://...` to current `tailscale serve --bg PORT` (compatible with Tailscale v1.96+)
+- **Port regex prefix-match false positive** — port detection regex could match e.g. port 38470 when looking for 3847; added negative lookahead to prevent
+
 ## [0.1.21.1] - 2026-03-25
 
 ### Fixed

@@ -203,6 +203,8 @@ export interface TailscaleStatus {
   httpsUrl: string | null;
   /** Whether tailscale serve maps to this Orchestra instance's port */
   portMatch: boolean;
+  /** Proxy target uses HTTPS but Orchestra is HTTP — will cause 502 */
+  proxyMismatch: boolean;
   /** Orchestra server port (for generating correct tailscale serve command) */
   orchestraPort: number;
   /** Current remoteUrl setting value */
