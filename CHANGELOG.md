@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.21.1] - 2026-03-25
+
+### Fixed
+
+- **Tailscale auto-detection permanently cached on failure** — if `tailscale` CLI wasn't found at server startup (e.g., installed after boot), detection was stuck returning `installed: false` forever, even when the UI "Refresh" button was clicked; now `refresh()` resets the CLI path cache and failed lookups retry automatically on the next detection cycle
+
 ## [0.1.21.0] - 2026-03-25
 
 ### Added

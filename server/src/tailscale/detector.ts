@@ -40,16 +40,19 @@ export class TailscaleDetector {
     return this.refresh();
   }
 
-  /** Force a fresh detection, bypassing cache. */
+  /** Force a fresh detection, bypassing cache (including CLI path cache). */
   async refresh(): Promise<TailscaleStatus> {
+    // Reset CLI path cache so we re-detect if tailscale was installed/started after boot
+    this.cliChecked = false;
+    this.cliPath = null;
     const status = await this.detectFresh();
     this.cache = { status, timestamp: Date.now() };
     return status;
   }
 
-  /** Resolve the working CLI path (cached after first check). */
+  /** Resolve the working CLI path (cached after first successful check). */
   private async resolveCliPath(): Promise<string | null> {
-    if (this.cliChecked) return this.cliPath;
+    if (this.cliChecked && this.cliPath) return this.cliPath;
     this.cliChecked = true;
 
     for (const path of CLI_PATHS) {
