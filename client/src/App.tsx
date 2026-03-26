@@ -22,6 +22,7 @@ import { TerminalPanel } from "./components/TerminalPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { MobileThreadHeader } from "./components/MobileThreadHeader";
 import { parseTodos } from "./components/renderers/TodoRenderer";
+import { OrchestraLogo } from "./components/OrchestraLogo";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -657,7 +658,10 @@ function AppInner() {
           >
             <MenuIcon />
           </button>
-          <h1 className="text-sm font-semibold tracking-tight text-content-2 shrink-0">Orchestra</h1>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <OrchestraLogo size={20} color="var(--accent)" />
+            <h1 className="text-sm font-semibold tracking-tight text-content-2">Orchestra</h1>
+          </div>
           {activeProject && (
             <span className="text-xs text-content-3 font-light shrink-0">
               / {activeProject.name}
