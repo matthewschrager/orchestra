@@ -116,8 +116,9 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
         case "metrics": {
           const metrics = new Map(state.metrics);
           const prev = state.metrics.get(delta.threadId) ?? { ...EMPTY_METRICS };
-          // Only count as a turn if there's actual turn data (not just model info)
-          const hasTurnData = delta.costUsd !== undefined || delta.durationMs !== undefined || delta.inputTokens !== undefined;
+          // Only count as a turn on result events (cost/duration), not intermediate
+          // context updates from message_start stream events
+          const hasTurnData = delta.costUsd !== undefined || delta.durationMs !== undefined;
           metrics.set(delta.threadId, {
             costUsd: prev.costUsd + (delta.costUsd ?? 0),
             durationMs: prev.durationMs + (delta.durationMs ?? 0),

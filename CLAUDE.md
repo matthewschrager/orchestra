@@ -93,9 +93,10 @@ cd server && bun run src/index.ts  # Production server
 - Shiki syntax highlighting lazy-loaded via module-level singleton with DOMPurify sanitization
 - Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
 - Cost/duration/token metrics extracted from Claude result events and displayed in StickyRunBar
-- Context window indicator: token usage (input+output) vs model context window shown as color-coded progress bar; uses replacement semantics (SDK reports cumulative totals); `Math.max` for contextWindow to prevent sub-agent regression
-- Model name display: extracted from SDK events (`system` init, `message_start` stream, `modelUsage` result keys); streamed via `modelName` field on `StreamDelta`/`TurnMetrics`; displayed in StickyRunBar with date-suffix stripping (`formatModelName`); no hard-coded model list
+- Context window indicator: token usage (input+output) vs model context window shown as color-coded progress bar; uses **per-request** tokens from `message_start` stream events (not cumulative `modelUsage` which inflates across turns); `Math.max` for contextWindow to prevent sub-agent regression; primary-model filtering via `parent_tool_use_id === null`
+- Model name display: extracted from SDK events (`system` init, `modelUsage` result keys); streamed via `modelName` field on `StreamDelta`/`TurnMetrics`; displayed in StickyRunBar with date-suffix stripping (`formatModelName`); no hard-coded model list
 - Attention queue: AskUserQuestion/permission tool_use events detected in SDK message stream, persisted to `attention_required` table, broadcast to ALL WS clients (cross-thread), resolvable via REST or WS with first-caller-wins race guard
+- ExitPlanMode auto-approval: SDK bug where `requiresUserInteraction()` short-circuits `bypassPermissions` causes ExitPlanMode to be denied in headless SDK mode. Workaround: detect ExitPlanMode tool_use in stream via `exitPlanMode` flag on `ParseResult`, then auto-send "Plan approved. Proceed with implementation." on turn end
 - Session IDs persisted to `session_id` column on threads table (survives server restart)
 - Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
 - Push notifications: VAPID keys auto-generated, Web Push dispatch on attention events; per-subscription `origin` column on `push_subscriptions` table enables per-sub `targetUrl` in push payloads for cross-origin notification deep-links
