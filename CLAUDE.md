@@ -53,7 +53,8 @@ orchestra/
 │       │       ├── BashRenderer.tsx    Bash → terminal block
 │       │       ├── ReadRenderer.tsx    Read → syntax-highlighted file
 │       │       ├── SearchRenderer.tsx  Grep/Glob → match list
-│       │       └── SubAgentCard.tsx    Agent → status card
+│       │       ├── SubAgentCard.tsx    Agent → status card
+│       │       └── TodoCard.tsx        TodoWrite → task checklist card
 │       │   ├── AttentionInbox.tsx  Attention queue inbox
 │       │   ├── SettingsPanel.tsx   Settings modal dialog
 │       │   ├── RemoteAccessSettings.tsx Remote Access section (Tailscale detection + guided setup)
@@ -89,7 +90,8 @@ cd server && bun run src/index.ts  # Production server
 - Real-time streaming via ephemeral WebSocket deltas (not persisted to DB)
 - Complete messages persisted to SQLite with WAL mode, seq-based replay on reconnect
 - Token auth enforced for non-localhost requests (and always when `--tunnel` is active)
-- Rich tool renderers parse stream-json tool data into visual components (diffs, terminal blocks, search results)
+- Rich tool renderers parse stream-json tool data into visual components (diffs, terminal blocks, search results); special tools (AskUser, Agent, TodoWrite) registered in declarative `TOOL_RENDERERS` map
+- TodoWrite rendering: latest TodoWrite renders as prominent card with all tasks, per-task status (✓ completed/▸ running/○ queued), progress bar, ARIA roles; prior TodoWrites collapse to expandable summary lines; `parseTodos()` normalizes both Claude SDK `{todos}` and Codex `{items}` shapes; `latestTodos` hydrated from REST history with streaming race guard
 - Shiki syntax highlighting lazy-loaded via module-level singleton with DOMPurify sanitization
 - Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
 - Cost/duration/token metrics extracted from Claude result events and displayed in StickyRunBar

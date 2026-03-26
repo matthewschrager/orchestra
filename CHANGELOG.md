@@ -4,10 +4,21 @@
 
 ### Fixed
 
+- **TodoWrite rendering broken (missing import)** — `ChatView.tsx` referenced `<TodoRenderer>` without importing it, causing TodoWrite tool results to silently fail to render
+- **Codex TodoWrite data shape mismatch** — Codex adapter emits `{ items: [{ text, completed }] }` but the parser only accepted Claude SDK's `{ todos: [{ content, status, activeForm }] }`; `parseTodos()` now normalizes both shapes with explicit `String()` coercion for type safety
+- **`latestTodos` not hydrated from message history** — after page reload, StickyRunBar showed no task state because `latestTodos` was only populated from live WebSocket messages, not REST-loaded history
+- **History hydration race condition** — added guard to prevent slower REST history load from overwriting newer streaming todo state
 - **Duplicate AskUserQuestion cards** — when the agent asked the user a question (via AskUserQuestion tool), the same question appeared 2-3 times in the chat before the user answered; replaced `permissionMode: "bypassPermissions"` with a `canUseTool` callback that denies AskUserQuestion with `interrupt: true`, preventing SDK internal retries
 - **Turn-end state bug** — after AskUserQuestion, the session state was set to `idle` instead of `waiting` because the turn_end handler relied on a per-message variable that missed attention created in earlier messages; now checks the database for pending attention items
 - **AskUser denial noise** — suppressed the SDK's tool_result denial message and `ede_diagnostic` error that were rendered as visual noise below the QuestionCard
 - **ExitPlanMode stuck threads** — SDK bug where `requiresUserInteraction()` short-circuits `bypassPermissions` causes ExitPlanMode to be denied in headless mode; Orchestra now detects ExitPlanMode in the SDK stream and auto-approves by sending "Plan approved. Proceed with implementation." on turn end, preventing the denial/retry loop that caused threads to hang
+
+### Added
+
+- **Prominent TodoCard rendering** — latest TodoWrite renders as a full-width card showing all tasks with per-task status (✓ completed, ▸ running, ○ queued), progress bar, and ARIA accessibility roles; prior TodoWrites collapse to clickable `✓ Updated tasks (X/Y)` lines expandable for history inspection
+- **StickyRunBar active task display** — shows the currently running task description (e.g., `▸ Running integration tests (3/5)`) instead of just `3/5 tasks`
+- **`TOOL_RENDERERS` declarative registry** — replaces ad-hoc if/switch pattern in `ToolLine` for special tool rendering (AskUser, Agent, TodoWrite); adding new special tools is now a one-line registry entry
+- **Codex TodoWrite normalization tests** — 7 new parser tests covering Codex shape, `completed` boolean mapping, `todos`-over-`items` preference, and empty array handling
 
 ## [0.1.22.2] - 2026-03-26
 
