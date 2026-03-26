@@ -1,5 +1,109 @@
 # Changelog
 
+## [0.1.20.0] - 2026-03-25
+
+### Added
+
+- **Bulk cleanup of pushed worktree threads** — new `POST /projects/:id/cleanup-pushed` endpoint archives all non-active threads whose worktree branches are fully pushed to remote (no uncommitted changes, no unpushed commits), cleaning up worktrees and branches
+- **Project hamburger menu** — vertical dots dropdown on each project header in the sidebar with "Clean up pushed" and "Remove project" actions (replaces previous X button)
+- **`isPushedToRemote` check** — WorktreeManager method validates git status, remote ref existence, and unpushed commit count with proper exit code handling (fail-safe on git errors)
+
+## [0.1.19.2] - 2026-03-25
+
+### Fixed
+
+- **Cursor invisible after typing slash command** — added `position: relative` to the slash command input textarea so it stacks above the absolutely-positioned highlight backdrop overlay, making the caret visible
+
+## [0.1.19.1] - 2026-03-25
+
+### Fixed
+
+- **Settings icon** — replaced sun-like icon (circle with radiating lines) with a standard gear/cog icon in both the header and sidebar
+
+## [0.1.19.0] - 2026-03-25
+
+### Changed
+
+- **Improved empty state UX** — redesigned the "new thread" launch view with project path display, recent threads list (clickable, with status dots and relative timestamps), and a subtle radial glow background
+- **Always-visible thread options** — model selector and "Isolate to worktree" checkbox are now permanently visible in the InputBar when creating a new thread, instead of hidden behind an "Options" toggle
+- **Send button alignment** — fixed subtle 1px misalignment between the Send button and text input by matching border box models
+
+## [0.1.18.0] - 2026-03-25
+
+### Added
+
+- **Always-on remote access via Tailscale** — TailscaleDetector class detects Tailscale installation, IP, hostname, and `tailscale serve` HTTPS configuration with multi-platform CLI detection and 10s cache
+- **Remote Access section in Settings panel** — 3-state UI (Not Detected → Detected → HTTPS Ready) with guided setup instructions, copy buttons, and manual URL fallback
+- **`/api/tailscale/status` endpoint** — exposes Tailscale detection status for the Settings panel with refresh support
+- **Per-subscription push notification origins** — each push subscription stores the browser origin it was created from; deep-link URLs are computed per-subscription so each device gets links to its own URL
+- **Cross-origin notification clicks** — service worker handles `targetUrl` from push payload, correctly opening new windows for cross-origin clicks
+- **`remoteUrl` setting** — display-only HTTPS URL in Settings, validated to HTTPS-only scheme
+- **Tailnet ACL warning** — Settings panel and startup output warn that any device on the tailnet can access Orchestra without a token when using `tailscale serve`
+
+### Changed
+
+- **Push notification payloads** now include per-subscription `targetUrl` in the `data` field
+- **Push subscription API** accepts optional `origin` field from clients
+- **`push_subscriptions` table** gains `origin` column (auto-migrated)
+
+## [0.1.17.0] - 2026-03-25
+
+### Added
+
+- **Persistent query architecture** — Claude Code sessions now keep a long-lived `Query` object per thread; subprocess stays alive between turns and follow-ups are injected via `streamInput()`, eliminating MCP reconnection delay on every follow-up message
+- **`PersistentSession` interface** — extends `AgentSession` with `injectMessage()`, `close()`, and `resetTurnState()` methods; adapters opt in via `supportsPersistent()`
+- **Session state machine** — `ActiveSession` tracks `thinking → idle/waiting → thinking` state; rejects messages while agent is mid-turn, properly handles attention queue transitions
+- **Auto-restart with circuit breaker** — persistent sessions that crash mid-turn auto-restart via resume (max 2 attempts) with fallback to legacy per-turn mode
+- **Parser turn-state reset** — `ClaudeParser.resetTurnState()` clears dedup sets between turns to prevent memory growth in long-lived sessions
+- 6 new persistent session tests covering lifecycle, streamInput injection, close, thinking guard, crash detection, and idle exit
+
+### Changed
+
+- **`sendMessage()` persistent path** — injects follow-up messages into living subprocess instead of aborting and restarting; falls back to restart on `streamInput()` failure
+- **`stopThread()` uses `close()`** for persistent sessions instead of `AbortController.abort()`
+- **`consumeStream()` stays alive across turns** — `result` events transition state to idle instead of ending the stream loop; iterator end signals subprocess death
+- **Inactivity timeout skips idle/waiting** persistent sessions — subprocess staying alive between user messages is expected behavior
+
+## [0.1.16.0] - 2026-03-25
+
+### Added
+
+- **Codex CLI agent adapter** — Orchestra now supports OpenAI Codex as a second agent alongside Claude Code; when `@openai/codex-sdk` is installed and the user has run `codex login`, "codex" appears in the agent dropdown automatically
+- **Codex event parser** — maps Codex SDK events to Orchestra's streaming and persistence model: `command_execution` → Bash renderer, `file_change` → Edit renderer, `web_search` → WebSearch, `mcp_tool_call` → MCP tool name, `todo_list` → TodoWrite
+- **Text delta diffing with backtrack guard** — computes character-level streaming deltas from Codex's full-text `agent_message` updates, with a guard for model text revisions
+- **Codex parser tests** — 25 unit tests covering all event types, text diffing edge cases, tool mapping, and error handling
+
+### Changed
+
+- **SessionManager decoupled from Claude SDK** — replaced `AbortError` import from `@anthropic-ai/claude-agent-sdk` with a generic `isAbortError()` helper that works with any agent adapter
+- **AgentRegistry** now registers both `ClaudeAdapter` and `CodexAdapter`
+
+## [0.1.15.0] - 2026-03-25
+
+### Added
+
+- **Context window indicator** — real-time progress bar in StickyRunBar showing token usage vs. model context window size, with color-coded thresholds (green → yellow → orange → red) and compact token count label (e.g. "42k", "1.2M")
+- **Token usage extraction from SDK** — parses `modelUsage` from Claude Agent SDK result events to extract input/output tokens, cache tokens, and context window size per model
+- **Token usage tests** — 4 new tests covering single-model extraction, multi-model aggregation, empty modelUsage, and missing optional fields
+
+### Changed
+
+- **Token fields added to shared types** — `StreamDelta` and `TurnMetrics` interfaces extended with `inputTokens`, `outputTokens`, and `contextWindow` fields
+- **Replacement semantics for token metrics** — client reducer uses latest-value (not additive) for token counts since SDK reports cumulative session totals; `contextWindow` uses `Math.max` to prevent regression from sub-agent models
+
+## [0.1.14.0] - 2026-03-25
+
+### Added
+
+- **Integrated terminal** — xterm.js v6 terminal panel with Bun native PTY (`Bun.spawn({ terminal })`); toggle via `Ctrl+`` or `>_` header button; defaults to thread's working directory; PTY persists across thread switches with 50KB replay buffer for viewport restore; output batched at ~60fps; 15-min idle timeout; max 20 concurrent PTYs; server-side `closeForThread()` on thread archive; disabled in tunnel mode (security); desktop only
+- **Terminal tests** — 19 unit tests covering PTY create, idempotent reattach, max limit, input validation, resize clamping, close/cleanup, replay buffer, and I/O roundtrip
+
+### Fixed
+
+- **API status route ordering** — `/api/status` was registered after SPA fallback, returning HTML instead of JSON
+- **Vite proxy port hardcoded** — dev server proxy now reads `ORCHESTRA_PORT` env var, enabling worktree-isolated dev environments
+- **Production build crash** — `api()` called as function but `api` is an exported object; caused silent `TypeError` killing React in production builds
+
 ## [0.1.13.0] - 2026-03-25
 
 ### Changed

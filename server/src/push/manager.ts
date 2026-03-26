@@ -16,6 +16,7 @@ interface PushSubscriptionRow {
   keys_p256dh: string;
   keys_auth: string;
   user_agent: string | null;
+  origin: string;
   created_at: string;
 }
 
@@ -44,12 +45,13 @@ export class PushManager {
     endpoint: string;
     keys: { p256dh: string; auth: string };
     userAgent?: string;
+    origin?: string;
   }): void {
     const id = nanoid(16);
     this.db.query(
-      `INSERT OR REPLACE INTO push_subscriptions (id, endpoint, keys_p256dh, keys_auth, user_agent)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).run(id, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth, subscription.userAgent ?? null);
+      `INSERT OR REPLACE INTO push_subscriptions (id, endpoint, keys_p256dh, keys_auth, user_agent, origin)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(id, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth, subscription.userAgent ?? null, subscription.origin ?? "");
   }
 
   /** Remove a push subscription by endpoint. */
@@ -65,19 +67,28 @@ export class PushManager {
 
     if (subscriptions.length === 0) return;
 
-    const payload = JSON.stringify({
-      title: "Orchestra — Agent needs input",
-      body: attention.prompt.slice(0, 100),
-      data: {
-        threadId: attention.threadId,
-        attentionId: attention.id,
-        kind: attention.kind,
-      },
-    });
+    // Build relative path for deep-link
+    const relativePath = `/?thread=${attention.threadId}&attention=${attention.id}`;
 
     const results = await Promise.allSettled(
-      subscriptions.map((sub) =>
-        webpush.sendNotification(
+      subscriptions.map((sub) => {
+        // Per-subscription origin: compute targetUrl from stored origin
+        const targetUrl = sub.origin
+          ? `${sub.origin}${relativePath}`
+          : relativePath; // Legacy subscriptions without origin get relative path
+
+        const payload = JSON.stringify({
+          title: "Orchestra — Agent needs input",
+          body: attention.prompt.slice(0, 100),
+          data: {
+            threadId: attention.threadId,
+            attentionId: attention.id,
+            kind: attention.kind,
+            targetUrl,
+          },
+        });
+
+        return webpush.sendNotification(
           {
             endpoint: sub.endpoint,
             keys: { p256dh: sub.keys_p256dh, auth: sub.keys_auth },
@@ -91,8 +102,8 @@ export class PushManager {
           } else {
             console.warn(`[push] Failed to send to ${sub.endpoint.slice(0, 50)}...:`, err.statusCode ?? err.message);
           }
-        }),
-      ),
+        });
+      }),
     );
 
     const sent = results.filter((r) => r.status === "fulfilled").length;

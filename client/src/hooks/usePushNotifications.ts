@@ -82,6 +82,7 @@ export function usePushNotifications(): PushState & {
             auth: arrayBufferToBase64(sub.getKey("auth")!),
           },
           userAgent: navigator.userAgent,
+          origin: window.location.origin,
         }),
       });
 

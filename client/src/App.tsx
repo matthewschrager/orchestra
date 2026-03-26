@@ -4,7 +4,7 @@ import { useWebSocket } from "./hooks/useWebSocket";
 import { api } from "./hooks/useApi";
 import { useAttention } from "./hooks/useAttention";
 import { ProjectSidebar } from "./components/ProjectSidebar";
-import { ChatView } from "./components/ChatView";
+import { ChatView, type ChatViewHandle } from "./components/ChatView";
 import { ContextPanel } from "./components/ContextPanel";
 import { InputBar } from "./components/InputBar";
 import { AuthGate } from "./components/AuthGate";
@@ -17,6 +17,8 @@ import { MobileNewSession } from "./components/MobileNewSession";
 import { usePushNotifications } from "./hooks/usePushNotifications";
 import { isAskUserTool } from "./lib/askUser";
 import { WorktreePathInput } from "./components/WorktreePathInput";
+import { useTerminal } from "./hooks/useTerminal";
+import { TerminalPanel } from "./components/TerminalPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 
 export function App() {
@@ -62,7 +64,7 @@ const initialStreamingState: StreamingState = {
   turnEnded: new Set(),
 };
 
-const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0 };
+const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0 };
 
 type StreamingAction =
   | { type: "delta"; delta: StreamDelta }
@@ -118,6 +120,9 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
             costUsd: prev.costUsd + (delta.costUsd ?? 0),
             durationMs: prev.durationMs + (delta.durationMs ?? 0),
             turnCount: prev.turnCount + 1,
+            inputTokens: delta.inputTokens ?? prev.inputTokens,
+            outputTokens: delta.outputTokens ?? prev.outputTokens,
+            contextWindow: Math.max(delta.contextWindow ?? 0, prev.contextWindow),
           });
           return { ...state, metrics };
         }
@@ -192,6 +197,8 @@ function AppInner() {
   const [showSettings, setShowSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [lastTerminalMsg, setLastTerminalMsg] = useState<WSServerMessage | null>(null);
   const [latestTodos, setLatestTodos] = useState<Map<string, TodoItem[]>>(new Map());
   const [pushBannerDismissed, setPushBannerDismissed] = useState(
     () => localStorage.getItem("orchestra_push_dismissed") === "1",
@@ -203,6 +210,7 @@ function AppInner() {
   const wasConnectedRef = useRef<boolean | null>(null);
   const activeThreadRef = useRef<string | null>(null);
   activeThreadRef.current = activeThreadId;
+  const chatViewRef = useRef<ChatViewHandle>(null);
 
   // Attention system — cross-thread pending questions/permissions
   const attention = useAttention();
@@ -220,6 +228,15 @@ function AppInner() {
   const activeMetrics = activeThreadId ? streaming.metrics.get(activeThreadId) ?? EMPTY_METRICS : EMPTY_METRICS;
   const activeTurnEnded = activeThreadId ? streaming.turnEnded.has(activeThreadId) : false;
   const activeTodos = activeThreadId ? latestTodos.get(activeThreadId) ?? null : null;
+
+  // Recent non-archived threads for the active project (empty-state display)
+  const recentProjectThreads = useMemo(() =>
+    threads
+      .filter((t) => t.projectId === activeProjectId && !t.archivedAt)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .slice(0, 5),
+    [threads, activeProjectId],
+  );
 
   // Detect unanswered ask-user tool calls — check if there's one after the last user message
   const pendingQuestion = useMemo(() => {
@@ -301,8 +318,42 @@ function AppInner() {
     }, []),
     onRawMessage: useCallback((msg: WSServerMessage) => {
       attention.handleWSMessage(msg);
+      // Route terminal messages
+      if (msg.type === "terminal_output" || msg.type === "terminal_exit" ||
+          msg.type === "terminal_created" || msg.type === "terminal_error") {
+        setLastTerminalMsg(msg);
+      }
     }, []), // eslint-disable-line react-hooks/exhaustive-deps
   });
+
+  // Terminal hook
+  const terminal = useTerminal({
+    threadId: activeThreadId,
+    visible: terminalOpen,
+    send,
+  });
+
+  // Route terminal WS messages to the hook
+  useEffect(() => {
+    if (lastTerminalMsg) {
+      terminal.handleMessage(lastTerminalMsg);
+    }
+  }, [lastTerminalMsg]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keyboard shortcut: Ctrl+` / Cmd+` to toggle terminal
+  const activeThreadIdRef = useRef(activeThreadId);
+  activeThreadIdRef.current = activeThreadId;
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "`") {
+        e.preventDefault();
+        if (!activeThreadIdRef.current) return;
+        setTerminalOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Subscribe to active thread
   useEffect(() => {
@@ -511,6 +562,49 @@ function AppInner() {
     }
   };
 
+  const handleCleanupPushed = async (projectId: string) => {
+    try {
+      setError(null);
+      const result = await api.cleanupPushedThreads(projectId);
+      if (result.cleaned.length === 0) {
+        const reasons = result.skipped.map((s) => `  ${s.title}: ${s.reason.replace(/_/g, " ")}`);
+        alert(
+          `No threads to clean up.` +
+            (reasons.length > 0 ? `\n\nSkipped:\n${reasons.join("\n")}` : ""),
+        );
+        return;
+      }
+      // Remove cleaned threads from local state
+      const cleanedIds = new Set(result.cleaned.map((c) => c.id));
+      setThreads((prev) => prev.filter((t) => !cleanedIds.has(t.id)));
+      if (activeThreadId && cleanedIds.has(activeThreadId)) {
+        setActiveThreadId(null);
+      }
+      // Clean up cached messages
+      setMessages((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const id of cleanedIds) {
+          if (next.has(id)) {
+            next.delete(id);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+      // Refresh projects to update counts
+      api.listProjects().then(setProjects).catch(console.error);
+
+      const skippedMsg =
+        result.skipped.length > 0
+          ? `\n\nSkipped ${result.skipped.length} thread(s) with unpushed work.`
+          : "";
+      alert(`Cleaned up ${result.cleaned.length} thread(s) and worktrees.${skippedMsg}`);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   const handleNewThreadFromSidebar = (projectId: string) => {
     setActiveProjectId(projectId);
     setActiveThreadId(null); // Show empty state for this project
@@ -554,6 +648,20 @@ function AppInner() {
             }`}
             title={connected ? "Connected" : "Disconnected"}
           />
+          <button
+            onClick={() => setTerminalOpen(!terminalOpen)}
+            disabled={!activeThread}
+            className="hidden md:block px-3 py-1.5 hover:bg-surface-3 rounded-lg text-sm text-content-2 hover:text-content-1 disabled:opacity-30 disabled:cursor-not-allowed font-mono"
+            title={
+              !activeThread
+                ? "Select a thread to open terminal"
+                : terminalOpen
+                  ? "Close terminal (Ctrl+`)"
+                  : "Open terminal (Ctrl+`)"
+            }
+          >
+            &gt;_
+          </button>
           {activeThread?.worktree && (
             <button
               onClick={() => setContextOpen(!contextOpen)}
@@ -567,9 +675,9 @@ function AppInner() {
             className="hidden md:flex p-1.5 hover:bg-surface-3 rounded-lg text-content-3 hover:text-content-1"
             title="Settings"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="8" cy="8" r="2.5" />
-              <path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85" />
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+              <circle cx="12" cy="12" r="3" />
             </svg>
           </button>
         </div>
@@ -627,6 +735,7 @@ function AppInner() {
           onNewThread={handleNewThreadFromSidebar}
           onArchiveThread={handleArchiveThread}
           onRemoveProject={handleRemoveProject}
+          onCleanupPushed={handleCleanupPushed}
           onAddProject={() => setShowAddProject(true)}
           onOpenSettings={() => setShowSettings(true)}
           open={sidebarOpen}
@@ -638,6 +747,7 @@ function AppInner() {
           {activeThread ? (
             <>
               <ChatView
+                ref={chatViewRef}
                 messages={activeMessages}
                 thread={activeThread}
                 streamingText={activeStreamingText}
@@ -654,6 +764,7 @@ function AppInner() {
                 metrics={activeMetrics}
                 elapsedMs={activelyWorking ? Date.now() - (turnStartRef.current || Date.now()) : activeMetrics.durationMs}
                 onInterrupt={handleStopThread}
+                onScrollToBottom={() => chatViewRef.current?.scrollToBottom()}
                 todos={activeTodos}
               />
               <InputBar
@@ -667,10 +778,30 @@ function AppInner() {
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
               />
+              {activeThread && (
+                <TerminalPanel
+                  threadId={activeThread.id}
+                  visible={terminalOpen}
+                  connected={terminal.connected}
+                  exited={terminal.exited}
+                  exitCode={terminal.exitCode}
+                  error={terminal.error}
+                  replay={terminal.replay}
+                  onInput={terminal.sendInput}
+                  onResize={terminal.resize}
+                  onRestart={terminal.restart}
+                  onClose={() => setTerminalOpen(false)}
+                  lastMessage={lastTerminalMsg}
+                />
+              )}
             </>
           ) : activeProject ? (
             <>
-              <ProjectEmptyState project={activeProject} />
+              <ProjectEmptyState
+                project={activeProject}
+                recentThreads={recentProjectThreads}
+                onSelectThread={handleSelectThread}
+              />
               <InputBar
                 agents={agents}
                 thread={null}
@@ -781,23 +912,108 @@ function AppInner() {
   );
 }
 
-// ── Project-aware empty state (header only — InputBar is reused below) ───
+// ── Project-aware empty state with recent threads ───
 
-function ProjectEmptyState({ project }: { project: ProjectWithStatus }) {
+const EMPTY_STATUS_DOT: Record<string, string> = {
+  // "running" handled separately with a spinner element
+  pending: "bg-amber-400",
+  waiting: "bg-amber-400 animate-pulse",
+  paused: "bg-content-3",
+  done: "bg-accent/60",
+  error: "bg-red-400 shadow-[0_0_4px_rgba(248,113,113,0.5)]",
+};
+
+function shortenPath(path: string): string {
+  const home = path.match(/^\/(?:Users|home)\/([^/]+)/);
+  if (home) return path.replace(home[0], "~");
+  return path;
+}
+
+function formatRelativeTime(dateStr: string): string {
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d`;
+  return `${Math.floor(days / 7)}w`;
+}
+
+function ProjectEmptyState({
+  project,
+  recentThreads,
+  onSelectThread,
+}: {
+  project: ProjectWithStatus;
+  recentThreads: Thread[];
+  onSelectThread: (id: string) => void;
+}) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8">
-      <div className="text-center">
-        <h2 className="text-2xl font-semibold mb-2">{project.name}</h2>
-        <div className="flex items-center justify-center gap-2 text-xs text-content-3">
-          <span className="font-mono bg-surface-3 px-2 py-0.5 rounded">{project.currentBranch}</span>
-          <span>&middot;</span>
-          <span>
+    <div className="flex-1 flex flex-col items-center justify-center p-6 md:p-8 relative overflow-y-auto">
+      {/* Subtle radial glow */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(34,211,238,0.03)_0%,_transparent_60%)] pointer-events-none" />
+
+      <div className="relative w-full max-w-lg space-y-6">
+        {/* Project header */}
+        <div className="text-center">
+          <h2 className="text-2xl font-semibold tracking-tight mb-2">{project.name}</h2>
+          <div className="flex items-center justify-center gap-2 text-xs text-content-3 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 font-mono bg-surface-3 px-2 py-0.5 rounded">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-content-3">
+                <path d="M6 3L3 8l3 5M10 3l3 5-3 5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              {project.currentBranch}
+            </span>
+            <span>&middot;</span>
+            <span className="font-mono truncate max-w-[240px]" title={project.path}>
+              {shortenPath(project.path)}
+            </span>
+          </div>
+          <div className="mt-2.5 text-xs text-content-3">
             {project.threadCount} thread{project.threadCount !== 1 ? "s" : ""}
             {project.activeThreadCount > 0 && (
-              <span className="text-emerald-400 ml-1">{project.activeThreadCount} running</span>
+              <span className="text-emerald-400 ml-1">&middot; {project.activeThreadCount} running</span>
             )}
-          </span>
+          </div>
         </div>
+
+        {/* Recent threads */}
+        {recentThreads.length > 0 && (
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-content-3 mb-2 px-1">Recent threads</div>
+            <div className="bg-surface-2/50 border border-edge-1 rounded-xl overflow-hidden divide-y divide-edge-1/50">
+              {recentThreads.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => onSelectThread(t.id)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-surface-3/50 text-left group transition-colors"
+                >
+                  {t.status === "running" ? (
+                    <span className="w-2 h-2 shrink-0 rounded-full border border-emerald-400/40 border-t-emerald-400 animate-spin" />
+                  ) : (
+                    <span className={`w-2 h-2 shrink-0 rounded-full ${EMPTY_STATUS_DOT[t.status] ?? "bg-content-3"}`} />
+                  )}
+                  <span className="text-sm text-content-2 group-hover:text-content-1 truncate flex-1 transition-colors">
+                    {t.title}
+                  </span>
+                  {t.worktree && (
+                    <span className="text-[10px] font-mono bg-surface-4 px-1.5 py-0.5 rounded text-content-3 shrink-0">wt</span>
+                  )}
+                  <span className="text-[11px] text-content-3 shrink-0 tabular-nums">
+                    {formatRelativeTime(t.updatedAt)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Prompt hint */}
+        <p className="text-center text-[11px] text-content-3">
+          Enter a prompt below to start a new thread
+        </p>
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ProjectWithStatus, Thread } from "shared";
 
 interface Props {
@@ -12,6 +12,7 @@ interface Props {
   onNewThread: (projectId: string) => void;
   onArchiveThread: (id: string, opts?: { cleanupWorktree?: boolean }) => void;
   onRemoveProject: (id: string) => void;
+  onCleanupPushed: (projectId: string) => void;
   onAddProject: () => void;
   onOpenSettings: () => void;
   open: boolean;
@@ -45,6 +46,7 @@ export function ProjectSidebar({
   onNewThread,
   onArchiveThread,
   onRemoveProject,
+  onCleanupPushed,
   onAddProject,
   onOpenSettings,
   open,
@@ -66,6 +68,21 @@ export function ProjectSidebar({
     });
     onSelectProject(projectId);
   };
+
+  const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuOpenFor) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpenFor(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [menuOpenFor]);
 
   const threadsByProject = (projectId: string) =>
     threads.filter((t) => t.projectId === projectId);
@@ -135,21 +152,57 @@ export function ProjectSidebar({
                       </span>
                     )}
                   </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (confirm(`Remove "${project.name}" from the project list? Threads will be archived.`)) {
-                        onRemoveProject(project.id);
-                      }
-                    }}
-                    className="opacity-0 group-hover/project:opacity-100 px-2 py-2.5 mr-1 text-content-3 hover:text-red-400 shrink-0"
-                    title="Remove project"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
+                  <div className="relative shrink-0" ref={menuOpenFor === project.id ? menuRef : undefined}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenFor(menuOpenFor === project.id ? null : project.id);
+                      }}
+                      className="opacity-0 group-hover/project:opacity-100 px-2 py-2.5 mr-1 text-content-3 hover:text-content-2 shrink-0"
+                      title="Project actions"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                        <circle cx="8" cy="3" r="1.5" />
+                        <circle cx="8" cy="8" r="1.5" />
+                        <circle cx="8" cy="13" r="1.5" />
+                      </svg>
+                    </button>
+                    {menuOpenFor === project.id && (
+                      <div className="absolute right-0 top-full z-50 mt-1 w-52 rounded-lg border border-edge-1 bg-surface-2 shadow-xl py-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMenuOpenFor(null);
+                            onCleanupPushed(project.id);
+                          }}
+                          className="w-full text-left px-3 py-2 text-sm text-content-2 hover:bg-surface-3 flex items-center gap-2"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          </svg>
+                          Clean up pushed
+                        </button>
+                        <div className="border-t border-edge-1 my-1" />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMenuOpenFor(null);
+                            if (confirm(`Remove "${project.name}" from the project list? Threads will be archived.`)) {
+                              onRemoveProject(project.id);
+                            }
+                          }}
+                          className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-surface-3 flex items-center gap-2"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                          Remove project
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Thread list */}
@@ -266,9 +319,9 @@ export function ProjectSidebar({
             className="px-3 py-3 text-content-3 hover:text-content-2 hover:bg-surface-2 shrink-0"
             title="Settings"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="8" cy="8" r="2.5" />
-              <path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85" />
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+              <circle cx="12" cy="12" r="3" />
             </svg>
           </button>
         </div>

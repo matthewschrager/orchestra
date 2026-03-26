@@ -221,7 +221,7 @@ export function SlashCommandInput({
         {hasHighlights && (
           <div
             ref={backdropRef}
-            className="absolute inset-0 px-3 py-2 text-sm whitespace-pre-wrap break-words overflow-hidden pointer-events-none border border-transparent rounded-lg"
+            className="absolute inset-0 px-3 py-2 text-sm whitespace-pre-wrap break-words overflow-hidden pointer-events-none border border-transparent rounded-lg bg-surface-2"
             aria-hidden="true"
           >
             {highlightSegments.map((seg, i) =>
@@ -250,12 +250,12 @@ export function SlashCommandInput({
           placeholder={placeholder}
           rows={rows}
           className={[
-            "w-full bg-surface-2 border border-edge-2 rounded-lg px-3 py-2 text-sm",
-            "resize-none focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent",
+            "w-full border border-edge-2 rounded-lg px-3 py-2 text-sm",
+            "relative resize-none focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent",
             "placeholder:text-content-3",
             hasHighlights
-              ? "text-transparent selection:bg-accent/20"
-              : "",
+              ? "bg-transparent text-transparent selection:bg-accent/20"
+              : "bg-surface-2",
           ].join(" ")}
           style={hasHighlights ? { caretColor: "var(--color-content-1)" } : undefined}
           onKeyDown={handleKeyDown}

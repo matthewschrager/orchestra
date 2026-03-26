@@ -78,6 +78,12 @@ export interface StreamDelta {
   costUsd?: number;
   durationMs?: number;
   sessionId?: string;
+  /** Aggregate input tokens (including cache reads) for this turn */
+  inputTokens?: number;
+  /** Aggregate output tokens for this turn */
+  outputTokens?: number;
+  /** Model context window size (from the primary model used) */
+  contextWindow?: number;
 }
 
 // ── Turn Metrics ──────────────────────────────────────
@@ -86,6 +92,12 @@ export interface TurnMetrics {
   costUsd: number;
   durationMs: number;
   turnCount: number;
+  /** Cumulative input tokens across all turns */
+  inputTokens: number;
+  /** Cumulative output tokens across all turns */
+  outputTokens: number;
+  /** Model context window size (latest reported) */
+  contextWindow: number;
 }
 
 // ── WebSocket Messages ──────────────────────────────────
@@ -96,6 +108,10 @@ export type WSClientMessage =
   | { type: "send_message"; threadId: string; content: string; attachments?: Attachment[] }
   | { type: "stop_thread"; threadId: string }
   | { type: "resolve_attention"; attentionId: string; resolution: AttentionResolution }
+  | { type: "terminal_create"; threadId: string }
+  | { type: "terminal_input"; terminalId: string; data: string }
+  | { type: "terminal_resize"; terminalId: string; cols: number; rows: number }
+  | { type: "terminal_close"; terminalId: string }
   | { type: "ping" };
 
 export type WSServerMessage =
@@ -105,7 +121,11 @@ export type WSServerMessage =
   | { type: "replay_done"; threadId: string }
   | { type: "stream_delta"; delta: StreamDelta }
   | { type: "attention_required"; attention: AttentionItem }
-  | { type: "attention_resolved"; attentionId: string; threadId: string };
+  | { type: "attention_resolved"; attentionId: string; threadId: string }
+  | { type: "terminal_created"; terminalId: string; threadId: string; reconnect?: boolean; replay?: string }
+  | { type: "terminal_output"; terminalId: string; data: string }
+  | { type: "terminal_exit"; terminalId: string; exitCode: number }
+  | { type: "terminal_error"; terminalId: string; error: string };
 
 // ── Attention ──────────────────────────────────────────
 
@@ -164,6 +184,25 @@ export interface Settings {
   worktreeRoot: string;
   /** Inactivity timeout in minutes — abort sessions with no SDK messages for this long (default: 30) */
   inactivityTimeoutMinutes: number;
+  /** Display-only remote URL (Tailscale HTTPS, VPN, tunnel, etc.) — shown in Settings panel */
+  remoteUrl: string;
+}
+
+// ── Tailscale Detection ─────────────────────────────────
+
+export interface TailscaleStatus {
+  installed: boolean;
+  running: boolean;
+  ip: string | null;
+  hostname: string | null;
+  httpsAvailable: boolean;
+  httpsUrl: string | null;
+  /** Whether tailscale serve maps to this Orchestra instance's port */
+  portMatch: boolean;
+  /** Orchestra server port (for generating correct tailscale serve command) */
+  orchestraPort: number;
+  /** Current remoteUrl setting value */
+  remoteUrl: string;
 }
 
 // ── API Types ───────────────────────────────────────────

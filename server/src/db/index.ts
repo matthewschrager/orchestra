@@ -93,6 +93,11 @@ const COLUMN_MIGRATIONS = [
     column: "session_id",
     sql: `ALTER TABLE threads ADD COLUMN session_id TEXT`,
   },
+  {
+    table: "push_subscriptions",
+    column: "origin",
+    sql: `ALTER TABLE push_subscriptions ADD COLUMN origin TEXT DEFAULT ''`,
+  },
 ];
 
 const INDEX_MIGRATIONS = [
