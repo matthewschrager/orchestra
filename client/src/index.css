@@ -229,36 +229,68 @@ input[type="checkbox"] {
 .text-diff-add { color: #7ddf8e; }
 .text-diff-remove { color: #ff7b7b; }
 
+.diff-body {
+  padding: 4px 0;
+  max-height: 400px;
+  overflow-y: auto;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
 .diff-line {
   display: flex;
-  padding: 0 12px;
+  padding: 0 4px;
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.6;
   white-space: pre;
+  min-height: 19px;
 }
 .diff-line-add {
-  background: rgba(80, 200, 120, 0.08);
-  color: #7ddf8e;
+  background: rgba(40, 160, 70, 0.18);
+  color: #7ddf8e;  /* fallback when Shiki unavailable */
 }
 .diff-line-remove {
-  background: rgba(255, 85, 85, 0.08);
-  color: #ff7b7b;
+  background: rgba(220, 50, 50, 0.18);
+  color: #ff7b7b;  /* fallback when Shiki unavailable */
 }
 .diff-line-context {
-  color: var(--color-content-3);
+  color: var(--color-content-2);
+  background: rgba(255, 255, 255, 0.02);
 }
-.diff-gutter {
-  width: 18px;
-  text-align: center;
-  margin-right: 8px;
+
+/* Line number gutter */
+.diff-line-num {
+  width: 36px;
+  text-align: right;
+  padding-right: 4px;
   color: var(--color-content-3);
   user-select: none;
   flex-shrink: 0;
+  opacity: 0.6;
 }
+
+/* +/- marker gutter */
+.diff-gutter {
+  width: 16px;
+  text-align: center;
+  margin-right: 4px;
+  flex-shrink: 0;
+  user-select: none;
+}
+.diff-gutter-add { color: #7ddf8e; }
+.diff-gutter-remove { color: #ff7b7b; }
+.diff-gutter-context { color: transparent; }
+
 .diff-content {
   flex: 1;
   min-width: 0;
+}
+
+/* Mobile: hide line numbers on narrow viewports */
+@media (max-width: 639px) {
+  .diff-line-num { display: none; }
+  .diff-line { font-size: 11px; }
 }
 
 /* ── Read Renderer ──────────────────────────────────── */

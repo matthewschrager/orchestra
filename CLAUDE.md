@@ -96,7 +96,8 @@ cd server && bun run src/index.ts  # Production server
 - Token auth enforced for non-localhost requests (and always when `--tunnel` is active)
 - Rich tool renderers parse stream-json tool data into visual components (diffs, terminal blocks, search results); special tools (AskUser, Agent, TodoWrite) registered in declarative `TOOL_RENDERERS` map
 - TodoWrite rendering: latest TodoWrite renders as prominent card with all tasks, per-task status (✓ completed/▸ running/○ queued), progress bar, ARIA roles; prior TodoWrites collapse to expandable summary lines; `parseTodos()` normalizes both Claude SDK `{todos}` and Codex `{items}` shapes; `latestTodos` hydrated from REST history with streaming race guard
-- Shiki syntax highlighting lazy-loaded via module-level singleton with DOMPurify sanitization
+- Shiki syntax highlighting lazy-loaded via shared module-level singleton (`lib/shiki.ts`) with DOMPurify sanitization; ReadRenderer uses `codeToHtml`, DiffRenderer uses `codeToTokens` (per-line control for diff backgrounds)
+- DiffRenderer: Myers LCS diff algorithm (`lib/diffCompute.ts`) with line numbers, syntax highlighting, context lines; empty-string guards, trailing newline normalization, 500-line bail-out, 100-line outer truncation; mobile hides line numbers <640px; fallback semantic colors when Shiki unavailable
 - Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
 - Cost/duration/token metrics extracted from Claude result events and displayed in StickyRunBar
 - Context window indicator: token usage (input+output) vs model context window shown as color-coded progress bar; uses **per-request** tokens from `message_start` stream events (not cumulative `modelUsage` which inflates across turns); `Math.max` for contextWindow to prevent sub-agent regression; primary-model filtering via `parent_tool_use_id === null`
