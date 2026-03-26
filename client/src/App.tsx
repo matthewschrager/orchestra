@@ -20,6 +20,7 @@ import { WorktreePathInput } from "./components/WorktreePathInput";
 import { useTerminal } from "./hooks/useTerminal";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { parseTodos } from "./components/renderers/TodoRenderer";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -274,16 +275,14 @@ function AppInner() {
         dispatchStreaming({ type: "clear_tool", threadId: msg.threadId });
         // Track latest TodoWrite state per thread
         if (msg.toolName === "TodoWrite" && msg.toolInput) {
-          try {
-            const parsed = JSON.parse(msg.toolInput);
-            if (Array.isArray(parsed.todos)) {
-              setLatestTodos((prev) => {
-                const next = new Map(prev);
-                next.set(msg.threadId, parsed.todos as TodoItem[]);
-                return next;
-              });
-            }
-          } catch { /* ignore malformed input */ }
+          const todosParsed = parseTodos(msg.toolInput);
+          if (todosParsed) {
+            setLatestTodos((prev) => {
+              const next = new Map(prev);
+              next.set(msg.threadId, todosParsed.items);
+              return next;
+            });
+          }
         }
       }
     }, []),
@@ -434,6 +433,22 @@ function AppInner() {
         next.set(activeThreadId, msgs);
         return next;
       });
+      // Hydrate latestTodos from loaded history (scan backwards for last TodoWrite).
+      // Guard: skip if streaming already provided newer state for this thread.
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].toolName === "TodoWrite" && msgs[i].toolInput) {
+          const todosParsed = parseTodos(msgs[i].toolInput);
+          if (todosParsed) {
+            setLatestTodos((prev) => {
+              if (prev.has(activeThreadId)) return prev; // streaming set newer data
+              const next = new Map(prev);
+              next.set(activeThreadId, todosParsed.items);
+              return next;
+            });
+            break;
+          }
+        }
+      }
     });
   }, [activeThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
