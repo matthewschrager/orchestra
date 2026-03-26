@@ -1,5 +1,5 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AgentAdapter,
   AgentSession,
@@ -13,11 +13,26 @@ import type {
 /** Tool names that trigger attention events */
 const ASK_USER_TOOLS = new Set(["AskUserQuestion", "AskUserTool"]);
 
+const DEBUG = process.env.ORCHESTRA_DEBUG === "1";
+
 /** Tool names that require auto-approval on turn end.
  *  ExitPlanMode has requiresUserInteraction()=true in the CLI, which short-circuits
  *  the bypassPermissions check, causing the tool to be denied in headless SDK mode.
  *  We detect it in the stream and auto-approve by sending a follow-up message. */
 const PLAN_APPROVAL_TOOLS = new Set(["ExitPlanMode"]);
+
+/**
+ * Custom permission handler: allows all tools except AskUserQuestion/AskUserTool,
+ * which are denied with `interrupt: true` to stop the SDK from retrying.
+ * This prevents duplicate AskUserQuestion events that occur with `bypassPermissions`.
+ */
+const orchestraCanUseTool: CanUseTool = async (toolName, _input, _options) => {
+  if (ASK_USER_TOOLS.has(toolName)) {
+    if (DEBUG) console.log(`[claude] canUseTool: denying ${toolName} with interrupt`);
+    return { behavior: "deny", message: "Handled by Orchestra", interrupt: true };
+  }
+  return { behavior: "allow" };
+};
 
 export class ClaudeAdapter implements AgentAdapter {
   name = "claude";
@@ -52,10 +67,10 @@ export class ClaudeAdapter implements AgentAdapter {
       options: {
         cwd: opts.cwd,
         resume: opts.resumeSessionId,
-        permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         includePartialMessages: true,
         settingSources: ["user", "project", "local"],
+        canUseTool: orchestraCanUseTool,
         abortController,
       },
     });
@@ -77,10 +92,10 @@ export class ClaudeAdapter implements AgentAdapter {
       options: {
         cwd: opts.cwd,
         resume: opts.resumeSessionId,
-        permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         includePartialMessages: true,
         settingSources: ["user", "project", "local"],
+        canUseTool: orchestraCanUseTool,
       },
     });
 
@@ -238,14 +253,18 @@ class ClaudeParser {
         const userMessages: ParsedMessage[] = [];
         for (const block of userBlocks) {
           if (block.type === "tool_result") {
+            const toolName = block.tool_use_id
+              ? this.toolUseNames.get(block.tool_use_id)
+              : undefined;
+            // Skip tool_results for AskUser tools — the denial response from
+            // canUseTool(interrupt:true) is noise, not useful content
+            if (toolName && ASK_USER_TOOLS.has(toolName)) continue;
+
             const outputContent = typeof block.content === "string"
               ? block.content
               : Array.isArray(block.content)
                 ? block.content.filter(b => b.type === "text").map(b => b.text ?? "").join("")
                 : "";
-            const toolName = block.tool_use_id
-              ? this.toolUseNames.get(block.tool_use_id)
-              : undefined;
             const metadata = block.is_error ? { isError: true } : undefined;
             userMessages.push({
               role: "tool",
@@ -330,25 +349,20 @@ class ClaudeParser {
 
         const resultParse: ParseResult = { messages: [], deltas };
 
-        // Detect SDK error results or zero-turn successes (no model interaction)
-        const numTurns = event.num_turns as number | undefined;
-        if (isError || (subtype && subtype.startsWith("error_"))) {
-          const errorDetail = errors?.join("; ") || subtype || "unknown SDK error";
-          resultParse.error = errorDetail;
-        } else if (subtype === "success" && numTurns === 0) {
-          const resultText = event.result as string | undefined;
-          resultParse.error = resultText || "SDK completed with zero model turns";
-        }
-
-        // Check permission_denials for AskUserQuestion (fallback detection)
+        // Check permission_denials for AskUserQuestion (before error detection —
+        // an interrupted AskUser denial is expected, not an error)
         const denials = event.permission_denials as Array<{
           tool_name: string;
           tool_use_id: string;
           tool_input: Record<string, unknown>;
         }> | undefined;
 
+        let hasAskUserDenial = false;
         if (denials && Array.isArray(denials)) {
           for (const denial of denials) {
+            if (ASK_USER_TOOLS.has(denial.tool_name)) {
+              hasAskUserDenial = true;
+            }
             const attention = this.maybeExtractAskUserAttention(
               denial.tool_name,
               denial.tool_input,
@@ -358,6 +372,20 @@ class ClaudeParser {
               resultParse.attention = attention;
               break;
             }
+          }
+        }
+
+        // Detect SDK error results or zero-turn successes (no model interaction).
+        // Skip error surfacing when the result is from an expected AskUser denial
+        // (canUseTool deny+interrupt produces an error-shaped result that isn't a real error).
+        const numTurns = event.num_turns as number | undefined;
+        if (!hasAskUserDenial) {
+          if (isError || (subtype && subtype.startsWith("error_"))) {
+            const errorDetail = errors?.join("; ") || subtype || "unknown SDK error";
+            resultParse.error = errorDetail;
+          } else if (subtype === "success" && numTurns === 0) {
+            const resultText = event.result as string | undefined;
+            resultParse.error = resultText || "SDK completed with zero model turns";
           }
         }
 
