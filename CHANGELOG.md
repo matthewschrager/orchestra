@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.22.1] - 2026-03-25
+
+### Fixed
+
+- **Thread sort order not updating in real-time** — sidebar threads only sorted by `updatedAt` on page refresh; now threads bubble to the top when they receive updates (new messages, status changes) without requiring a refresh, in both desktop sidebar and mobile sessions view
+
 ## [0.1.22.0] - 2026-03-25
 
 ### Fixed
