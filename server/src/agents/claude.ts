@@ -266,15 +266,27 @@ class ClaudeParser {
         let modelName: string | undefined;
 
         if (modelUsage) {
-          inputTokens = 0;
-          outputTokens = 0;
+          // Find the primary model (largest context window) — use its tokens
+          // for context occupancy. Summing across all models (including sub-agents)
+          // inflates the count far beyond the actual context window.
           for (const [name, model] of Object.entries(modelUsage)) {
-            inputTokens += (model.inputTokens ?? 0) + (model.cacheReadInputTokens ?? 0) + (model.cacheCreationInputTokens ?? 0);
-            outputTokens += model.outputTokens ?? 0;
-            // Use the largest context window (primary model) and track its name
             if (model.contextWindow && (!contextWindow || model.contextWindow > contextWindow)) {
               contextWindow = model.contextWindow;
               modelName = name;
+            }
+          }
+
+          if (modelName && modelUsage[modelName]) {
+            const pm = modelUsage[modelName];
+            inputTokens = (pm.inputTokens ?? 0) + (pm.cacheReadInputTokens ?? 0) + (pm.cacheCreationInputTokens ?? 0);
+            outputTokens = pm.outputTokens ?? 0;
+          } else {
+            // No context window info — fall back to summing all models
+            inputTokens = 0;
+            outputTokens = 0;
+            for (const model of Object.values(modelUsage)) {
+              inputTokens += (model.inputTokens ?? 0) + (model.cacheReadInputTokens ?? 0) + (model.cacheCreationInputTokens ?? 0);
+              outputTokens += model.outputTokens ?? 0;
             }
           }
         }
@@ -519,16 +531,10 @@ class ClaudeParser {
         return { messages: [], deltas: [] };
       }
 
-      case "message_start": {
-        // Anthropic API message_start carries the model used for this message
-        const message = inner.message as { model?: string } | undefined;
-        const model = message?.model;
-        if (model) {
-          return { messages: [], deltas: [{ deltaType: "metrics", modelName: model }] };
-        }
-        return { messages: [], deltas: [] };
-      }
-
+      // message_start model info intentionally NOT extracted here — sub-agent
+      // messages interleave and would cause model label to flicker. Model name
+      // is reliably provided by system init (session start) and result (turn end).
+      case "message_start":
       case "message_stop":
       case "message_delta":
         return { messages: [], deltas: [] };

@@ -618,7 +618,7 @@ describe("ClaudeParser", () => {
     expect(metrics!.contextWindow).toBe(200000);
   });
 
-  test("aggregates token usage across multiple models and picks largest contextWindow", () => {
+  test("uses primary model tokens only (not sub-agent aggregate) and picks largest contextWindow", () => {
     const parser = createParser();
     const { deltas } = parser.handleMessage({
       type: "result",
@@ -647,10 +647,11 @@ describe("ClaudeParser", () => {
 
     const metrics = deltas.find((d) => d.deltaType === "metrics");
     expect(metrics).toBeDefined();
-    // input: (10000+5000+0) + (1000+0+0) = 16000
-    expect(metrics!.inputTokens).toBe(16000);
-    // output: 2000 + 500 = 2500
-    expect(metrics!.outputTokens).toBe(2500);
+    // Only primary model (opus, largest contextWindow) tokens
+    // input: 10000 + 5000 + 0 = 15000
+    expect(metrics!.inputTokens).toBe(15000);
+    // output: 2000 (opus only)
+    expect(metrics!.outputTokens).toBe(2000);
     // largest context window wins
     expect(metrics!.contextWindow).toBe(200000);
   });
@@ -777,7 +778,7 @@ describe("ClaudeParser", () => {
     expect(deltas).toHaveLength(0);
   });
 
-  test("extracts model from message_start stream event", () => {
+  test("message_start does not extract model (avoids sub-agent flicker)", () => {
     const parser = createParser();
     const { messages, deltas } = parser.handleMessage({
       type: "stream_event",
@@ -794,9 +795,7 @@ describe("ClaudeParser", () => {
     });
 
     expect(messages).toHaveLength(0);
-    expect(deltas).toHaveLength(1);
-    expect(deltas[0].deltaType).toBe("metrics");
-    expect(deltas[0].modelName).toBe("claude-sonnet-4-20250514");
+    expect(deltas).toHaveLength(0);
   });
 
   test("result error event still emits metrics and turn_end", () => {
