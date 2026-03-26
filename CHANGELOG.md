@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.19.1] - 2026-03-25
+
+### Fixed
+
+- **Settings icon** — replaced sun-like icon (circle with radiating lines) with a standard gear/cog icon in both the header and sidebar
+
 ## [0.1.19.0] - 2026-03-25
 
 ### Changed
