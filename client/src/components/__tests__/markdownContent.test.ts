@@ -47,6 +47,7 @@ describe("wrapAsciiArt", () => {
       "Middle text",
       "Second:",
       "├──┤",
+      "├──┤",
       "End",
     ].join("\n");
     const result = wrapAsciiArt(input);
@@ -60,6 +61,7 @@ describe("wrapAsciiArt", () => {
         "Middle text",
         "Second:",
         "```text",
+        "├──┤",
         "├──┤",
         "```",
         "End",
@@ -98,6 +100,81 @@ describe("wrapAsciiArt", () => {
       "Some content after.",
     ].join("\n");
     // Horizontal-only lines should pass through unchanged
+    expect(wrapAsciiArt(input)).toBe(input);
+  });
+
+  // --- Codex adversarial findings ---
+
+  test("does not wrap box-drawing inside blockquotes", () => {
+    const input = [
+      "> Here is a quote:",
+      "> ┌──┐",
+      "> │hi│",
+      "> └──┘",
+      "> done",
+    ].join("\n");
+    // Lines inside blockquotes must not be wrapped
+    expect(wrapAsciiArt(input)).toBe(input);
+  });
+
+  test("does not wrap box-drawing inside list items", () => {
+    const input = [
+      "- item",
+      "  ┌─┐",
+      "  └─┘",
+      "- next",
+    ].join("\n");
+    // Lines after a list item (before a blank line) must not be wrapped
+    expect(wrapAsciiArt(input)).toBe(input);
+  });
+
+  test("wraps art after blank line ends list context", () => {
+    const input = [
+      "- item one",
+      "- item two",
+      "",
+      "┌──────┐",
+      "│ free │",
+      "└──────┘",
+    ].join("\n");
+    const result = wrapAsciiArt(input);
+    expect(result).toBe(
+      [
+        "- item one",
+        "- item two",
+        "",
+        "```text",
+        "┌──────┐",
+        "│ free │",
+        "└──────┘",
+        "```",
+      ].join("\n"),
+    );
+  });
+
+  test("handles ~~~ tilde code fences", () => {
+    const input = [
+      "~~~",
+      "┌──┐",
+      "└──┘",
+      "~~~",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(input);
+  });
+
+  test("handles quoted code fences (> ```)", () => {
+    const input = [
+      "> ```text",
+      "> ┌──┐",
+      "> └──┘",
+      "> ```",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(input);
+  });
+
+  test("does not wrap single structural char in prose", () => {
+    const input = "Use │ to separate columns.";
+    // Single structural char should not trigger wrapping
     expect(wrapAsciiArt(input)).toBe(input);
   });
 
