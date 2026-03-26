@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.22.1] - 2026-03-26
+
+### Fixed
+
+- **Terminal panel not working on first open** — xterm.js initialization effect only depended on `threadId`, so when the panel first opened (visibility changed but thread didn't), the terminal instance was never created; added `visible` to the effect's dependency array so the terminal initializes correctly on first toggle
+
 ## [0.1.22.0] - 2026-03-25
 
 ### Fixed
