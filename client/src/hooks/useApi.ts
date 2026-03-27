@@ -64,6 +64,12 @@ export const api = {
       skipped: Array<{ id: string; title: string; reason: string }>;
     }>(`/projects/${projectId}/cleanup-pushed`, { method: "POST" }),
 
+  mergeAllPrs: (projectId: string, agent: string) =>
+    request<import("shared").Thread>(`/projects/${projectId}/merge-all-prs`, {
+      method: "POST",
+      body: JSON.stringify({ agent }),
+    }),
+
   // Threads
   listThreads: () => request<import("shared").Thread[]>("/threads"),
 

@@ -23,6 +23,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { MobileThreadHeader } from "./components/MobileThreadHeader";
 import { parseTodos } from "./components/renderers/TodoRenderer";
 import { OrchestraLogo } from "./components/OrchestraLogo";
+import { MergeAllPrsButton } from "./components/MergeAllPrsButton";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -214,6 +215,7 @@ function AppInner() {
   const [showAddProject, setShowAddProject] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mergingProjectId, setMergingProjectId] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [lastTerminalMsg, setLastTerminalMsg] = useState<WSServerMessage | null>(null);
@@ -239,6 +241,10 @@ function AppInner() {
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
+  const defaultDetectedAgent = useMemo(
+    () => agents.find((agent) => agent.detected)?.name ?? "claude",
+    [agents],
+  );
   const activeMessages = (activeThreadId ? messages.get(activeThreadId) : null) ?? [];
   const activeStreamingText = activeThreadId ? streaming.text.get(activeThreadId) : undefined;
   const activeStreamingTool = activeThreadId ? streaming.tool.get(activeThreadId) : undefined;
@@ -657,6 +663,25 @@ function AppInner() {
     setActiveThreadId(null); // Show empty state for this project
   };
 
+  const handleMergeAllPrs = async (projectId: string) => {
+    try {
+      setError(null);
+      setMergingProjectId(projectId);
+      const thread = await api.mergeAllPrs(projectId, defaultDetectedAgent);
+      setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
+      setActiveThreadId(thread.id);
+      clearUnread(thread.id);
+      setActiveProjectId(projectId);
+      setSidebarOpen(false);
+      turnStartRef.current = Date.now();
+      api.listProjects().then(setProjects).catch(console.error);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setMergingProjectId((current) => (current === projectId ? null : current));
+    }
+  };
+
   // ── Render ────────────────────────────────────────────
 
   const isRunning = activeThread?.status === "running";
@@ -783,11 +808,13 @@ function AppInner() {
           onSelectProject={setActiveProjectId}
           onSelectThread={handleSelectThread}
           onNewThread={handleNewThreadFromSidebar}
+          onMergeAllPrs={handleMergeAllPrs}
           onArchiveThread={handleArchiveThread}
           onRemoveProject={handleRemoveProject}
           onCleanupPushed={handleCleanupPushed}
           onAddProject={() => setShowAddProject(true)}
           onOpenSettings={() => setShowSettings(true)}
+          mergingProjectId={mergingProjectId}
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
         />
@@ -861,6 +888,8 @@ function AppInner() {
                 project={activeProject}
                 recentThreads={recentProjectThreads}
                 onSelectThread={handleSelectThread}
+                onMergeAllPrs={handleMergeAllPrs}
+                mergeAllLoading={mergingProjectId === activeProject.id}
               />
               <InputBar
                 agents={agents}
@@ -925,6 +954,8 @@ function AppInner() {
                 setMobileTab("new");
               }}
               onArchiveThread={handleArchiveThread}
+              onMergeAllPrs={handleMergeAllPrs}
+              mergingProjectId={mergingProjectId}
             />
           </div>
         )}
@@ -1006,10 +1037,14 @@ function ProjectEmptyState({
   project,
   recentThreads,
   onSelectThread,
+  onMergeAllPrs,
+  mergeAllLoading,
 }: {
   project: ProjectWithStatus;
   recentThreads: Thread[];
   onSelectThread: (id: string) => void;
+  onMergeAllPrs: (projectId: string) => void;
+  mergeAllLoading: boolean;
 }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6 md:p-8 relative overflow-y-auto">
@@ -1037,8 +1072,23 @@ function ProjectEmptyState({
             {project.activeThreadCount > 0 && (
               <span className="text-emerald-400 ml-1">&middot; {project.activeThreadCount} running</span>
             )}
+            {project.outstandingPrCount > 0 && (
+              <span className="text-amber-300 ml-1">
+                &middot; {project.outstandingPrCount} PR{project.outstandingPrCount === 1 ? "" : "s"} open
+              </span>
+            )}
           </div>
         </div>
+
+        {project.outstandingPrCount > 0 && (
+          <div className="flex justify-center">
+            <MergeAllPrsButton
+              count={project.outstandingPrCount}
+              busy={mergeAllLoading}
+              onClick={() => onMergeAllPrs(project.id)}
+            />
+          </div>
+        )}
 
         {/* Recent threads */}
         {recentThreads.length > 0 && (

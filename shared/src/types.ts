@@ -12,6 +12,7 @@ export interface ProjectWithStatus extends Project {
   currentBranch: string;
   threadCount: number;
   activeThreadCount: number;
+  outstandingPrCount: number;
 }
 
 export interface CreateProjectRequest {

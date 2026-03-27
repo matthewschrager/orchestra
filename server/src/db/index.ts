@@ -289,7 +289,7 @@ export function touchThreadInteraction(db: DB, threadId: string): void {
 export function getProjectThreadCounts(
   db: DB,
   projectId: string,
-): { total: number; active: number } {
+): { total: number; active: number; outstandingPrs: number } {
   const total = db
     .query("SELECT COUNT(*) as count FROM threads WHERE project_id = ? AND archived_at IS NULL")
     .get(projectId) as { count: number };
@@ -298,7 +298,41 @@ export function getProjectThreadCounts(
       "SELECT COUNT(*) as count FROM threads WHERE project_id = ? AND status IN ('running', 'pending', 'waiting') AND archived_at IS NULL",
     )
     .get(projectId) as { count: number };
-  return { total: total.count, active: active.count };
+  const outstandingPrs = db
+    .query(
+      `SELECT COUNT(*) as count
+       FROM threads
+       WHERE project_id = ?
+         AND archived_at IS NULL
+         AND pr_url IS NOT NULL
+         AND (pr_status IS NULL OR pr_status IN ('open', 'draft'))`,
+    )
+    .get(projectId) as { count: number };
+  return {
+    total: total.count,
+    active: active.count,
+    outstandingPrs: outstandingPrs.count,
+  };
+}
+
+export function listOutstandingPrThreads(
+  db: DB,
+  projectId: string,
+): ThreadRow[] {
+  return db
+    .query(
+      `SELECT *
+       FROM threads
+       WHERE project_id = ?
+         AND archived_at IS NULL
+         AND pr_url IS NOT NULL
+         AND (pr_status IS NULL OR pr_status IN ('open', 'draft'))
+       ORDER BY
+         CASE pr_status WHEN 'open' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
+         COALESCE(pr_number, 2147483647),
+         last_interacted_at DESC`,
+    )
+    .all(projectId) as ThreadRow[];
 }
 
 export function projectRowToApi(row: ProjectRow): import("shared").Project {
