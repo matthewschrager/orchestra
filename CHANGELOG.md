@@ -1,19 +1,26 @@
 # Changelog
 
-## [0.1.30.1] - 2026-03-27
+## [0.1.31.0] - 2026-03-27
 
 ### Changed
 
+- **Worktree QA now defaults to a safe nested-server sandbox** — Orchestra-managed worktree sessions now spell out the exact nested QA command in the agent preamble, and nested servers launched without `ORCHESTRA_DATA_DIR` now default to `.orchestra-worktree` inside the worktree instead of writing into `~/.orchestra`
+- **Worktree instructions now match the real QA flow** — AGENTS/CLAUDE guidance now tells agents to build from the repo root, use `ORCHESTRA_ALLOW_NESTED=1`, and keep nested runtime state inside the worktree
+- **Todo task views now share one renderer** — latest TodoWrite cards, inline task renderers, and the pinned task panel now use the same row component so active, pending, and completed states stay visually consistent
 - **Tailscale browser sessions now sign in with identity bootstrap** — the first HTML request behind `tailscale serve` mints a signed `HttpOnly` session cookie from Tailscale user headers, and REST plus WebSocket traffic reuse that session instead of relying on loopback trust
 - **Remote access copy now matches the actual auth model** — the Settings panel explains Tailscale identity sign-in and keeps tagged-device or fallback access on the bearer token path
 
 ### Fixed
 
+- **Merge-all PR actions stay visible when project counts lag behind thread state** — the desktop sidebar, empty project view, and mobile project headers now fall back to loaded thread PR metadata when the project-level outstanding PR count is stale, so the merge-all affordance no longer disappears after partial refreshes
+- **Worktree-safe nested QA is covered by regression tests** — new isolation tests lock in the worktree-local data-dir default and the injected safe nested-server command so this workflow does not regress quietly
+- **Codex todo progress now shows a real active task** — live Codex todo snapshots now synthesize an `in_progress` item from the first unfinished step, so Orchestra no longer renders every unfinished task as plain pending
+- **Todo activity coverage is locked in** — added regression coverage for Codex live-vs-terminal todo states and for the shared in-progress task marker in the UI
+- **Large edit diffs no longer inflate into fake whole-file rewrites** — the client diff engine now trims unchanged prefix/suffix before running Myers, preserves correct line numbers through the changed region, and only falls back when the changed core is genuinely large, so Codex edits in big files keep showing the real `+/-` counts instead of full-file noise; added regression coverage for single-line and distant small-edit cases
 - **Always-on DNS rebinding protection no longer breaks LAN or tunnel usage** — Host and Origin allowlists now include the machine's local interface addresses, configured remote hosts, and tunnel hosts so bearer-auth LAN, SSH tunnel, and Cloudflare flows keep working while spoofed hosts still fail closed
 - **Tagged Tailscale requests now fail closed** — when Tailscale Serve omits user identity headers, Orchestra requires the bearer token instead of implicitly trusting loopback traffic
 - **IPv6 Host parsing no longer corrupts auth decisions** — bracketed hosts like `[::1]:4850` are normalized correctly before Host validation and request classification
 - **Auth hardening is covered by targeted regressions** — added tests for first-request Tailscale bootstrap, tagged-device fallback, LAN origin allowlisting, and IPv6 Host parsing
-
 
 ## [0.1.30.0] - 2026-03-27
 

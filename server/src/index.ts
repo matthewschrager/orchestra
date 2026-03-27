@@ -35,6 +35,11 @@ import { createTailscaleRoutes } from "./routes/tailscale";
 import { TerminalManager } from "./terminal/manager";
 import { detectWorktree } from "./utils/git";
 import { getAllowedOrigins, getAllowedHosts, getLocalInterfaceHosts } from "./utils/origins";
+import {
+  DEFAULT_ORCHESTRA_PORT,
+  getDefaultWorktreeDataDir,
+  getIsolatedWorktreePort,
+} from "./utils/worktree";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -56,22 +61,23 @@ if (process.env.ORCHESTRA_MANAGED === "1") {
 // When running from a git worktree (e.g., dev:server in a worktree), auto-isolate
 // to prevent sharing the DB/port with the main server or other worktrees.
 const worktreeName = detectWorktree(process.cwd());
-const DEFAULT_PORT = 3847;
 
 let effectiveDataDir = process.env.ORCHESTRA_DATA_DIR || undefined;
-let effectivePort = parseInt(process.env.ORCHESTRA_PORT || String(DEFAULT_PORT), 10);
+let effectivePort = parseInt(process.env.ORCHESTRA_PORT || String(DEFAULT_ORCHESTRA_PORT), 10);
 
 if (worktreeName && !process.env.ORCHESTRA_DATA_DIR) {
-  // Use a worktree-specific data directory
-  effectiveDataDir = join(homedir(), ".orchestra", `worktree-${worktreeName}`);
-  console.log(`[worktree] Detected worktree "${worktreeName}" — using isolated data dir: ${effectiveDataDir}`);
+  const orchestraManaged = process.env.ORCHESTRA_MANAGED === "1";
+  effectiveDataDir = getDefaultWorktreeDataDir(worktreeName, process.cwd(), {
+    orchestraManaged,
+  });
+  const logLabel = orchestraManaged
+    ? "using worktree-local data dir for nested Orchestra session"
+    : "using isolated data dir";
+  console.log(`[worktree] Detected worktree "${worktreeName}" — ${logLabel}: ${effectiveDataDir}`);
 }
 if (worktreeName && !process.env.ORCHESTRA_PORT) {
   // Hash the worktree name to a stable port offset (range 1-9999)
-  let hash = 0;
-  for (const ch of worktreeName) hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
-  const offset = (Math.abs(hash) % 9999) + 1;
-  effectivePort = DEFAULT_PORT + offset;
+  effectivePort = getIsolatedWorktreePort(worktreeName);
   console.log(`[worktree] Using isolated port: ${effectivePort}`);
 }
 
