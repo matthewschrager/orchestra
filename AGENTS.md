@@ -12,7 +12,7 @@ orchestra/
 │   └── src/
 │       ├── index.ts        Server entry point
 │       ├── cli.ts          CLI entry point (serve, auth)
-│       ├── auth.ts         Token auth for remote access
+│       ├── auth.ts         Remote auth + Tailscale session bootstrap
 │       ├── db/index.ts     SQLite schema + helpers
 │       ├── agents/         Agent adapter interface + implementations
 │       │   ├── types.ts    AgentAdapter interface
@@ -114,8 +114,8 @@ cd server && bun run src/index.ts  # Production server
 - Multiple threads can run concurrently on the same project's main worktree
 - Real-time streaming via ephemeral WebSocket deltas (not persisted to DB)
 - Complete messages persisted to SQLite with WAL mode, seq-based replay on reconnect
-- Token auth enforced for non-localhost requests (and always when `--tunnel` is active)
-- Security hardening: CORS restricted to known origins via shared `getAllowedOrigins()` helper (`utils/origins.ts`); Origin header validation on mutations (CSRF); Host header validation with Tailscale support (DNS rebinding); WebSocket Origin check on upgrade (CORS doesn't protect WS); CSP + X-Frame-Options + nosniff + Referrer-Policy headers; filesystem browse restricted to `$HOME` with `realpathSync` + trailing-slash prefix collision fix; SQL column allowlists on `updateProject`/`updateThread`; per-client WS rate limiting (60/10s sliding window); attachment extension + MIME type control-char sanitization; SW targetUrl same-origin validation; DOMPurify on MarkdownContent Shiki output
+- Remote auth model: direct localhost stays passwordless; LAN / Cloudflare Tunnel / SSH tunnel use the bearer token; Tailscale Serve browser sessions bootstrap a signed `HttpOnly` cookie from identity headers; tagged-device fallback still requires the bearer token
+- Security hardening: CORS restricted to known origins via shared `getAllowedOrigins()` helper (`utils/origins.ts`) with local-interface, tunnel, and configured-remote host coverage; Origin header validation on mutations (CSRF); Host header validation with Tailscale support (DNS rebinding); WebSocket Origin check on upgrade (CORS doesn't protect WS); CSP + X-Frame-Options + nosniff + Referrer-Policy headers; filesystem browse restricted to `$HOME` with `realpathSync` + trailing-slash prefix collision fix; SQL column allowlists on `updateProject`/`updateThread`; per-client WS rate limiting (60/10s sliding window); attachment extension + MIME type control-char sanitization; SW targetUrl same-origin validation; DOMPurify on MarkdownContent Shiki output
 - Rich tool renderers parse stream-json tool data into visual components (diffs, inline Bash previews, search results); special tools (AskUser, Agent, TodoWrite) registered in declarative `TOOL_RENDERERS` map
 - TodoWrite rendering: latest TodoWrite renders as prominent card with all tasks, per-task status (✓ completed/▸ running/○ queued), progress bar, ARIA roles; Codex now streams canonical `{todos}` snapshots with `in_progress` status during live updates, while `parseTodos()` still accepts legacy Codex `{items}` payloads; `TodoItemList` is shared across the latest card, inline renderer, and pinned panel; prior TodoWrites collapse to expandable summary lines; `latestTodos` hydrated from REST history with streaming race guard
 - Pinned TODO panel: `PinnedTodoPanel` component sits between StickyRunBar and InputBar; visible while agent is actively working (`isRunning && !turnEnded`) and `activeTodos` exist; collapsible via chevron toggle; header shows task icon + progress counter + inline progress bar; auto-hides when turn ends; CSS: `pinned-todo-panel` with subtle accent background + top border
