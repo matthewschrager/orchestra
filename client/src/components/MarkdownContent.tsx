@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useState, type ComponentProps } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -6,6 +6,13 @@ import DOMPurify from "dompurify";
 import type { Components } from "react-markdown";
 import type { Highlighter } from "shiki";
 import { wrapAsciiArt } from "../lib/asciiArt";
+import {
+  buildVscodeUrl,
+  fileServeUrl,
+  isLocalhostHostname,
+  isServableFilePath,
+  parseLocalFileHref,
+} from "../lib/fileUtils";
 
 let highlighterPromise: Promise<Highlighter> | null = null;
 let cachedHighlighter: Highlighter | null = null;
@@ -30,6 +37,11 @@ async function getHighlighter(): Promise<Highlighter> {
 
 // Pre-warm highlighter
 getHighlighter();
+
+function isLocalhost(): boolean {
+  if (typeof window === "undefined") return false;
+  return isLocalhostHostname(window.location.hostname);
+}
 
 function CodeBlock({ className, children }: { className?: string; children: string }) {
   const [html, setHtml] = useState<string | null>(null);
@@ -68,6 +80,62 @@ function CodeBlock({ className, children }: { className?: string; children: stri
   );
 }
 
+function MarkdownLink({ href, children, ...props }: ComponentProps<"a">) {
+  const [copied, setCopied] = useState(false);
+  const localFile = parseLocalFileHref(href);
+
+  const handleCopy = useCallback(async (path: string) => {
+    try {
+      await navigator.clipboard.writeText(path);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard API may fail in insecure contexts
+    }
+  }, []);
+
+  if (!localFile) {
+    return <a href={href} {...props}>{children}</a>;
+  }
+
+  if (isServableFilePath(localFile.path)) {
+    return (
+      <a
+        href={fileServeUrl(localFile.path)}
+        target="_blank"
+        rel="noreferrer"
+        title={localFile.path}
+        {...props}
+      >
+        {children}
+      </a>
+    );
+  }
+
+  if (isLocalhost()) {
+    return (
+      <a
+        href={buildVscodeUrl(localFile.path, localFile.line, localFile.col)}
+        title={localFile.path}
+        {...props}
+      >
+        {children}
+      </a>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void handleCopy(localFile.path)}
+      title={copied ? "Copied path" : `Copy path: ${localFile.path}`}
+      className="text-accent hover:text-accent-light underline underline-offset-2"
+    >
+      {children}
+    </button>
+  );
+}
+
 const components: Components = {
   code({ className, children, ...props }) {
     const isBlock = className?.startsWith("language-");
@@ -80,6 +148,9 @@ const components: Components = {
   pre({ children }) {
     // Unwrap — CodeBlock handles its own <pre>
     return <>{children}</>;
+  },
+  a({ href, children, ...props }) {
+    return <MarkdownLink href={href} {...props}>{children}</MarkdownLink>;
   },
 };
 

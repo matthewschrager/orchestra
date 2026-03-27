@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { extname } from "path";
+import { homedir } from "os";
 
 /** Image extensions safe for inline rendering (SVG excluded — XSS risk via script tags) */
-const ALLOWED_EXTENSIONS = new Set([
+const IMAGE_EXTENSIONS = new Set([
   ".png",
   ".jpg",
   ".jpeg",
@@ -11,18 +12,48 @@ const ALLOWED_EXTENSIONS = new Set([
   ".bmp",
 ]);
 
+/** Safe document types to serve inline as plain text or PDF */
+const DOCUMENT_EXTENSIONS = new Set([
+  ".md",
+  ".markdown",
+  ".txt",
+  ".log",
+  ".json",
+  ".yaml",
+  ".yml",
+  ".csv",
+  ".pdf",
+]);
+
+const ALLOWED_EXTENSIONS = new Set([...IMAGE_EXTENSIONS, ...DOCUMENT_EXTENSIONS]);
+
+function resolveRequestedPath(rawPath: string): string {
+  if (rawPath === "~") return homedir();
+  if (rawPath.startsWith("~/")) return `${homedir()}/${rawPath.slice(2)}`;
+  return rawPath;
+}
+
+function contentTypeFor(filePath: string, detectedType: string): string {
+  const ext = extname(filePath).toLowerCase();
+  if (ext === ".pdf") return "application/pdf";
+  if (DOCUMENT_EXTENSIONS.has(ext)) return "text/plain; charset=utf-8";
+  return detectedType || "application/octet-stream";
+}
+
 export function createFileRoutes() {
   const app = new Hono();
 
   app.get("/serve", async (c) => {
-    const filePath = c.req.query("path");
+    const requestedPath = c.req.query("path");
 
     // Must provide a path
-    if (!filePath) {
+    if (!requestedPath) {
       return c.json({ error: "Missing 'path' query parameter" }, 400);
     }
 
-    // Must be absolute
+    const filePath = resolveRequestedPath(requestedPath);
+
+    // Must be absolute after optional ~/ expansion
     if (!filePath.startsWith("/")) {
       return c.json({ error: "Path must be absolute" }, 400);
     }
@@ -44,7 +75,7 @@ export function createFileRoutes() {
       return c.json({ error: "File not found" }, 404);
     }
 
-    const contentType = file.type || "application/octet-stream";
+    const contentType = contentTypeFor(filePath, file.type);
 
     return new Response(file.stream(), {
       headers: {

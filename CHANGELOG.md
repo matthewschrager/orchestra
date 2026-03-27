@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- **Markdown document links now open the file instead of another Orchestra shell** — chat markdown rewrites local filesystem links like `/home/.../PLAN.md` and `~/.../PLAN.md` to the file proxy, safe documents now serve inline as text or PDF, and unsupported localhost file links still fall back to VS Code; added regression coverage for markdown-link rewriting and document serving
 - **Merged PRs with deleted source branches no longer get stuck forever** — cleanup now treats merged PRs with auto-deleted remote branches as eligible, while still routing them through confirmation
 - **Recently merged PRs are recognized immediately during cleanup** — the cleanup pass now refreshes PR status on demand instead of waiting for the stale-status window to expire
 - **Unverified merged heads default to safe behavior** — if Orchestra cannot verify the merged PR head OID, the confirmation row starts unchecked so local-only post-merge commits are not preselected for deletion
