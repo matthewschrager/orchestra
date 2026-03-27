@@ -667,16 +667,16 @@ function AppInner() {
       {/* Top bar — frosted glass */}
       <header className="flex items-center justify-between px-4 py-2.5 bg-base/80 backdrop-blur-xl border-b border-edge-1 shrink-0 z-30">
         <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <OrchestraLogo size={20} color="var(--color-accent)" />
+            <h1 className="text-sm font-semibold tracking-tight text-content-2">Orchestra</h1>
+          </div>
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="md:hidden p-2 hover:bg-surface-3 rounded-lg shrink-0"
           >
             <MenuIcon />
           </button>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <OrchestraLogo size={20} color="var(--color-accent)" />
-            <h1 className="text-sm font-semibold tracking-tight text-content-2">Orchestra</h1>
-          </div>
           {activeProject && (
             <span className="text-xs text-content-3 font-light shrink-0">
               / {activeProject.name}
