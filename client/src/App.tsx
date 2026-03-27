@@ -936,8 +936,8 @@ function AppInner() {
               agents={agents}
               commands={commands}
               activeProjectId={activeProjectId}
-              onNewThread={(agent, prompt, isolate, projectId, worktreeName) => {
-                handleNewThread(agent, prompt, isolate, projectId, worktreeName);
+              onNewThread={(agent, prompt, isolate, projectId, worktreeName, attachments) => {
+                handleNewThread(agent, prompt, isolate, projectId, worktreeName, attachments);
                 setMobileTab("sessions");
               }}
             />
