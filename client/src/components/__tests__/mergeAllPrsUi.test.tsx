@@ -67,7 +67,7 @@ describe("merge-all PR UI affordances", () => {
     const markup = renderToStaticMarkup(
       <ProjectSidebar
         projects={[{ ...baseProject, outstandingPrCount: 0 }]}
-        threads={[baseThread]}
+        threads={[{ ...baseThread, prUrl: null, prStatus: null }]}
         activeProjectId="proj-1"
         activeThreadId={null}
         unreadThreadIds={new Set<string>()}
@@ -89,6 +89,32 @@ describe("merge-all PR UI affordances", () => {
     expect(markup).not.toContain("Merge all outstanding PRs");
   });
 
+  test("falls back to loaded thread PR state when the project count is stale", () => {
+    const markup = renderToStaticMarkup(
+      <ProjectSidebar
+        projects={[{ ...baseProject, outstandingPrCount: 0 }]}
+        threads={[baseThread]}
+        activeProjectId="proj-1"
+        activeThreadId={null}
+        unreadThreadIds={new Set<string>()}
+        onSelectProject={() => {}}
+        onSelectThread={() => {}}
+        onNewThread={() => {}}
+        onMergeAllPrs={() => {}}
+        onArchiveThread={() => {}}
+        onRemoveProject={() => {}}
+        onCleanupPushed={() => {}}
+        onAddProject={() => {}}
+        onOpenSettings={() => {}}
+        mergingProjectId={null}
+        open
+        onClose={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Merge all outstanding PRs");
+  });
+
   test("shows the button in mobile project headers too", () => {
     const markup = renderToStaticMarkup(
       <MobileSessions
@@ -98,6 +124,24 @@ describe("merge-all PR UI affordances", () => {
         unreadThreadIds={new Set<string>()}
         onSelectThread={() => {}}
         onNewThread={() => {}}
+        onMergeAllPrs={() => {}}
+        mergingProjectId={null}
+      />,
+    );
+
+    expect(markup).toContain("Merge all PRs");
+  });
+
+  test("shows the mobile button when project metadata is stale but thread PR state is not", () => {
+    const markup = renderToStaticMarkup(
+      <MobileSessions
+        projects={[{ ...baseProject, outstandingPrCount: 0 }]}
+        threads={[baseThread]}
+        activeThreadId={null}
+        unreadThreadIds={new Set<string>()}
+        onSelectThread={() => {}}
+        onNewThread={() => {}}
+        onArchiveThread={() => {}}
         onMergeAllPrs={() => {}}
         mergingProjectId={null}
       />,
