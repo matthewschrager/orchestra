@@ -211,6 +211,11 @@ export class SessionManager {
 
     const existing = this.sessions.get(threadId);
 
+    // Guard: non-persistent sessions still block during thinking (no queue support)
+    if (existing && !existing.persistent && existing.state === "thinking") {
+      throw new Error("Agent is still processing — wait for it to finish");
+    }
+
     // ── QUEUE PATH: persistent session mid-turn — queue message for next turn ──
     if (existing?.persistent && existing.state === "thinking") {
       // Content validation: reject empty/whitespace before consuming queue slot
@@ -255,8 +260,10 @@ export class SessionManager {
           // Message is persisted — user can resend if agent restarts
         });
       } catch (err) {
+        // Synchronous throw: don't count as queued (inject never reached CLI)
         if (existing.aborted || !this.sessions.has(threadId)) return;
         console.error(`[session] queued streamInput threw for ${threadId}:`, err);
+        return;
       }
 
       existing.queuedCount++;

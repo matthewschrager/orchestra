@@ -674,6 +674,33 @@ describe("Persistent Session lifecycle", () => {
     sessionManager.stopAll();
   });
 
+  test("non-persistent session: rejects message while agent is thinking", async () => {
+    // Non-persistent (legacy) adapters don't support queuing — should still block
+    // Use delay to keep the session alive while we send a message
+    const adapter = createMockAdapter([
+      { type: "system", subtype: "init", session_id: "sess-np", tools: [], cwd: "/tmp" },
+      { type: "assistant", message: { content: [{ type: "text", text: "Working..." }] }, session_id: "sess-np" },
+      { type: "result", subtype: "success", session_id: "sess-np", total_cost_usd: 0.01, duration_ms: 100 },
+    ], { delayMs: 200 });
+    const { repoDir, sessionManager } = setupSessionManager(adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "non-persistent test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+    // Wait for init to be consumed but not the result (delayMs=200 between messages)
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Sending while thinking on a non-persistent adapter should throw (not silently abort)
+    expect(() => {
+      sessionManager.sendMessage(thread.id, "impatient message");
+    }).toThrow("Agent is still processing");
+
+    sessionManager.stopAll();
+  });
+
   test("persistent session: subprocess death mid-turn marks error", async () => {
     const mock = createPersistentMockAdapter();
     const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);

@@ -494,7 +494,11 @@ function AppInner() {
     if (!activeThreadId) return;
     try {
       setError(null);
-      turnStartRef.current = Date.now();
+      // Only reset turn timer when starting a new turn, not when queuing mid-turn
+      const thread = threads.find((t) => t.id === activeThreadId);
+      if (!thread || thread.status !== "running") {
+        turnStartRef.current = Date.now();
+      }
       send({ type: "send_message", threadId: activeThreadId, content, attachments, interrupt: interrupt ?? false });
     } catch (err) {
       setError((err as Error).message);
