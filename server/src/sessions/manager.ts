@@ -20,6 +20,11 @@ import { isEffortLevelSupported } from "shared";
 import type { Attachment, AttentionItem, AttentionResolution, EffortLevel, StreamDelta } from "shared";
 import { resolveAttachmentPaths } from "../routes/uploads";
 import { generateTitle } from "../titles/generator";
+import { detectWorktree } from "../utils/git";
+import {
+  getDefaultWorktreeDataDir,
+  getIsolatedWorktreePort,
+} from "../utils/worktree";
 
 /** State machine for persistent sessions: thinking → idle/waiting → thinking */
 export type SessionState = "thinking" | "idle" | "waiting";
@@ -474,11 +479,17 @@ export class SessionManager {
   buildIsolationPreamble(cwd: string): string {
     // Sanitize cwd to prevent prompt injection via crafted worktree names
     const safeCwd = cwd.replace(/[\n\r\t]/g, "_").slice(0, 200);
+    const worktreeName = detectWorktree(cwd);
+    const nestedPort = worktreeName ? getIsolatedWorktreePort(worktreeName) : this.orchestraPort;
+    const nestedDataDir = worktreeName
+      ? getDefaultWorktreeDataDir(worktreeName, safeCwd, { orchestraManaged: true })
+      : `${safeCwd}/.orchestra-worktree`;
     return [
       "[Orchestra context — you are running inside an Orchestra-managed session]",
       `- Orchestra server is on localhost:${this.orchestraPort} — do NOT interact with it`,
       "- Do NOT modify ~/.orchestra/ or kill processes you didn't start",
       `- Confine your work to this directory: ${safeCwd}`,
+      `- If you need a nested Orchestra server for QA from this worktree, use ORCHESTRA_ALLOW_NESTED=1 ORCHESTRA_PORT=${nestedPort} ORCHESTRA_DATA_DIR=${nestedDataDir} bun run --filter server start`,
     ].join("\n");
   }
 
