@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.31.0] - 2026-03-27
+
+### Changed
+
+- **Worktree QA now defaults to a safe nested-server sandbox** — Orchestra-managed worktree sessions now spell out the exact nested QA command in the agent preamble, and nested servers launched without `ORCHESTRA_DATA_DIR` now default to `.orchestra-worktree` inside the worktree instead of writing into `~/.orchestra`
+- **Worktree instructions now match the real QA flow** — AGENTS/CLAUDE guidance now tells agents to build from the repo root, use `ORCHESTRA_ALLOW_NESTED=1`, and keep nested runtime state inside the worktree
+
+### Fixed
+
+- **Merge-all PR actions stay visible when project counts lag behind thread state** — the desktop sidebar, empty project view, and mobile project headers now fall back to loaded thread PR metadata when the project-level outstanding PR count is stale, so the merge-all affordance no longer disappears after partial refreshes
+- **Worktree-safe nested QA is covered by regression tests** — new isolation tests lock in the worktree-local data-dir default and the injected safe nested-server command so this workflow does not regress quietly
+
 ## [0.1.30.0] - 2026-03-27
 
 ### Added
