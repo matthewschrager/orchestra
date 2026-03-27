@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.28.3] - 2026-03-27
+
+### Fixed
+
+- **Tool group labels use accurate nouns** — collapsed tool groups now show context-appropriate nouns ("Ran 3 commands", "Searched 2 patterns", "Spawned 2 agents") instead of the generic "files" for every tool type
+
 ## [0.1.28.2] - 2026-03-26
 
 ### Added
