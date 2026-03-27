@@ -98,6 +98,29 @@ const COLUMN_MIGRATIONS = [
     column: "origin",
     sql: `ALTER TABLE push_subscriptions ADD COLUMN origin TEXT DEFAULT ''`,
   },
+  {
+    table: "threads",
+    column: "last_interacted_at",
+    // SQLite rejects expression defaults (datetime('now')) in ALTER TABLE on non-empty tables.
+    // Use empty string as placeholder, then backfill from created_at to preserve relative order.
+    sql: `ALTER TABLE threads ADD COLUMN last_interacted_at TEXT NOT NULL DEFAULT ''`,
+    postMigrate: `UPDATE threads SET last_interacted_at = created_at`,
+  },
+  {
+    table: "threads",
+    column: "pr_status",
+    sql: `ALTER TABLE threads ADD COLUMN pr_status TEXT`,
+  },
+  {
+    table: "threads",
+    column: "pr_number",
+    sql: `ALTER TABLE threads ADD COLUMN pr_number INTEGER`,
+  },
+  {
+    table: "threads",
+    column: "pr_status_checked_at",
+    sql: `ALTER TABLE threads ADD COLUMN pr_status_checked_at TEXT`,
+  },
 ];
 
 const INDEX_MIGRATIONS = [
@@ -119,10 +142,11 @@ export function createDb(dbPath?: string): Database {
   }
 
   // Run column migrations (safe if column already exists)
-  for (const { table, column, sql } of COLUMN_MIGRATIONS) {
+  for (const { table, column, sql, postMigrate } of COLUMN_MIGRATIONS) {
     const cols = db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === column)) {
       db.exec(sql);
+      if (postMigrate) db.exec(postMigrate);
     }
   }
 
@@ -231,11 +255,18 @@ export function deleteProject(db: DB, id: string): void {
   db.query("DELETE FROM projects WHERE id = ?").run(id);
 }
 
+// Fix 7: Column allowlists prevent SQL injection via dynamic column names
+const PROJECT_COLUMNS = new Set(["name"]);
+const THREAD_COLUMNS = new Set([
+  "title", "status", "worktree", "branch", "pid",
+  "error_message", "pr_url", "archived_at", "session_id",
+]);
+
 export function updateProject(db: DB, id: string, fields: Partial<ProjectRow>): void {
   const sets: string[] = [];
   const values: (string | number | null)[] = [];
   for (const [key, val] of Object.entries(fields)) {
-    if (key === "id") continue;
+    if (key === "id" || !PROJECT_COLUMNS.has(key)) continue;
     sets.push(`${key} = ?`);
     values.push(val as string | number | null);
   }
@@ -248,6 +279,11 @@ export function updateProject(db: DB, id: string, fields: Partial<ProjectRow>): 
 
 export function touchProjectUpdatedAt(db: DB, projectId: string): void {
   db.query("UPDATE projects SET updated_at = datetime('now') WHERE id = ?").run(projectId);
+}
+
+/** Update last_interacted_at — call only when the user sends a message */
+export function touchThreadInteraction(db: DB, threadId: string): void {
+  db.query("UPDATE threads SET last_interacted_at = datetime('now') WHERE id = ?").run(threadId);
 }
 
 export function getProjectThreadCounts(
@@ -281,7 +317,7 @@ export function getThread(db: DB, id: string) {
 
 export function listThreads(db: DB) {
   return db
-    .query("SELECT * FROM threads WHERE archived_at IS NULL ORDER BY updated_at DESC")
+    .query("SELECT * FROM threads WHERE archived_at IS NULL ORDER BY last_interacted_at DESC")
     .all() as ThreadRow[];
 }
 
@@ -317,11 +353,31 @@ export function updateThread(db: DB, id: string, fields: Partial<ThreadRow>) {
   const sets: string[] = [];
   const values: (string | number | null)[] = [];
   for (const [key, val] of Object.entries(fields)) {
-    if (key === "id") continue;
+    if (key === "id" || !THREAD_COLUMNS.has(key)) continue;
     sets.push(`${key} = ?`);
     values.push(val as string | number | null);
   }
   sets.push("updated_at = datetime('now')");
+  values.push(id);
+  db.query(`UPDATE threads SET ${sets.join(", ")} WHERE id = ?`).run(
+    ...(values as [string, ...string[]]),
+  );
+}
+
+/**
+ * Update thread fields WITHOUT bumping updated_at.
+ * Use for background housekeeping (e.g., PR status refresh) that shouldn't
+ * affect sidebar sort order.
+ */
+export function updateThreadSilent(db: DB, id: string, fields: Partial<ThreadRow>) {
+  const sets: string[] = [];
+  const values: (string | number | null)[] = [];
+  for (const [key, val] of Object.entries(fields)) {
+    if (key === "id") continue;
+    sets.push(`${key} = ?`);
+    values.push(val as string | number | null);
+  }
+  if (sets.length === 0) return;
   values.push(id);
   db.query(`UPDATE threads SET ${sets.join(", ")} WHERE id = ?`).run(
     ...(values as [string, ...string[]]),
@@ -450,6 +506,9 @@ export interface ThreadRow {
   worktree: string | null;
   branch: string | null;
   pr_url: string | null;
+  pr_status: string | null;
+  pr_number: number | null;
+  pr_status_checked_at: string | null;
   pid: number | null;
   status: string;
   error_message: string | null;
@@ -457,6 +516,7 @@ export interface ThreadRow {
   archived_at: string | null;
   created_at: string;
   updated_at: string;
+  last_interacted_at: string;
 }
 
 export interface MessageRow {
@@ -484,13 +544,17 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
     worktree: row.worktree,
     branch: row.branch,
     prUrl: row.pr_url,
+    prStatus: row.pr_status as import("shared").PrStatus | null,
+    prNumber: row.pr_number,
     pid: row.pid,
     status: row.status as import("shared").ThreadStatus,
     errorMessage: row.error_message,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    lastInteractedAt: row.last_interacted_at,
   };
+  // Note: pr_status_checked_at is intentionally omitted — server-internal only
 }
 
 export function messageRowToApi(row: MessageRow): import("shared").Message {

@@ -12,7 +12,7 @@ interface Props {
   activeProjectName: string | null;
   commands: SlashCommand[];
   pendingQuestion?: boolean | null;
-  onSend: (content: string, attachments?: Attachment[]) => void;
+  onSend: (content: string, attachments?: Attachment[], interrupt?: boolean) => void;
   onNewThread: (agent: string, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => void;
   onStop: () => void;
 }
@@ -255,13 +255,22 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
               ? "Describe what you want to build..."
               : pendingQuestion
                 ? "Type your answer..."
-                : isRunning
-                  ? "Agent is working..."
-                  : "Send a message..."
+                : "Send a message..."
           }
         />
 
-        {isRunning ? (
+        {/* Send button — always visible */}
+        <button
+          onClick={handleSubmit}
+          disabled={uploading || (!input.trim() && attachments.length === 0)}
+          className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base shrink-0 border border-transparent"
+          title="Enter to send, Shift+Enter for newline"
+        >
+          {mode === "new" && thread ? "New" : "Send"}
+        </button>
+
+        {/* Stop button — shown alongside Send when agent is running */}
+        {isRunning && (
           <button
             onClick={onStop}
             className="relative p-2 rounded-lg shrink-0 self-end group"
@@ -274,15 +283,6 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
             <svg width="16" height="16" viewBox="0 0 16 16" className="relative text-accent group-hover:text-accent-light transition-colors">
               <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor" />
             </svg>
-          </button>
-        ) : (
-          <button
-            onClick={handleSubmit}
-            disabled={uploading || (!input.trim() && attachments.length === 0)}
-            className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base shrink-0 border border-transparent"
-            title="Enter to send, Shift+Enter for newline"
-          >
-            {mode === "new" && thread ? "New" : "Send"}
           </button>
         )}
       </div>

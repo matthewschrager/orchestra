@@ -9,10 +9,15 @@ import {
   threadRowToApi,
   touchProjectUpdatedAt,
   updateThread,
+  updateThreadSilent,
 } from "../db";
 import type { SessionManager } from "../sessions/manager";
 import type { WorktreeManager } from "../worktrees/manager";
 import type { TerminalManager } from "../terminal/manager";
+import {
+  fetchPrStatus,
+  isPrStatusStale,
+} from "../worktrees/pr-status";
 
 export function createThreadRoutes(
   db: DB,
@@ -24,7 +29,12 @@ export function createThreadRoutes(
 
   // List threads
   app.get("/", (c) => {
-    const threads = listThreads(db).map(threadRowToApi);
+    const threadRows = listThreads(db);
+    const threads = threadRows.map(threadRowToApi);
+
+    // Fire-and-forget: refresh PR status for open/draft threads with stale checks
+    refreshStalePrStatuses(db, threadRows, sessionManager);
+
     return c.json(threads);
   });
 
@@ -101,13 +111,14 @@ export function createThreadRoutes(
 
   // Send message to running thread
   app.post("/:id/messages", async (c) => {
-    const { content, attachments } = await c.req.json<{
+    const { content, attachments, interrupt } = await c.req.json<{
       content: string;
       attachments?: import("shared").Attachment[];
+      interrupt?: boolean;
     }>();
     if (!content) return c.json({ error: "content is required" }, 400);
     try {
-      sessionManager.sendMessage(c.req.param("id"), content, attachments);
+      sessionManager.sendMessage(c.req.param("id"), content, attachments, { interrupt: interrupt === true });
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 400);
@@ -178,6 +189,41 @@ export function createThreadRoutes(
     }
   });
 
+  // Refresh PR status for a single thread
+  app.post("/:id/refresh-pr", async (c) => {
+    const threadId = c.req.param("id");
+    const thread = getThread(db, threadId) as ThreadRow | null;
+    if (!thread) return c.json({ error: "Not found" }, 404);
+    if (!thread.pr_url) return c.json({ error: "Thread has no PR" }, 400);
+
+    // Honor stale guard — skip fetch if recently checked
+    if (!isPrStatusStale(thread.pr_status_checked_at)) {
+      return c.json(threadRowToApi(thread));
+    }
+
+    const result = await fetchPrStatus(thread.pr_url, thread.repo_path);
+    if (result) {
+      const changed = result.status !== thread.pr_status;
+      // Use silent update — PR background refresh shouldn't affect sidebar sort order
+      updateThreadSilent(db, threadId, {
+        pr_status: result.status,
+        pr_number: result.number,
+        pr_status_checked_at: new Date().toISOString(),
+      });
+      if (changed) {
+        sessionManager.notifyThread(threadId);
+      }
+    } else {
+      // Update checked_at even on failure to avoid retry storms
+      updateThreadSilent(db, threadId, {
+        pr_status_checked_at: new Date().toISOString(),
+      });
+    }
+
+    const updated = getThread(db, threadId)!;
+    return c.json(threadRowToApi(updated));
+  });
+
   // Update thread title
   app.patch("/:id", async (c) => {
     const { title } = await c.req.json<{ title?: string }>();
@@ -227,4 +273,47 @@ export function createThreadRoutes(
   });
 
   return app;
+}
+
+/**
+ * Fire-and-forget: refresh PR statuses for threads with open/draft PRs
+ * that haven't been checked recently. Only broadcasts WS when status changes.
+ */
+function refreshStalePrStatuses(
+  db: DB,
+  threads: ThreadRow[],
+  sessionManager: SessionManager,
+): void {
+  const refreshable = threads.filter(
+    (t) =>
+      t.pr_url &&
+      (t.pr_status === "open" || t.pr_status === "draft" || t.pr_status === null) &&
+      isPrStatusStale(t.pr_status_checked_at),
+  );
+
+  for (const thread of refreshable) {
+    // Each call is individually fire-and-forget; semaphore in pr-status.ts
+    // handles concurrency limiting
+    fetchPrStatus(thread.pr_url!, thread.repo_path).then((result) => {
+      if (result) {
+        const changed = result.status !== thread.pr_status;
+        // Silent update — background refresh shouldn't affect sidebar sort order
+        updateThreadSilent(db, thread.id, {
+          pr_status: result.status,
+          pr_number: result.number,
+          pr_status_checked_at: new Date().toISOString(),
+        });
+        if (changed) {
+          sessionManager.notifyThread(thread.id);
+        }
+      } else {
+        // Update checked_at even on failure to avoid retry storms
+        updateThreadSilent(db, thread.id, {
+          pr_status_checked_at: new Date().toISOString(),
+        });
+      }
+    }).catch(() => {
+      // Silently ignore — fire-and-forget
+    });
+  }
 }

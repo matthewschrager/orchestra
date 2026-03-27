@@ -23,6 +23,8 @@ export interface CreateProjectRequest {
 
 export type ThreadStatus = "running" | "pending" | "paused" | "waiting" | "done" | "error";
 
+export type PrStatus = "draft" | "open" | "merged" | "closed";
+
 export interface Thread {
   id: string;
   title: string;
@@ -32,12 +34,16 @@ export interface Thread {
   worktree: string | null;
   branch: string | null;
   prUrl: string | null;
+  prStatus: PrStatus | null;
+  prNumber: number | null;
   pid: number | null;
   status: ThreadStatus;
   errorMessage: string | null;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Timestamp of the last user-initiated message (used for sidebar sort order) */
+  lastInteractedAt: string;
 }
 
 // ── Message ─────────────────────────────────────────────
@@ -71,7 +77,7 @@ export interface AgentConfig {
 
 export interface StreamDelta {
   threadId: string;
-  deltaType: "text" | "tool_start" | "tool_input" | "tool_end" | "turn_end" | "metrics";
+  deltaType: "text" | "tool_start" | "tool_input" | "tool_end" | "turn_end" | "metrics" | "queued_message";
   text?: string;
   toolName?: string;
   toolInput?: string;
@@ -86,6 +92,8 @@ export interface StreamDelta {
   contextWindow?: number;
   /** Primary model name (e.g. "claude-sonnet-4-20250514") */
   modelName?: string;
+  /** Current queue depth (for queued_message deltas) */
+  queuedCount?: number;
 }
 
 // ── Turn Metrics ──────────────────────────────────────
@@ -109,7 +117,7 @@ export interface TurnMetrics {
 export type WSClientMessage =
   | { type: "subscribe"; threadId: string; lastSeq?: number }
   | { type: "unsubscribe"; threadId: string }
-  | { type: "send_message"; threadId: string; content: string; attachments?: Attachment[] }
+  | { type: "send_message"; threadId: string; content: string; attachments?: Attachment[]; interrupt?: boolean }
   | { type: "stop_thread"; threadId: string }
   | { type: "resolve_attention"; attentionId: string; resolution: AttentionResolution }
   | { type: "terminal_create"; threadId: string }

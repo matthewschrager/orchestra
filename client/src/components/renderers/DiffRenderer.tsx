@@ -46,19 +46,115 @@ export function parseDiff(input: string | null): ParsedDiff | null {
   }
 }
 
-// ── Outer truncation threshold ─────────────────────────────
+// ── Context collapsing ────────────────────────────────────
 
-const OUTER_TRUNCATION = 100;
-const OUTER_INITIAL_SHOW = 50;
+type DisplayChunk =
+  | { type: "lines"; lines: DiffLine[] }
+  | { type: "collapsed"; count: number };
+
+/** Lines of context to show around each change hunk */
+const CONTEXT_LINES = 3;
+
+/** After context collapsing, truncate if visible lines exceed this */
+const MAX_VISIBLE_LINES = 40;
+/** When truncated, show this many visible lines */
+const INITIAL_VISIBLE_LINES = 25;
+
+/**
+ * Collapse unchanged context lines, keeping only `contextSize` lines
+ * around each changed region. Returns chunks of visible lines
+ * interspersed with "N hidden lines" separators.
+ */
+function collapseContextLines(
+  allLines: DiffLine[],
+  contextSize: number = CONTEXT_LINES,
+): DisplayChunk[] {
+  if (allLines.length === 0) return [];
+  // No context lines to collapse (pure add/remove, e.g. new file)
+  if (!allLines.some((l) => l.type === "context")) {
+    return [{ type: "lines", lines: allLines }];
+  }
+
+  // Mark which lines to show (changed lines + surrounding context)
+  const show = new Array<boolean>(allLines.length).fill(false);
+  for (let i = 0; i < allLines.length; i++) {
+    if (allLines[i].type !== "context") {
+      const start = Math.max(0, i - contextSize);
+      const end = Math.min(allLines.length - 1, i + contextSize);
+      for (let j = start; j <= end; j++) show[j] = true;
+    }
+  }
+
+  const chunks: DisplayChunk[] = [];
+  let i = 0;
+  while (i < allLines.length) {
+    if (show[i]) {
+      const visible: DiffLine[] = [];
+      while (i < allLines.length && show[i]) {
+        visible.push(allLines[i]);
+        i++;
+      }
+      chunks.push({ type: "lines", lines: visible });
+    } else {
+      let count = 0;
+      while (i < allLines.length && !show[i]) {
+        count++;
+        i++;
+      }
+      chunks.push({ type: "collapsed", count });
+    }
+  }
+  return chunks;
+}
+
+function countVisibleLines(chunks: DisplayChunk[]): number {
+  return chunks.reduce(
+    (sum, c) => sum + (c.type === "lines" ? c.lines.length : 0),
+    0,
+  );
+}
+
+/** Truncate chunks to at most maxLines visible lines.
+ *  Strips any trailing collapsed separators — they'd misleadingly imply
+ *  only unchanged lines follow when the truncation actually cut off changes. */
+function truncateChunks(
+  chunks: DisplayChunk[],
+  maxLines: number,
+): DisplayChunk[] {
+  const result: DisplayChunk[] = [];
+  let remaining = maxLines;
+
+  for (const chunk of chunks) {
+    if (remaining <= 0) break;
+    if (chunk.type === "collapsed") {
+      result.push(chunk);
+      continue;
+    }
+    if (chunk.lines.length <= remaining) {
+      result.push(chunk);
+      remaining -= chunk.lines.length;
+    } else {
+      result.push({ type: "lines", lines: chunk.lines.slice(0, remaining) });
+      remaining = 0;
+    }
+  }
+  // Strip trailing collapsed separators
+  while (result.length > 0 && result[result.length - 1].type === "collapsed") {
+    result.pop();
+  }
+  return result;
+}
 
 // ── Component ──────────────────────────────────────────────
 
 interface Props {
   input: string | null;
+  /** When true, skip the renderer-header (ToolLine provides the header) */
+  inline?: boolean;
 }
 
-export function DiffRenderer({ input }: Props) {
-  const [expanded, setExpanded] = useState(false);
+export function DiffRenderer({ input, inline }: Props) {
+  const [showAll, setShowAll] = useState(false);
   const parsed = parseDiff(input);
 
   // Async syntax highlighting
@@ -89,30 +185,51 @@ export function DiffRenderer({ input }: Props) {
     );
   }
 
-  // Outer truncation for very large diffs
-  const needsTruncation = parsed.lines.length > OUTER_TRUNCATION && !expanded;
-  const displayLines = needsTruncation ? parsed.lines.slice(0, OUTER_INITIAL_SHOW) : parsed.lines;
+  // Context-collapse the diff (show only CONTEXT_LINES around each change)
+  // When showAll is true, show every line without collapsing
+  const chunks = showAll
+    ? [{ type: "lines" as const, lines: parsed.lines }]
+    : collapseContextLines(parsed.lines);
+  const visibleCount = countVisibleLines(chunks);
+
+  // Truncate if still too many visible lines
+  const needsTruncation = visibleCount > MAX_VISIBLE_LINES && !showAll;
+  const displayChunks = needsTruncation
+    ? truncateChunks(chunks, INITIAL_VISIBLE_LINES)
+    : chunks;
+  const shownCount = countVisibleLines(displayChunks);
+  const remainingCount = visibleCount - shownCount;
 
   return (
     <div className="renderer-block">
-      <div className="renderer-header">
-        <FilePathLink path={parsed.filePath} />
-        <span className="flex items-center gap-2 text-[11px] shrink-0">
-          {parsed.additions > 0 && <span className="text-diff-add">+{parsed.additions}</span>}
-          {parsed.removals > 0 && <span className="text-diff-remove">−{parsed.removals}</span>}
-        </span>
-      </div>
+      {!inline && (
+        <div className="renderer-header">
+          <FilePathLink path={parsed.filePath} />
+          <span className="flex items-center gap-2 text-[11px] shrink-0">
+            {parsed.additions > 0 && <span className="text-diff-add">+{parsed.additions}</span>}
+            {parsed.removals > 0 && <span className="text-diff-remove">−{parsed.removals}</span>}
+          </span>
+        </div>
+      )}
       <div className="renderer-body diff-body overflow-x-auto">
-        {displayLines.map((line, i) => (
-          <DiffLineRow key={i} line={line} tokens={tokens} />
-        ))}
+        {displayChunks.map((chunk, ci) =>
+          chunk.type === "collapsed" ? (
+            <CollapsedSeparator key={`sep-${ci}`} count={chunk.count} />
+          ) : (
+            chunk.lines.map((line, li) => (
+              <DiffLineRow key={`${ci}-${li}`} line={line} tokens={tokens} />
+            ))
+          ),
+        )}
       </div>
-      {needsTruncation && (
+      {(needsTruncation || (!showAll && parsed.lines.length - visibleCount > CONTEXT_LINES * 2)) && (
         <button
-          onClick={() => setExpanded(true)}
+          onClick={() => setShowAll(true)}
           className="w-full text-center text-[11px] text-content-3 hover:text-content-2 py-1.5 border-t border-edge-1"
         >
-          Show all {parsed.lines.length} lines
+          {needsTruncation
+            ? `Show ${remainingCount} more lines`
+            : `Show all ${parsed.lines.length} lines`}
         </button>
       )}
     </div>
@@ -158,6 +275,18 @@ function DiffLineRow({ line, tokens }: { line: DiffLine; tokens: TokenMap }) {
         ) : (
           line.content || " "
         )}
+      </span>
+    </div>
+  );
+}
+
+function CollapsedSeparator({ count }: { count: number }) {
+  return (
+    <div className="diff-line diff-line-collapsed">
+      <span className="diff-line-num" />
+      <span className="diff-gutter diff-gutter-context" />
+      <span className="diff-content text-content-3 text-[11px] select-none">
+        ⋯ {count} unchanged {count === 1 ? "line" : "lines"} ⋯
       </span>
     </div>
   );

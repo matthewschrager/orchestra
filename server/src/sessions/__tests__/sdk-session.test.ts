@@ -2,7 +2,7 @@ import { describe, expect, test, afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { createDb, getThread } from "../../db";
+import { createDb, getThread, getPendingAttention } from "../../db";
 import { SessionManager } from "../manager";
 import { AgentRegistry } from "../../agents/registry";
 import { WorktreeManager } from "../../worktrees/manager";
@@ -292,7 +292,7 @@ function mockParseMessage(msg: unknown): ParseResult {
 function createPersistentMockAdapter() {
   let pushMessage: (msg: Record<string, unknown>) => void;
   let finish: () => void;
-  let injectCalls: Array<{ text: string; sessionId: string }> = [];
+  let injectCalls: Array<{ text: string; sessionId: string; priority?: "now" | "next" }> = [];
   let closed = false;
   let resetCalls = 0;
 
@@ -353,8 +353,8 @@ function createPersistentMockAdapter() {
         sessionId: _opts.resumeSessionId,
         close: () => { closed = true; finish(); },
         resetTurnState: () => { resetCalls++; },
-        async injectMessage(text: string, sessionId: string): Promise<void> {
-          injectCalls.push({ text, sessionId });
+        async injectMessage(text: string, sessionId: string, priority?: "now" | "next"): Promise<void> {
+          injectCalls.push({ text, sessionId, priority });
         },
       };
     },
@@ -507,9 +507,15 @@ describe("Persistent Session lifecycle", () => {
     sessionManager.stopAll();
   });
 
-  test("persistent session: rejects message while agent is thinking", async () => {
+  test("persistent session: queues message while agent is thinking", async () => {
     const mock = createPersistentMockAdapter();
-    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    // Track stream deltas
+    const deltas: Array<{ threadId: string; deltaType: string; queuedCount?: number }> = [];
+    sessionManager.onStreamDelta((threadId, delta) => {
+      deltas.push({ threadId, deltaType: delta.deltaType, queuedCount: delta.queuedCount });
+    });
 
     const thread = await sessionManager.startThread({
       agent: "mock",
@@ -522,7 +528,172 @@ describe("Persistent Session lifecycle", () => {
     mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-p4", tools: [], cwd: "/tmp" });
     await new Promise((r) => setTimeout(r, 50));
 
-    // Sending a message while thinking should throw
+    // Sending a message while thinking should QUEUE (not throw)
+    sessionManager.sendMessage(thread.id, "queued message 1");
+
+    // Verify message was persisted
+    const { getMessages } = await import("../../db");
+    const msgs = getMessages(db, thread.id);
+    const userMsgs = msgs.filter((m: { role: string }) => m.role === "user");
+    expect(userMsgs.length).toBe(2); // initial prompt + queued message
+
+    // Verify injectMessage called with priority 'next'
+    const injects = mock.getInjectCalls();
+    expect(injects.length).toBe(1);
+    expect(injects[0].text).toBe("queued message 1");
+    expect(injects[0].priority).toBe("next");
+
+    // Verify queued_message delta was emitted
+    const queuedDeltas = deltas.filter((d) => d.deltaType === "queued_message");
+    expect(queuedDeltas.length).toBe(1);
+    expect(queuedDeltas[0].queuedCount).toBe(1);
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: queue depth limit (max 5)", async () => {
+    const mock = createPersistentMockAdapter();
+    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "queue limit test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-ql", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Queue 5 messages — should all succeed
+    for (let i = 1; i <= 5; i++) {
+      sessionManager.sendMessage(thread.id, `queued ${i}`);
+    }
+    expect(mock.getInjectCalls().length).toBe(5);
+
+    // 6th should throw "Queue full"
+    expect(() => {
+      sessionManager.sendMessage(thread.id, "one too many");
+    }).toThrow("Queue full");
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: queuedCount resets on turn_end", async () => {
+    const mock = createPersistentMockAdapter();
+    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const deltas: Array<{ deltaType: string; queuedCount?: number }> = [];
+    sessionManager.onStreamDelta((_threadId, delta) => {
+      deltas.push({ deltaType: delta.deltaType, queuedCount: delta.queuedCount });
+    });
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "reset test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-rst", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Queue 2 messages
+    sessionManager.sendMessage(thread.id, "msg 1");
+    sessionManager.sendMessage(thread.id, "msg 2");
+    expect(mock.getInjectCalls().length).toBe(2);
+
+    // Complete the turn
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-rst",
+      is_error: false,
+      duration_ms: 100,
+      total_cost_usd: 0.01,
+      num_turns: 1,
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // After turn_end, should be able to queue 5 more (count was reset)
+    for (let i = 1; i <= 5; i++) {
+      sessionManager.sendMessage(thread.id, `after-reset ${i}`);
+    }
+    // Total injects: 2 (before reset) + 5 (after reset) = 7
+    // But after turn_end, state is 'idle' so these are regular injects, not queued
+    // The 5 after reset go through the idle path (state is idle after turn_end)
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: rejects empty message during queue", async () => {
+    const mock = createPersistentMockAdapter();
+    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "empty test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-em", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(() => {
+      sessionManager.sendMessage(thread.id, "   ");
+    }).toThrow("Cannot queue an empty message");
+
+    // No inject should have been called
+    expect(mock.getInjectCalls().length).toBe(0);
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: interrupt flag ignored in Phase 1", async () => {
+    const mock = createPersistentMockAdapter();
+    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "interrupt test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-int", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Send with interrupt=true — should still queue as 'next' (Phase 1 ignores interrupt)
+    sessionManager.sendMessage(thread.id, "steer message", undefined, true);
+
+    const injects = mock.getInjectCalls();
+    expect(injects.length).toBe(1);
+    expect(injects[0].priority).toBe("next");
+
+    sessionManager.stopAll();
+  });
+
+  test("non-persistent session: rejects message while agent is thinking", async () => {
+    // Non-persistent (legacy) adapters don't support queuing — should still block
+    // Use delay to keep the session alive while we send a message
+    const adapter = createMockAdapter([
+      { type: "system", subtype: "init", session_id: "sess-np", tools: [], cwd: "/tmp" },
+      { type: "assistant", message: { content: [{ type: "text", text: "Working..." }] }, session_id: "sess-np" },
+      { type: "result", subtype: "success", session_id: "sess-np", total_cost_usd: 0.01, duration_ms: 100 },
+    ], { delayMs: 200 });
+    const { repoDir, sessionManager } = setupSessionManager(adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "non-persistent test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+    // Wait for init to be consumed but not the result (delayMs=200 between messages)
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Sending while thinking on a non-persistent adapter should throw (not silently abort)
     expect(() => {
       sessionManager.sendMessage(thread.id, "impatient message");
     }).toThrow("Agent is still processing");
@@ -595,6 +766,257 @@ describe("Persistent Session lifecycle", () => {
     // Thread should still be "done" — not "error"
     const updated = getThread(db, thread.id);
     expect(updated?.status).toBe("done");
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: stale attention items don't prevent done transition", async () => {
+    // Regression test: when a user sends a follow-up message without resolving
+    // an AskUserQuestion attention item, the thread gets stuck in "running" forever
+    // because the turn_end handler sees hasPendingAttention=true and skips the
+    // status→"done" transition.
+    const mock = createPersistentMockAdapter();
+
+    // Override parseMessage to emit an attention event on "ask_user" type messages
+    const origStartPersistent = mock.adapter.startPersistent!.bind(mock.adapter);
+    mock.adapter.startPersistent = (opts: StartOpts) => {
+      const session = origStartPersistent(opts);
+      const origParse = session.parseMessage;
+      session.parseMessage = (msg: unknown) => {
+        const m = msg as Record<string, unknown>;
+        // When we get a special "ask_user" message, emit attention
+        if (m.type === "result" && m._hasAttention) {
+          const base = origParse(msg);
+          base.attention = {
+            kind: "ask_user",
+            prompt: "What do you prefer?",
+            options: ["A", "B"],
+          };
+          return base;
+        }
+        return origParse(msg);
+      };
+      return session;
+    };
+
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "attention test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Turn 1: agent asks a question via AskUserQuestion → result with attention
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-attn", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Let me ask you something" }] },
+      session_id: "sess-attn",
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-attn",
+      permission_denials: [],
+      _hasAttention: true, // triggers attention in our mock parser
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Thread should be "waiting" (attention item created)
+    let updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("waiting");
+
+    // Verify attention item exists
+    const pendingBefore = getPendingAttention(db, thread.id);
+    expect(pendingBefore.length).toBe(1);
+
+    // User sends a follow-up WITHOUT resolving the attention item (bypasses UI)
+    sessionManager.sendMessage(thread.id, "I prefer option A");
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // After sendMessage, stale attention items should be orphaned
+    const pendingAfterSend = getPendingAttention(db, thread.id);
+    expect(pendingAfterSend.length).toBe(0);
+
+    // Thread should now be "running" (new turn started)
+    updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("running");
+
+    // Turn 2: agent processes the response and completes normally
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Got it, option A!" }] },
+      session_id: "sess-attn",
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-attn",
+      permission_denials: [],
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Thread should be "done" — NOT stuck at "running"
+    updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("done");
+
+    sessionManager.stopAll();
+  });
+
+  test("ExitPlanMode creates attention item immediately (same flow as AskUserQuestion)", async () => {
+    const mock = createPersistentMockAdapter();
+
+    // Override parseMessage to emit an attention event for ExitPlanMode tool_use
+    // (mirrors how the real ClaudeParser creates attention for ExitPlanMode)
+    const origStartPersistent = mock.adapter.startPersistent!.bind(mock.adapter);
+    mock.adapter.startPersistent = (opts: StartOpts) => {
+      const session = origStartPersistent(opts);
+      const origParse = session.parseMessage.bind(session);
+      session.parseMessage = (msg: unknown) => {
+        const result = origParse(msg);
+        const m = msg as Record<string, unknown>;
+        if (m.type === "assistant") {
+          const message = m.message as { content?: Array<{ type: string; name?: string }> };
+          if (message?.content?.some(b => b.type === "tool_use" && b.name === "ExitPlanMode")) {
+            result.attention = {
+              kind: "confirmation",
+              prompt: "Agent has a plan ready and wants to proceed with implementation.",
+              options: ["Approve plan", "Reject plan"],
+              metadata: { source: "exit_plan_mode" },
+            };
+          }
+        }
+        return result;
+      };
+      return session;
+    };
+
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "plan mode test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Emit init
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-plan", tools: [], cwd: "/tmp" });
+    // Emit assistant message with ExitPlanMode tool_use — attention created immediately
+    mock.pushMessage({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "tool_use", id: "toolu_exit", name: "ExitPlanMode", input: {} },
+        ],
+      },
+      session_id: "sess-plan",
+    });
+    // Emit turn end
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-plan",
+      permission_denials: [],
+    });
+
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Thread should be "waiting" (attention item created from parser attention event)
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("waiting");
+
+    // Attention item should exist in DB
+    const attention = db.query(
+      "SELECT * FROM attention_required WHERE thread_id = ? AND resolved_at IS NULL",
+    ).all(thread.id) as any[];
+    expect(attention.length).toBe(1);
+    expect(attention[0].kind).toBe("confirmation");
+    expect(attention[0].prompt).toContain("plan");
+
+    const options = JSON.parse(attention[0].options);
+    expect(options).toContain("Approve plan");
+    expect(options).toContain("Reject plan");
+
+    // No injectMessage calls — no auto-approval happened
+    expect(mock.getInjectCalls().length).toBe(0);
+
+    sessionManager.stopAll();
+  });
+
+  test("ExitPlanMode: stream death after attention created keeps waiting status", async () => {
+    const mock = createPersistentMockAdapter();
+
+    // Override parseMessage to emit attention for ExitPlanMode
+    const origStartPersistent = mock.adapter.startPersistent!.bind(mock.adapter);
+    mock.adapter.startPersistent = (opts: StartOpts) => {
+      const session = origStartPersistent(opts);
+      const origParse = session.parseMessage.bind(session);
+      session.parseMessage = (msg: unknown) => {
+        const result = origParse(msg);
+        const m = msg as Record<string, unknown>;
+        if (m.type === "assistant") {
+          const message = m.message as { content?: Array<{ type: string; name?: string }> };
+          if (message?.content?.some(b => b.type === "tool_use" && b.name === "ExitPlanMode")) {
+            result.attention = {
+              kind: "confirmation",
+              prompt: "Agent has a plan ready and wants to proceed with implementation.",
+              options: ["Approve plan", "Reject plan"],
+              metadata: { source: "exit_plan_mode" },
+            };
+          }
+        }
+        return result;
+      };
+      return session;
+    };
+
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "stream death plan mode",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Emit init + ExitPlanMode (attention created immediately) but NO turn_end
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-plan2", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "tool_use", id: "toolu_exit2", name: "ExitPlanMode", input: {} },
+        ],
+      },
+      session_id: "sess-plan2",
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Attention should already be created (before stream death)
+    const pendingBefore = getPendingAttention(db, thread.id);
+    expect(pendingBefore.length).toBe(1);
+
+    // Kill stream without turn_end
+    mock.finish();
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Thread should be "waiting" — attention was created before stream died
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("waiting");
+
+    // Attention item should still exist
+    const attention = db.query(
+      "SELECT * FROM attention_required WHERE thread_id = ? AND resolved_at IS NULL",
+    ).all(thread.id) as any[];
+    expect(attention.length).toBe(1);
+    expect(attention[0].kind).toBe("confirmation");
+    expect(JSON.parse(attention[0].metadata)).toEqual({ source: "exit_plan_mode" });
 
     sessionManager.stopAll();
   });

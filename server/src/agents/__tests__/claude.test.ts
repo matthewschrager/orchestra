@@ -799,9 +799,9 @@ describe("ClaudeParser", () => {
     expect(deltas).toHaveLength(0);
   });
 
-  // ── ExitPlanMode detection ──────────────────────────────
+  // ── ExitPlanMode → attention event (same flow as AskUserQuestion) ──
 
-  test("detects ExitPlanMode in assistant tool_use blocks", () => {
+  test("ExitPlanMode in assistant tool_use creates confirmation attention event", () => {
     const parser = createParser();
     const result = parser.handleMessage({
       type: "assistant",
@@ -819,12 +819,15 @@ describe("ClaudeParser", () => {
 
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0].toolName).toBe("ExitPlanMode");
-    expect(result.exitPlanMode).toBe(true);
-    // ExitPlanMode should NOT create an attention event
-    expect(result.attention).toBeUndefined();
+    // ExitPlanMode creates a plan-approval attention event (like AskUserQuestion)
+    expect(result.attention).toBeDefined();
+    expect(result.attention!.kind).toBe("confirmation");
+    expect(result.attention!.options).toContain("Approve plan");
+    expect(result.attention!.options).toContain("Reject plan");
+    expect(result.attention!.metadata).toEqual({ source: "exit_plan_mode" });
   });
 
-  test("detects ExitPlanMode via stream_event content_block_stop", () => {
+  test("ExitPlanMode via stream_event content_block_stop creates attention event", () => {
     const parser = createParser();
 
     parser.handleMessage({
@@ -845,11 +848,38 @@ describe("ClaudeParser", () => {
 
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0].toolName).toBe("ExitPlanMode");
-    expect(result.exitPlanMode).toBe(true);
-    expect(result.attention).toBeUndefined();
+    expect(result.attention).toBeDefined();
+    expect(result.attention!.kind).toBe("confirmation");
+    expect(result.attention!.metadata).toEqual({ source: "exit_plan_mode" });
   });
 
-  test("does not set exitPlanMode for regular tools", () => {
+  test("ExitPlanMode attention is deduplicated across assistant + stream events", () => {
+    const parser = createParser();
+
+    // First: seen via stream content_block_stop
+    parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_dedup", name: "ExitPlanMode" } },
+    });
+    const streamResult = parser.handleMessage({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 0 },
+    });
+    expect(streamResult.attention).toBeDefined();
+
+    // Second: same tool_use in assistant summary — should NOT create duplicate attention
+    const assistantResult = parser.handleMessage({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "tool_use", id: "toolu_dedup", name: "ExitPlanMode", input: {} },
+        ],
+      },
+    });
+    expect(assistantResult.attention).toBeUndefined();
+  });
+
+  test("regular tools do not create ExitPlanMode attention", () => {
     const parser = createParser();
     const result = parser.handleMessage({
       type: "assistant",
@@ -861,7 +891,7 @@ describe("ClaudeParser", () => {
       session_id: "sess-1",
     });
 
-    expect(result.exitPlanMode).toBeUndefined();
+    expect(result.attention).toBeUndefined();
   });
 
   test("message_start from primary model emits per-request input tokens", () => {
