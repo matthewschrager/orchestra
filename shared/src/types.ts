@@ -127,6 +127,8 @@ export interface StreamDelta {
   contextWindow?: number;
   /** Primary model name (e.g. "claude-sonnet-4-20250514") */
   modelName?: string;
+  /** True when this metrics delta came from a completed turn result, not an intermediate stream update */
+  finalMetrics?: boolean;
   /** Current queue depth (for queued_message deltas) */
   queuedCount?: number;
 }

@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { formatModelName } from "../StickyRunBar";
+import type { TurnMetrics } from "shared";
+import { formatModelName, formatTokenCount, getTokenUsageSummary } from "../StickyRunBar";
 
 describe("formatModelName", () => {
   test("strips YYYYMMDD date suffix", () => {
@@ -24,5 +25,56 @@ describe("formatModelName", () => {
 
   test("handles claude-haiku", () => {
     expect(formatModelName("claude-3-5-haiku-20241022")).toBe("claude-3-5-haiku");
+  });
+});
+
+describe("formatTokenCount", () => {
+  test("formats raw token counts", () => {
+    expect(formatTokenCount(999)).toBe("999");
+  });
+
+  test("formats thousands compactly", () => {
+    expect(formatTokenCount(12_345)).toBe("12k");
+  });
+});
+
+describe("getTokenUsageSummary", () => {
+  const baseMetrics: TurnMetrics = {
+    costUsd: 0,
+    durationMs: 0,
+    turnCount: 1,
+    inputTokens: 0,
+    outputTokens: 0,
+    contextWindow: 0,
+    modelName: null,
+  };
+
+  test("returns null when no token usage exists", () => {
+    expect(getTokenUsageSummary(baseMetrics)).toBeNull();
+  });
+
+  test("returns token totals without a context window", () => {
+    expect(getTokenUsageSummary({
+      ...baseMetrics,
+      inputTokens: 12_000,
+      outputTokens: 345,
+    })).toEqual({
+      totalTokens: 12_345,
+      contextWindow: 0,
+      pct: 0,
+    });
+  });
+
+  test("includes context-window percentage when available", () => {
+    expect(getTokenUsageSummary({
+      ...baseMetrics,
+      inputTokens: 80_000,
+      outputTokens: 20_000,
+      contextWindow: 200_000,
+    })).toEqual({
+      totalTokens: 100_000,
+      contextWindow: 200_000,
+      pct: 50,
+    });
   });
 });

@@ -24,6 +24,7 @@
 - **Long single-line bash previews no longer explode vertically** — bash tool previews now truncate pathological one-line output in collapsed mode, offer an expand affordance for truncated single lines, and keep expanded output on one visual row via horizontal scrolling instead of vertical wrapping
 - **Bash long-line truncation is now regression-tested** — renderer parser coverage now locks in single-line truncation and mixed hidden-line-plus-truncated-line preview behavior
 - **Send button vertical misalignment** — removed conflicting `text-base` class that overrode `text-sm` on the Send button, making it taller than the input textarea and visually misaligned
+- **Codex runs now keep their token-usage summary visible** — Orchestra now forwards Codex `turn.completed` token counts into the streaming metrics path, treats them as completed-turn metrics so the idle session summary survives, and falls back to a token-only run-bar display when the Codex SDK does not provide a context-window size; added regression coverage for both the server parser and the run-bar formatting logic
 
 ## [0.1.30.0] - 2026-03-27
 

@@ -152,15 +152,22 @@ export class CodexParser {
   // ── Event handlers ──────────────────────────────────────
 
   private handleTurnCompleted(event: Record<string, unknown>): ParseResult {
-    const usage = event.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+    const usage = event.usage as {
+      input_tokens?: number;
+      cached_input_tokens?: number;
+      output_tokens?: number;
+    } | undefined;
     const deltas: ParseResult["deltas"] = [];
 
     if (usage) {
-      // Codex provides token counts but no USD cost
+      // Codex SDK turn.completed exposes token usage, but not cost/model/context metadata.
       deltas.push({
         deltaType: "metrics",
         costUsd: undefined,
         durationMs: undefined,
+        inputTokens: (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0),
+        outputTokens: usage.output_tokens ?? 0,
+        finalMetrics: true,
       });
     }
     deltas.push({ deltaType: "turn_end" });
