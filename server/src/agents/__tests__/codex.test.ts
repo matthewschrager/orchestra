@@ -8,6 +8,12 @@ function createParser(cwd?: string) {
   return new CodexParser(cwd);
 }
 
+function initGitRepo(dir: string) {
+  Bun.spawnSync(["git", "init", "-b", "main"], { cwd: dir });
+  Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: dir });
+  Bun.spawnSync(["git", "config", "user.name", "Test User"], { cwd: dir });
+}
+
 describe("CodexAdapter", () => {
   test("adapter has correct name and supports resume", () => {
     const adapter = new CodexAdapter();
@@ -314,6 +320,86 @@ describe("CodexParser", () => {
         new_string: "",
         changeKind: "delete",
       });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("file_change falls back to turn baseline when Codex only emits completion", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "codex-parser-"));
+    try {
+      initGitRepo(tempDir);
+      mkdirSync(join(tempDir, "src"), { recursive: true });
+      writeFileSync(join(tempDir, "src/index.ts"), "export const count = 1;\n");
+      Bun.spawnSync(["git", "add", "."], { cwd: tempDir });
+      Bun.spawnSync(["git", "commit", "-m", "init"], { cwd: tempDir });
+
+      const parser = createParser(tempDir);
+      parser.handleEvent({ type: "turn.started" });
+
+      writeFileSync(join(tempDir, "src/index.ts"), "export const count = 2;\n");
+
+      const result = parser.handleEvent({
+        type: "item.completed",
+        item: {
+          id: "fc-3",
+          type: "file_change",
+          changes: [{ path: "src/index.ts", kind: "update" }],
+          status: "completed",
+        },
+      });
+
+      const payload = JSON.parse(result.messages[0].toolInput ?? "{}");
+      expect(payload).toMatchObject({
+        file_path: "src/index.ts",
+        old_string: "export const count = 1;\n",
+        new_string: "export const count = 2;\n",
+        changeKind: "update",
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("turn baseline rolls forward across completed-only file changes", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "codex-parser-"));
+    try {
+      initGitRepo(tempDir);
+      mkdirSync(join(tempDir, "src"), { recursive: true });
+      writeFileSync(join(tempDir, "src/index.ts"), "export const count = 1;\n");
+      Bun.spawnSync(["git", "add", "."], { cwd: tempDir });
+      Bun.spawnSync(["git", "commit", "-m", "init"], { cwd: tempDir });
+
+      const parser = createParser(tempDir);
+      parser.handleEvent({ type: "turn.started" });
+
+      writeFileSync(join(tempDir, "src/index.ts"), "export const count = 2;\n");
+      const first = parser.handleEvent({
+        type: "item.completed",
+        item: {
+          id: "fc-4",
+          type: "file_change",
+          changes: [{ path: "src/index.ts", kind: "update" }],
+          status: "completed",
+        },
+      });
+      const firstPayload = JSON.parse(first.messages[0].toolInput ?? "{}");
+      expect(firstPayload.old_string).toBe("export const count = 1;\n");
+      expect(firstPayload.new_string).toBe("export const count = 2;\n");
+
+      writeFileSync(join(tempDir, "src/index.ts"), "export const count = 3;\n");
+      const second = parser.handleEvent({
+        type: "item.completed",
+        item: {
+          id: "fc-5",
+          type: "file_change",
+          changes: [{ path: "src/index.ts", kind: "update" }],
+          status: "completed",
+        },
+      });
+      const secondPayload = JSON.parse(second.messages[0].toolInput ?? "{}");
+      expect(secondPayload.old_string).toBe("export const count = 2;\n");
+      expect(secondPayload.new_string).toBe("export const count = 3;\n");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

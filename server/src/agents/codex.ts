@@ -11,6 +11,7 @@ import type {
   ParseResult,
   StartOpts,
 } from "./types";
+import { gitSpawnSync } from "../utils/git";
 
 export class CodexAdapter implements AgentAdapter {
   name = "codex";
@@ -96,6 +97,8 @@ export class CodexParser {
   private readonly lastCommandByItemId = new Map<string, string>();
   /** Snapshots file contents before a Codex file_change applies. */
   private readonly fileSnapshotsByItemId = new Map<string, Map<string, string>>();
+  /** Turn-level fallback snapshot when Codex only emits completed file_change items. */
+  private turnBaselineByPath = new Map<string, string>();
 
   constructor(private readonly cwd: string = process.cwd()) {}
 
@@ -113,7 +116,7 @@ export class CodexParser {
         };
 
       case "turn.started":
-        return EMPTY;
+        return this.handleTurnStarted();
 
       case "turn.completed":
         return this.handleTurnCompleted(event);
@@ -157,6 +160,7 @@ export class CodexParser {
       });
     }
     deltas.push({ deltaType: "turn_end" });
+    this.resetTurnState();
 
     return { messages: [], deltas };
   }
@@ -164,11 +168,18 @@ export class CodexParser {
   private handleTurnFailed(event: Record<string, unknown>): ParseResult {
     const error = event.error as { message?: string } | undefined;
     const errMsg = error?.message ?? "Turn failed";
+    this.resetTurnState();
     return {
       messages: [{ role: "assistant", content: `**Agent error:** ${errMsg}` }],
       deltas: [{ deltaType: "turn_end" }],
       error: errMsg,
     };
+  }
+
+  private handleTurnStarted(): ParseResult {
+    this.turnBaselineByPath = this.captureTurnBaseline();
+    this.fileSnapshotsByItemId.clear();
+    return EMPTY;
   }
 
   private handleItemStarted(event: Record<string, unknown>): ParseResult {
@@ -302,6 +313,7 @@ export class CodexParser {
           toolName: "Edit",
           toolInput: JSON.stringify(this.buildFileChangePayload(change, beforeByPath)),
         }));
+        this.updateTurnBaseline(changes);
         this.fileSnapshotsByItemId.delete(itemId);
         return {
           messages,
@@ -396,11 +408,10 @@ export class CodexParser {
   }
 
   private captureFileSnapshots(itemId: string, rawChanges: unknown): void {
-    if (this.fileSnapshotsByItemId.has(itemId)) return;
     const changes = (rawChanges as Array<{ path?: string }> | undefined) ?? [];
     if (changes.length === 0) return;
 
-    const snapshots = new Map<string, string>();
+    const snapshots = this.fileSnapshotsByItemId.get(itemId) ?? new Map<string, string>();
     for (const change of changes) {
       const path = change.path;
       if (!path || snapshots.has(path)) continue;
@@ -409,13 +420,38 @@ export class CodexParser {
     this.fileSnapshotsByItemId.set(itemId, snapshots);
   }
 
+  private captureTurnBaseline(): Map<string, string> {
+    const result = gitSpawnSync(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+      cwd: this.cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (result.exitCode !== 0) return new Map();
+
+    const snapshot = new Map<string, string>();
+    const output = new TextDecoder().decode(result.stdout);
+    for (const path of output.split("\0")) {
+      if (!path || snapshot.has(path)) continue;
+      snapshot.set(path, this.readFileText(path));
+    }
+    return snapshot;
+  }
+
+  private updateTurnBaseline(changes: Array<{ path?: string; kind?: string }>): void {
+    for (const change of changes) {
+      const path = change.path;
+      if (!path) continue;
+      this.turnBaselineByPath.set(path, change.kind === "delete" ? "" : this.readFileText(path));
+    }
+  }
+
   private buildFileChangePayload(
     change: { path?: string; kind?: string },
     beforeByPath?: Map<string, string>,
   ): Record<string, string> {
     const filePath = change.path ?? "unknown";
     const changeKind = change.kind ?? "update";
-    const oldString = beforeByPath?.get(filePath) ?? "";
+    const oldString = beforeByPath?.get(filePath) ?? this.turnBaselineByPath.get(filePath) ?? "";
     const newString = changeKind === "delete" ? "" : this.readFileText(filePath);
 
     return {
@@ -424,6 +460,11 @@ export class CodexParser {
       new_string: newString,
       changeKind,
     };
+  }
+
+  private resetTurnState(): void {
+    this.fileSnapshotsByItemId.clear();
+    this.turnBaselineByPath = new Map();
   }
 
   private readFileText(path: string): string {
