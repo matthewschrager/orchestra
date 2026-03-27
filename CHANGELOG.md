@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.28.1] - 2026-03-26
+
+### Fixed
+
+- **Inbox items now clear when you reply from the thread** — replying directly in a thread now emits the same attention-resolution event that the inbox listens for, so stale pending items disappear immediately instead of lingering until a reload
+
 ## [0.1.28.0] - 2026-03-26
 
 ### Fixed
