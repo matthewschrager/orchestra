@@ -22,7 +22,8 @@ orchestra/
 │       │   ├── manager.ts  Create, status, PR, cleanup
 │       │   └── pr-status.ts PR status fetching via gh CLI
 │       ├── utils/          Shared utilities
-│       │   └── git.ts      Git validation + branch detection
+│       │   ├── git.ts      Git validation + branch detection
+│       │   └── origins.ts  Shared allowed-origins helper (CORS/Origin/Host/WS)
 │       ├── routes/         REST API routes
 │       │   ├── projects.ts Project CRUD
 │       │   ├── threads.ts  Thread CRUD + actions
@@ -96,6 +97,7 @@ cd server && bun run src/index.ts  # Production server
 - Real-time streaming via ephemeral WebSocket deltas (not persisted to DB)
 - Complete messages persisted to SQLite with WAL mode, seq-based replay on reconnect
 - Token auth enforced for non-localhost requests (and always when `--tunnel` is active)
+- Security hardening: CORS restricted to known origins via shared `getAllowedOrigins()` helper (`utils/origins.ts`); Origin header validation on mutations (CSRF); Host header validation with Tailscale support (DNS rebinding); WebSocket Origin check on upgrade (CORS doesn't protect WS); CSP + X-Frame-Options + nosniff + Referrer-Policy headers; filesystem browse restricted to `$HOME` with `realpathSync` + trailing-slash prefix collision fix; SQL column allowlists on `updateProject`/`updateThread`; per-client WS rate limiting (60/10s sliding window); attachment extension + MIME type control-char sanitization; SW targetUrl same-origin validation; DOMPurify on MarkdownContent Shiki output
 - Rich tool renderers parse stream-json tool data into visual components (diffs, terminal blocks, search results); special tools (AskUser, Agent, TodoWrite) registered in declarative `TOOL_RENDERERS` map
 - TodoWrite rendering: latest TodoWrite renders as prominent card with all tasks, per-task status (✓ completed/▸ running/○ queued), progress bar, ARIA roles; prior TodoWrites collapse to expandable summary lines; `parseTodos()` normalizes both Claude SDK `{todos}` and Codex `{items}` shapes; `latestTodos` hydrated from REST history with streaming race guard
 - Shiki syntax highlighting lazy-loaded via shared module-level singleton (`lib/shiki.ts`) with DOMPurify sanitization; ReadRenderer uses `codeToHtml`, DiffRenderer uses `codeToTokens` (per-line control for diff backgrounds)
