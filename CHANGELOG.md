@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.1.27.0] - 2026-03-26
+
+### Added
+
+- **Security hardening for open-source release** — 10 fixes closing the cross-origin localhost attack chain, audited by 3 Claude security agents + OpenAI Codex (gpt-5.4) with 73% cross-model finding agreement
+- **CORS restriction** — replaced wildcard `Access-Control-Allow-Origin: *` with origin-restricted config via shared `getAllowedOrigins()` helper
+- **CSRF protection** — Origin header validation on state-changing API requests (POST/PATCH/PUT/DELETE)
+- **DNS rebinding protection** — Host header validation with Tailscale hostname support
+- **WebSocket Origin check** — rejects cross-origin WS upgrade requests (CORS does not protect WebSocket connections)
+- **Content Security Policy** — `script-src 'self' 'unsafe-inline'`, `style-src` with Google Fonts CDN, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`
+- **Filesystem browse boundary** — restricted to `$HOME` with `realpathSync` symlink resolution and trailing-slash prefix collision fix
+- **SQL column allowlists** — `PROJECT_COLUMNS` and `THREAD_COLUMNS` sets prevent future SQL injection via dynamic column names in `updateProject`/`updateThread`
+- **WebSocket rate limiting** — per-client sliding window (60 messages/10s) on state-changing message types
+- **Attachment sanitization** — control characters stripped from file extensions and MIME types to prevent prompt injection via newlines
+- **Service worker targetUrl validation** — same-origin check prevents open redirect via push notifications
+- **Content-Disposition escaping** — double-quote escaping in upload filename headers
+
+### Changed
+
+- **DOMPurify in MarkdownContent** — Shiki HTML output now sanitized before `dangerouslySetInnerHTML`, matching existing `ReadRenderer` pattern
+- **Shared origins helper** — `server/src/utils/origins.ts` centralizes allowed-origins logic across CORS, Origin validation, Host validation, and WS Origin check (DRY)
+- **TunnelManager initialization** — moved before CORS middleware registration so `tunnelManager.url` getter is available for origin checks
+- **Tailscale hostname caching** — cached from `tailscaleDetector.detect()` for use in Origin/Host validation
+
 ## [0.1.26.0] - 2026-03-26
 
 ### Added
