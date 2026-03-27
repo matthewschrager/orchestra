@@ -8,6 +8,7 @@ interface MobileSessionsProps {
   unreadThreadIds: Set<string>;
   onSelectThread: (threadId: string) => void;
   onNewThread: (projectId: string) => void;
+  onArchiveThread: (threadId: string, opts?: { cleanupWorktree?: boolean }) => void;
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -32,6 +33,7 @@ export function MobileSessions({
   unreadThreadIds,
   onSelectThread,
   onNewThread,
+  onArchiveThread,
 }: MobileSessionsProps) {
   if (projects.length === 0) {
     return (
@@ -152,10 +154,34 @@ export function MobileSessions({
                     </div>
                   </div>
 
-                  {/* Chevron */}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0 mt-1.5 text-content-3/40">
-                    <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
+                  {/* Actions */}
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (thread.worktree) {
+                          const cleanup = confirm(
+                            `This thread has a worktree. Also delete the worktree and branch?\n\n` +
+                            `OK = archive thread + delete worktree\n` +
+                            `Cancel = archive thread only (worktree kept)`,
+                          );
+                          onArchiveThread(thread.id, { cleanupWorktree: cleanup });
+                        } else {
+                          onArchiveThread(thread.id);
+                        }
+                      }}
+                      className="p-2 text-content-3/40 hover:text-red-400 active:text-red-400 rounded-lg"
+                      aria-label="Archive thread"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      </svg>
+                    </button>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0 text-content-3/40">
+                      <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
                 </button>
               ))
             )}
