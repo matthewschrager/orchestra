@@ -106,6 +106,21 @@ const COLUMN_MIGRATIONS = [
     sql: `ALTER TABLE threads ADD COLUMN last_interacted_at TEXT NOT NULL DEFAULT ''`,
     postMigrate: `UPDATE threads SET last_interacted_at = created_at`,
   },
+  {
+    table: "threads",
+    column: "pr_status",
+    sql: `ALTER TABLE threads ADD COLUMN pr_status TEXT`,
+  },
+  {
+    table: "threads",
+    column: "pr_number",
+    sql: `ALTER TABLE threads ADD COLUMN pr_number INTEGER`,
+  },
+  {
+    table: "threads",
+    column: "pr_status_checked_at",
+    sql: `ALTER TABLE threads ADD COLUMN pr_status_checked_at TEXT`,
+  },
 ];
 
 const INDEX_MIGRATIONS = [
@@ -342,6 +357,26 @@ export function updateThread(db: DB, id: string, fields: Partial<ThreadRow>) {
   );
 }
 
+/**
+ * Update thread fields WITHOUT bumping updated_at.
+ * Use for background housekeeping (e.g., PR status refresh) that shouldn't
+ * affect sidebar sort order.
+ */
+export function updateThreadSilent(db: DB, id: string, fields: Partial<ThreadRow>) {
+  const sets: string[] = [];
+  const values: (string | number | null)[] = [];
+  for (const [key, val] of Object.entries(fields)) {
+    if (key === "id") continue;
+    sets.push(`${key} = ?`);
+    values.push(val as string | number | null);
+  }
+  if (sets.length === 0) return;
+  values.push(id);
+  db.query(`UPDATE threads SET ${sets.join(", ")} WHERE id = ?`).run(
+    ...(values as [string, ...string[]]),
+  );
+}
+
 // ── Attention helpers ────────────────────────────────────
 
 export interface AttentionRow {
@@ -464,6 +499,9 @@ export interface ThreadRow {
   worktree: string | null;
   branch: string | null;
   pr_url: string | null;
+  pr_status: string | null;
+  pr_number: number | null;
+  pr_status_checked_at: string | null;
   pid: number | null;
   status: string;
   error_message: string | null;
@@ -499,6 +537,8 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
     worktree: row.worktree,
     branch: row.branch,
     prUrl: row.pr_url,
+    prStatus: row.pr_status as import("shared").PrStatus | null,
+    prNumber: row.pr_number,
     pid: row.pid,
     status: row.status as import("shared").ThreadStatus,
     errorMessage: row.error_message,
@@ -507,6 +547,7 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
     updatedAt: row.updated_at,
     lastInteractedAt: row.last_interacted_at,
   };
+  // Note: pr_status_checked_at is intentionally omitted — server-internal only
 }
 
 export function messageRowToApi(row: MessageRow): import("shared").Message {

@@ -1,4 +1,5 @@
 import type { ProjectWithStatus, Thread } from "shared";
+import { PrBadge } from "./PrBadge";
 
 interface MobileSessionsProps {
   projects: ProjectWithStatus[];
@@ -139,11 +140,11 @@ export function MobileSessions({
                           </span>
                         </span>
                       )}
-                      {thread.prUrl && (
-                        <span className="text-[10px] px-1 py-0.5 rounded bg-emerald-900/40 text-emerald-300">
-                          PR
-                        </span>
-                      )}
+                      <PrBadge
+                        prUrl={thread.prUrl}
+                        prStatus={thread.prStatus}
+                        prNumber={thread.prNumber}
+                      />
                     </div>
                   </div>
 
