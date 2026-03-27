@@ -251,7 +251,11 @@ export function ProjectSidebar({
                             </div>
                             {/* Line 2: metadata */}
                             <div className="flex items-center gap-1.5 mt-1 ml-3.5">
-                              <span className="text-[10px] px-1 py-0.5 rounded bg-surface-4 text-content-3 font-mono">
+                              <span className={`text-[10px] px-1 py-0.5 rounded font-mono ${
+                                thread.agent === "codex"
+                                  ? "bg-cyan-900/40 text-cyan-300"
+                                  : "bg-amber-900/40 text-amber-300"
+                              }`}>
                                 {thread.agent}
                               </span>
                               {thread.worktree && (

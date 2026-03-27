@@ -131,7 +131,7 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
           <h2 className="text-lg font-semibold tracking-tight cursor-pointer group-hover:text-accent transition-colors">{thread.title}</h2>
         )}
         <div className="flex items-center gap-2 mt-1.5 text-xs text-content-3">
-          <span className="text-content-2">{thread.agent}</span>
+          <span className={thread.agent === "codex" ? "text-cyan-400" : "text-amber-400"}>{thread.agent}</span>
           <span className="text-content-3">&middot;</span>
           <ThreadStatusBadge status={thread.status} errorMessage={thread.errorMessage} />
           {thread.branch && (

@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Color-coded agent badges** — Claude threads display amber-tinted badges, Codex threads display cyan-tinted badges in sidebar, mobile thread list, and chat header for quick visual identification
+
 - **Security hardening for open-source release** — 10 fixes closing the cross-origin localhost attack chain, audited by 3 Claude security agents + OpenAI Codex (gpt-5.4) with 73% cross-model finding agreement
 - **CORS restriction** — replaced wildcard `Access-Control-Allow-Origin: *` with origin-restricted config via shared `getAllowedOrigins()` helper
 - **CSRF protection** — Origin header validation on state-changing API requests (POST/PATCH/PUT/DELETE)
