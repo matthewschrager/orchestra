@@ -2,7 +2,7 @@ import { describe, expect, test, afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { createDb, getThread } from "../../db";
+import { createDb, getThread, getPendingAttention } from "../../db";
 import { SessionManager } from "../manager";
 import { AgentRegistry } from "../../agents/registry";
 import { WorktreeManager } from "../../worktrees/manager";
@@ -594,6 +594,104 @@ describe("Persistent Session lifecycle", () => {
 
     // Thread should still be "done" — not "error"
     const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("done");
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: stale attention items don't prevent done transition", async () => {
+    // Regression test: when a user sends a follow-up message without resolving
+    // an AskUserQuestion attention item, the thread gets stuck in "running" forever
+    // because the turn_end handler sees hasPendingAttention=true and skips the
+    // status→"done" transition.
+    const mock = createPersistentMockAdapter();
+
+    // Override parseMessage to emit an attention event on "ask_user" type messages
+    const origStartPersistent = mock.adapter.startPersistent!.bind(mock.adapter);
+    mock.adapter.startPersistent = (opts: StartOpts) => {
+      const session = origStartPersistent(opts);
+      const origParse = session.parseMessage;
+      session.parseMessage = (msg: unknown) => {
+        const m = msg as Record<string, unknown>;
+        // When we get a special "ask_user" message, emit attention
+        if (m.type === "result" && m._hasAttention) {
+          const base = origParse(msg);
+          base.attention = {
+            kind: "ask_user",
+            prompt: "What do you prefer?",
+            options: ["A", "B"],
+          };
+          return base;
+        }
+        return origParse(msg);
+      };
+      return session;
+    };
+
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "attention test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Turn 1: agent asks a question via AskUserQuestion → result with attention
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-attn", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Let me ask you something" }] },
+      session_id: "sess-attn",
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-attn",
+      permission_denials: [],
+      _hasAttention: true, // triggers attention in our mock parser
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Thread should be "waiting" (attention item created)
+    let updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("waiting");
+
+    // Verify attention item exists
+    const pendingBefore = getPendingAttention(db, thread.id);
+    expect(pendingBefore.length).toBe(1);
+
+    // User sends a follow-up WITHOUT resolving the attention item (bypasses UI)
+    sessionManager.sendMessage(thread.id, "I prefer option A");
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // After sendMessage, stale attention items should be orphaned
+    const pendingAfterSend = getPendingAttention(db, thread.id);
+    expect(pendingAfterSend.length).toBe(0);
+
+    // Thread should now be "running" (new turn started)
+    updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("running");
+
+    // Turn 2: agent processes the response and completes normally
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Got it, option A!" }] },
+      session_id: "sess-attn",
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-attn",
+      permission_denials: [],
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Thread should be "done" — NOT stuck at "running"
+    updated = getThread(db, thread.id);
     expect(updated?.status).toBe("done");
 
     sessionManager.stopAll();

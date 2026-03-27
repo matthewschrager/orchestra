@@ -211,6 +211,15 @@ export class SessionManager {
       throw new Error("Agent is still processing — wait for it to finish");
     }
 
+    // Orphan any pending attention items — user is moving on by sending a new message,
+    // so old AskUserQuestions are no longer relevant. Without this, stale attention items
+    // cause the turn_end handler to skip the status→"done" transition, leaving the thread
+    // stuck in "running" forever.
+    const orphaned = orphanAttentionItems(this.db, threadId);
+    if (orphaned > 0 && DEBUG) {
+      console.log(`[session] Orphaned ${orphaned} stale attention items for ${threadId} on sendMessage`);
+    }
+
     // Validate attachments and persist user message
     const validAttachments = this.validateAttachments(attachments);
     this.persistMessage(threadId, {
@@ -594,7 +603,11 @@ export class SessionManager {
           if (DEBUG) console.log(`[stream] Thread ${threadId} — persistent turn ended, state → ${newState}`);
 
           if (hasPendingAttention) {
-            // Turn ended with attention event — status already set to "waiting"
+            // Turn ended with pending attention — ensure status is "waiting" and notify.
+            // Defensive: status may have been overwritten to "running" by sendMessage()
+            // if the user answered by typing directly instead of resolving the attention item.
+            updateThread(this.db, threadId, { status: "waiting", pid: null });
+            this.notifyThread(threadId);
           } else if (sawExitPlanMode) {
             // ── ExitPlanMode auto-approval ──
             // SDK bug: ExitPlanMode.requiresUserInteraction() returns true, which
