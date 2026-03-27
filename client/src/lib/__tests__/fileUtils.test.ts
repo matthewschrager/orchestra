@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { isImageFile, shortenPath, fileServeUrl } from "../fileUtils";
+import {
+  buildVscodeUrl,
+  fileServeUrl,
+  isImageFile,
+  isLocalhostHostname,
+  isServableFilePath,
+  parseLocalFileHref,
+  shortenPath,
+} from "../fileUtils";
 
 describe("isImageFile", () => {
   test("returns true for common image extensions", () => {
@@ -56,5 +64,67 @@ describe("fileServeUrl", () => {
   test("encodes spaces in path", () => {
     const url = fileServeUrl("/tmp/my screenshot.png");
     expect(url).toContain("my%20screenshot.png");
+  });
+});
+
+describe("isServableFilePath", () => {
+  test("returns true for safe inline documents", () => {
+    expect(isServableFilePath("/tmp/PLAN.md")).toBe(true);
+    expect(isServableFilePath("/tmp/notes.txt")).toBe(true);
+    expect(isServableFilePath("/tmp/data.json")).toBe(true);
+    expect(isServableFilePath("/tmp/report.pdf")).toBe(true);
+  });
+
+  test("returns false for unsupported files", () => {
+    expect(isServableFilePath("/tmp/archive.zip")).toBe(false);
+    expect(isServableFilePath("/tmp/script.ts")).toBe(false);
+  });
+});
+
+describe("parseLocalFileHref", () => {
+  test("parses absolute filesystem paths", () => {
+    expect(parseLocalFileHref("/home/user/project/PLAN.md")).toEqual({
+      path: "/home/user/project/PLAN.md",
+      line: undefined,
+      col: undefined,
+    });
+  });
+
+  test("parses tilde paths with line references", () => {
+    expect(parseLocalFileHref("~/project/PLAN.md:12:3")).toEqual({
+      path: "~/project/PLAN.md",
+      line: 12,
+      col: 3,
+    });
+  });
+
+  test("parses file URLs with line fragments", () => {
+    expect(parseLocalFileHref("file:///home/user/PLAN.md#L24C2")).toEqual({
+      path: "/home/user/PLAN.md",
+      line: 24,
+      col: 2,
+    });
+  });
+
+  test("ignores normal app and web links", () => {
+    expect(parseLocalFileHref("/api/files/serve?path=/tmp/test.png")).toBeNull();
+    expect(parseLocalFileHref("https://example.com/docs/PLAN.md")).toBeNull();
+    expect(parseLocalFileHref("/manifest.json")).toBeNull();
+  });
+});
+
+describe("buildVscodeUrl", () => {
+  test("builds file links with optional line and column", () => {
+    expect(buildVscodeUrl("/tmp/test.ts")).toBe("vscode://file/tmp/test.ts");
+    expect(buildVscodeUrl("/tmp/test.ts", 12, 4)).toBe("vscode://file/tmp/test.ts:12:4");
+  });
+});
+
+describe("isLocalhostHostname", () => {
+  test("recognizes localhost variants", () => {
+    expect(isLocalhostHostname("localhost")).toBe(true);
+    expect(isLocalhostHostname("127.0.0.1")).toBe(true);
+    expect(isLocalhostHostname("::1")).toBe(true);
+    expect(isLocalhostHostname("orchestra.example.com")).toBe(false);
   });
 });

@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { createFileRoutes } from "../files";
 import { Hono } from "hono";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
-import { resolve } from "path";
-import { tmpdir } from "os";
+import { relative, resolve } from "path";
+import { homedir, tmpdir } from "os";
 
 function createApp() {
   const app = new Hono();
@@ -104,6 +104,36 @@ describe("GET /files/serve", () => {
     const app = createApp();
     const res = await app.request(`/files/serve?path=${encodeURIComponent(imgPath)}`);
     expect(res.status).toBe(200);
+
+    rmSync(tmp, { recursive: true });
+  });
+
+  test("serves markdown documents as plain text", async () => {
+    const tmp = mkdtempSync(resolve(tmpdir(), "orchestra-files-test-"));
+    const docPath = resolve(tmp, "PLAN.md");
+    writeFileSync(docPath, "# Plan\n\nShip it.\n");
+
+    const app = createApp();
+    const res = await app.request(`/files/serve?path=${encodeURIComponent(docPath)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    expect(await res.text()).toContain("# Plan");
+
+    rmSync(tmp, { recursive: true });
+  });
+
+  test("expands tilde paths for home-directory documents", async () => {
+    const tmp = mkdtempSync(resolve(homedir(), ".orchestra-files-test-"));
+    const docPath = resolve(tmp, "notes.md");
+    writeFileSync(docPath, "hello from home\n");
+
+    const tildePath = `~/${relative(homedir(), docPath)}`;
+    const app = createApp();
+    const res = await app.request(`/files/serve?path=${encodeURIComponent(tildePath)}`);
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("hello from home");
 
     rmSync(tmp, { recursive: true });
   });
