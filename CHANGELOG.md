@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.29.1] - 2026-03-27
+
+### Added
+
+- **Pinned TODO panel** — when an agent is working with an active task list, a compact TODO panel pins to the bottom of the thread (between the status bar and the input), showing task progress in real time without needing to scroll; collapsible via chevron, auto-hides when the turn ends
+
 ## [0.1.29.0] - 2026-03-27
 
 ### Added
