@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.28.1] - 2026-03-26
+
+### Fixed
+
+- **Scroll-to-bottom button visible on mobile** — replaced fragile `left-full -ml-14` CSS positioning with flexbox `justify-end` wrapper so the FAB stays fully within the viewport on narrow screens
+
 ## [0.1.28.0] - 2026-03-26
 
 ### Fixed
