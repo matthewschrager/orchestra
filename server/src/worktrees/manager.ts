@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import type { DB, ThreadRow } from "../db";
 import { getThread, updateThread } from "../db";
 import { gitSpawn } from "../utils/git";
+import { extractPrNumber } from "./pr-status";
 
 export const DEFAULT_WORKTREE_ROOT = join(
   process.env.HOME || "~",
@@ -182,8 +183,14 @@ export class WorktreeManager {
     }
 
     const prUrl = prStdout.trim();
+    const prNumber = extractPrNumber(prUrl);
 
-    updateThread(this.db, threadId, { pr_url: prUrl });
+    updateThread(this.db, threadId, {
+      pr_url: prUrl,
+      pr_status: "open",
+      pr_number: prNumber,
+      pr_status_checked_at: new Date().toISOString(),
+    });
     return prUrl;
   }
 

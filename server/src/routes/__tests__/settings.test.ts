@@ -21,7 +21,8 @@ function createTestDb(): Database {
     worktree TEXT, branch TEXT, pr_url TEXT, pid INTEGER,
     status TEXT DEFAULT 'pending', archived_at TEXT,
     created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
+    updated_at TEXT DEFAULT (datetime('now')),
+    last_interacted_at TEXT DEFAULT (datetime('now'))
   )`);
   return db;
 }

@@ -27,7 +27,8 @@ function createTestDb(): Database {
     pr_url TEXT, pid INTEGER, status TEXT NOT NULL DEFAULT 'pending',
     session_id TEXT, archived_at TEXT, error_message TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_interacted_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
   return db;
 }

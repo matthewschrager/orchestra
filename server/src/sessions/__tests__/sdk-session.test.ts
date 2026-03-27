@@ -2,7 +2,7 @@ import { describe, expect, test, afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { createDb, getThread } from "../../db";
+import { createDb, getThread, getPendingAttention } from "../../db";
 import { SessionManager } from "../manager";
 import { AgentRegistry } from "../../agents/registry";
 import { WorktreeManager } from "../../worktrees/manager";
@@ -595,6 +595,243 @@ describe("Persistent Session lifecycle", () => {
     // Thread should still be "done" — not "error"
     const updated = getThread(db, thread.id);
     expect(updated?.status).toBe("done");
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: stale attention items don't prevent done transition", async () => {
+    // Regression test: when a user sends a follow-up message without resolving
+    // an AskUserQuestion attention item, the thread gets stuck in "running" forever
+    // because the turn_end handler sees hasPendingAttention=true and skips the
+    // status→"done" transition.
+    const mock = createPersistentMockAdapter();
+
+    // Override parseMessage to emit an attention event on "ask_user" type messages
+    const origStartPersistent = mock.adapter.startPersistent!.bind(mock.adapter);
+    mock.adapter.startPersistent = (opts: StartOpts) => {
+      const session = origStartPersistent(opts);
+      const origParse = session.parseMessage;
+      session.parseMessage = (msg: unknown) => {
+        const m = msg as Record<string, unknown>;
+        // When we get a special "ask_user" message, emit attention
+        if (m.type === "result" && m._hasAttention) {
+          const base = origParse(msg);
+          base.attention = {
+            kind: "ask_user",
+            prompt: "What do you prefer?",
+            options: ["A", "B"],
+          };
+          return base;
+        }
+        return origParse(msg);
+      };
+      return session;
+    };
+
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "attention test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Turn 1: agent asks a question via AskUserQuestion → result with attention
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-attn", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Let me ask you something" }] },
+      session_id: "sess-attn",
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-attn",
+      permission_denials: [],
+      _hasAttention: true, // triggers attention in our mock parser
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Thread should be "waiting" (attention item created)
+    let updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("waiting");
+
+    // Verify attention item exists
+    const pendingBefore = getPendingAttention(db, thread.id);
+    expect(pendingBefore.length).toBe(1);
+
+    // User sends a follow-up WITHOUT resolving the attention item (bypasses UI)
+    sessionManager.sendMessage(thread.id, "I prefer option A");
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // After sendMessage, stale attention items should be orphaned
+    const pendingAfterSend = getPendingAttention(db, thread.id);
+    expect(pendingAfterSend.length).toBe(0);
+
+    // Thread should now be "running" (new turn started)
+    updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("running");
+
+    // Turn 2: agent processes the response and completes normally
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Got it, option A!" }] },
+      session_id: "sess-attn",
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-attn",
+      permission_denials: [],
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Thread should be "done" — NOT stuck at "running"
+    updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("done");
+
+    sessionManager.stopAll();
+  });
+
+  test("ExitPlanMode at turn boundary creates attention item instead of auto-approving", async () => {
+    const mock = createPersistentMockAdapter();
+
+    // Override parseMessage to return exitPlanMode: true on ExitPlanMode tool_use
+    const origStartPersistent = mock.adapter.startPersistent!.bind(mock.adapter);
+    mock.adapter.startPersistent = (opts: StartOpts) => {
+      const session = origStartPersistent(opts);
+      const origParse = session.parseMessage.bind(session);
+      session.parseMessage = (msg: unknown) => {
+        const result = origParse(msg);
+        const m = msg as Record<string, unknown>;
+        // Detect our synthetic ExitPlanMode marker
+        if (m.type === "assistant") {
+          const message = m.message as { content?: Array<{ type: string; name?: string }> };
+          if (message?.content?.some(b => b.type === "tool_use" && b.name === "ExitPlanMode")) {
+            result.exitPlanMode = true;
+          }
+        }
+        return result;
+      };
+      return session;
+    };
+
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "plan mode test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Emit init
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-plan", tools: [], cwd: "/tmp" });
+    // Emit assistant message with ExitPlanMode tool_use
+    mock.pushMessage({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "tool_use", id: "toolu_exit", name: "ExitPlanMode", input: {} },
+        ],
+      },
+      session_id: "sess-plan",
+    });
+    // Emit turn end
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-plan",
+      permission_denials: [],
+    });
+
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Thread should be "waiting" (attention item created)
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("waiting");
+
+    // Attention item should exist in DB
+    const attention = db.query(
+      "SELECT * FROM attention_required WHERE thread_id = ? AND resolved_at IS NULL",
+    ).all(thread.id) as any[];
+    expect(attention.length).toBe(1);
+    expect(attention[0].kind).toBe("confirmation");
+    expect(attention[0].prompt).toContain("plan");
+
+    const options = JSON.parse(attention[0].options);
+    expect(options).toContain("Approve plan");
+    expect(options).toContain("Reject plan");
+
+    // No injectMessage calls — no auto-approval happened
+    expect(mock.getInjectCalls().length).toBe(0);
+
+    sessionManager.stopAll();
+  });
+
+  test("ExitPlanMode: stream death creates attention item", async () => {
+    const mock = createPersistentMockAdapter();
+
+    // Override parseMessage to return exitPlanMode: true on ExitPlanMode tool_use
+    const origStartPersistent = mock.adapter.startPersistent!.bind(mock.adapter);
+    mock.adapter.startPersistent = (opts: StartOpts) => {
+      const session = origStartPersistent(opts);
+      const origParse = session.parseMessage.bind(session);
+      session.parseMessage = (msg: unknown) => {
+        const result = origParse(msg);
+        const m = msg as Record<string, unknown>;
+        if (m.type === "assistant") {
+          const message = m.message as { content?: Array<{ type: string; name?: string }> };
+          if (message?.content?.some(b => b.type === "tool_use" && b.name === "ExitPlanMode")) {
+            result.exitPlanMode = true;
+          }
+        }
+        return result;
+      };
+      return session;
+    };
+
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "stream death plan mode",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Emit init + ExitPlanMode but NO turn_end — then kill the stream
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-plan2", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "tool_use", id: "toolu_exit2", name: "ExitPlanMode", input: {} },
+        ],
+      },
+      session_id: "sess-plan2",
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Kill stream without turn_end (simulates stream closed)
+    mock.finish();
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Thread should be "waiting" — not "error"
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("waiting");
+
+    // Attention item should exist
+    const attention = db.query(
+      "SELECT * FROM attention_required WHERE thread_id = ? AND resolved_at IS NULL",
+    ).all(thread.id) as any[];
+    expect(attention.length).toBe(1);
+    expect(attention[0].kind).toBe("confirmation");
+    expect(JSON.parse(attention[0].metadata)).toEqual({ source: "exit_plan_mode" });
 
     sessionManager.stopAll();
   });
