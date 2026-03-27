@@ -7,6 +7,7 @@ import { ReadRenderer } from "./renderers/ReadRenderer";
 import { SearchRenderer, searchSummary } from "./renderers/SearchRenderer";
 import { SubAgentCard } from "./renderers/SubAgentCard";
 import { TodoCard } from "./renderers/TodoCard";
+import { ToolMediaRenderer, hasToolImages } from "./renderers/ToolMediaRenderer";
 import { extractQuestionPreview, formatAnswers, isAskUserTool, parseQuestions, type ParsedQuestion } from "../lib/askUser";
 import { MessageAttachments } from "./AttachmentPreview";
 import { EditableTitle } from "./EditableTitle";
@@ -274,7 +275,7 @@ interface ToolPair {
   metadata?: Record<string, unknown> | null;
 }
 
-function pairTools(toolMsgs: Message[]): ToolPair[] {
+export function pairTools(toolMsgs: Message[]): ToolPair[] {
   const pairs: ToolPair[] = [];
   const consumed = new Set<number>();
   let i = 0;
@@ -289,7 +290,10 @@ function pairTools(toolMsgs: Message[]): ToolPair[] {
       for (let j = i + 1; j < toolMsgs.length; j++) {
         if (consumed.has(j)) continue;
         const candidate = toolMsgs[j];
-        if (candidate.toolOutput && (!candidate.toolName || candidate.toolName === msg.toolName)) {
+        if (
+          (candidate.toolOutput || hasToolImages(candidate.metadata)) &&
+          (!candidate.toolName || candidate.toolName === msg.toolName)
+        ) {
           matchIdx = j;
           break;
         }
@@ -429,8 +433,6 @@ function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false, late
   if (pair.name === "Bash") {
     return <BashRenderer input={pair.input} output={pair.output} metadata={pair.metadata} forceExpand={forceExpand} />;
   }
-
-  const hasDetails = pair.input || pair.output;
   const isOpen = expanded || forceExpand;
 
   // Check registry for special rendering (AskUser, Agent, TodoWrite)
@@ -446,6 +448,8 @@ function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false, late
   // For tools with rich renderers, show inline by default (no expand needed)
   // For tools without, show expandable raw JSON
   const toolBadge = getToolBadge(pair);
+  const hasMetadataDetails = hasToolImages(pair.metadata);
+  const hasDetails = Boolean(pair.input || pair.output || hasMetadataDetails);
 
   return (
     <div>
@@ -491,6 +495,10 @@ function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false, late
 
 /** Dispatch to the appropriate rich renderer based on tool name */
 function getRichRenderer(pair: ToolPair): React.ReactNode | null {
+  if (hasToolImages(pair.metadata)) {
+    return <ToolMediaRenderer output={pair.output} metadata={pair.metadata} />;
+  }
+
   switch (pair.name) {
     case "Edit":
       return <DiffRenderer input={pair.input} inline />;

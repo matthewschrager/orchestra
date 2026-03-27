@@ -435,6 +435,45 @@ describe("ClaudeParser", () => {
     expect(messages[0].toolOutput).toBe("Subagent completed successfully.");
   });
 
+  test("preserves image blocks from tool_result array content", () => {
+    const parser = createParser();
+    const { messages } = parser.handleMessage({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_image",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  mediaType: "image/png",
+                  data: "YWJjMTIz",
+                },
+              },
+            ],
+          },
+        ],
+      },
+      session_id: "sess-1",
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].toolOutput).toBeUndefined();
+    expect(messages[0].metadata).toEqual({
+      images: [
+        {
+          src: "data:image/png;base64,YWJjMTIz",
+          mimeType: "image/png",
+          alt: "Tool image 1",
+        },
+      ],
+    });
+  });
+
   test("propagates is_error from tool_result to metadata", () => {
     const parser = createParser();
     const { messages } = parser.handleMessage({

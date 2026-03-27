@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { normalizeToolResultContent } from "./toolResultMedia";
 import type {
   AgentAdapter,
   AgentSession,
@@ -95,6 +96,8 @@ export class CodexParser {
   private readonly lastTextByItemId = new Map<string, string>();
   /** Tracks last-seen command per item ID for streaming tool input */
   private readonly lastCommandByItemId = new Map<string, string>();
+  /** Tracks the last emitted todo snapshot per item ID to avoid duplicate TodoWrites. */
+  private readonly lastTodoSnapshotByItemId = new Map<string, string>();
   /** Snapshots file contents before a Codex file_change applies. */
   private readonly fileSnapshotsByItemId = new Map<string, Map<string, string>>();
   /** Turn-level fallback snapshot when Codex only emits completed file_change items. */
@@ -217,7 +220,10 @@ export class CodexParser {
           deltas: [{ deltaType: "tool_start", toolName: "WebSearch" }],
         };
 
-      // agent_message, reasoning, todo_list, error: no tool_start delta
+      case "todo_list":
+        return this.buildTodoSnapshot(itemId, item);
+
+      // agent_message, reasoning, error: no tool_start delta
       default:
         return EMPTY;
     }
@@ -258,6 +264,9 @@ export class CodexParser {
       case "file_change":
         this.captureFileSnapshots(itemId, item.changes);
         return EMPTY;
+
+      case "todo_list":
+        return this.buildTodoSnapshot(itemId, item);
 
       // Other item types: no meaningful streaming updates
       default:
@@ -328,17 +337,20 @@ export class CodexParser {
         const result = item.result as { content?: unknown } | undefined;
         const error = item.error as { message?: string } | undefined;
         const toolInput = JSON.stringify(args ?? {});
-        const toolOutput = error?.message
-          ? `Error: ${error.message}`
-          : result ? JSON.stringify(result.content ?? result) : "";
+        const parsedResult = error?.message
+          ? {
+              toolOutput: `Error: ${error.message}`,
+              metadata: { isError: true },
+            }
+          : this.parseMcpToolResult(result);
         return {
           messages: [{
             role: "tool",
-            content: toolOutput,
+            content: parsedResult.toolOutput,
             toolName,
             toolInput,
-            toolOutput: toolOutput || undefined,
-            metadata: error ? { isError: true } : undefined,
+            toolOutput: parsedResult.toolOutput || undefined,
+            metadata: parsedResult.metadata,
           }],
           deltas: [{ deltaType: "tool_end" }],
         };
@@ -358,18 +370,7 @@ export class CodexParser {
       }
 
       case "todo_list": {
-        const items = (item.items as Array<{ text?: string; completed?: boolean }>) ?? [];
-        return {
-          messages: [{
-            role: "tool",
-            content: items.map((t) =>
-              `${t.completed ? "✅" : "⬜"} ${t.text ?? ""}`
-            ).join("\n"),
-            toolName: "TodoWrite",
-            toolInput: JSON.stringify({ items }),
-          }],
-          deltas: [{ deltaType: "tool_end" }],
-        };
+        return this.buildTodoSnapshot(itemId, item, { terminal: true });
       }
 
       case "reasoning":
@@ -391,6 +392,56 @@ export class CodexParser {
   }
 
   // ── Helpers ──────────────────────────────────────────────
+
+  private buildTodoSnapshot(
+    itemId: string,
+    item: Record<string, unknown>,
+    opts?: { terminal?: boolean },
+  ): ParseResult {
+    const items = (item.items as Array<{ text?: string; completed?: boolean }>) ?? [];
+    const toolInput = JSON.stringify({ items });
+    const prev = this.lastTodoSnapshotByItemId.get(itemId);
+    const changed = items.length > 0 && toolInput !== prev;
+
+    if (opts?.terminal) {
+      this.lastTodoSnapshotByItemId.delete(itemId);
+    } else if (items.length > 0) {
+      this.lastTodoSnapshotByItemId.set(itemId, toolInput);
+    }
+
+    if (!changed && !opts?.terminal) return EMPTY;
+
+    const messages: ParsedMessage[] = changed
+      ? [{
+          role: "tool",
+          content: items.map((t) =>
+            `${t.completed ? "✅" : "⬜"} ${t.text ?? ""}`
+          ).join("\n"),
+          toolName: "TodoWrite",
+          toolInput,
+        }]
+      : [];
+
+    return {
+      messages,
+      deltas: opts?.terminal ? [{ deltaType: "tool_end" }] : [],
+    };
+  }
+
+  private parseMcpToolResult(
+    result: { content?: unknown; structured_content?: unknown } | undefined,
+  ): Pick<ParsedMessage, "toolOutput" | "metadata"> & { toolOutput: string } {
+    const normalized = normalizeToolResultContent(result?.content);
+    let toolOutput = normalized.text;
+    if (!toolOutput && normalized.images.length === 0 && result) {
+      toolOutput = JSON.stringify(result.content ?? result.structured_content ?? result);
+    }
+
+    return {
+      toolOutput,
+      metadata: normalized.images.length > 0 ? { images: normalized.images } : undefined,
+    };
+  }
 
   /**
    * Compute text delta for streaming. Codex sends full text on each update,
