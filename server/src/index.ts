@@ -11,6 +11,7 @@ import { createAttentionRoutes } from "./routes/attention";
 import { createPushRoutes } from "./routes/push";
 import { createUploadRoutes } from "./routes/uploads";
 import { createSettingsRoutes, getWorktreeRoot } from "./routes/settings";
+import { createFileRoutes } from "./routes/files";
 import { PushManager } from "./push/manager";
 import { createWSHandler } from "./ws/handler";
 import { SessionManager } from "./sessions/manager";
@@ -192,6 +193,7 @@ app.route("/api/attention", createAttentionRoutes(db, sessionManager));
 app.route("/api/push", createPushRoutes(pushManager));
 app.route("/api/uploads", createUploadRoutes(uploadsDir));
 app.route("/api/settings", createSettingsRoutes(db, worktreeManager));
+app.route("/api/files", createFileRoutes());
 app.route("/api/tailscale", createTailscaleRoutes(tailscaleDetector, db));
 
 // Status endpoint (must be before static/SPA fallback)

@@ -1,3 +1,5 @@
+import { FilePathLink } from "../FilePathLink";
+
 interface SearchMatch {
   file: string;
   line: number | null;
@@ -104,7 +106,9 @@ export function SearchRenderer({ input, output }: Props) {
       <div className="renderer-body space-y-0">
         {search.matches.map((m, i) => (
           <div key={i} className="search-result">
-            <span className="search-file">{shortenPath(m.file)}</span>
+            <span className="search-file">
+              <FilePathLink path={m.file} line={m.line ?? undefined} />
+            </span>
             {m.line !== null && <span className="search-line-num">:{m.line}</span>}
             {m.content && (
               <span className="search-content">
@@ -139,9 +143,3 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function shortenPath(p: string): string {
-  if (!p || !p.includes("/")) return p;
-  const parts = p.split("/").filter(Boolean);
-  if (parts.length <= 3) return p;
-  return "…/" + parts.slice(-3).join("/");
-}

@@ -33,6 +33,7 @@ orchestra/
 │       │   ├── attention.ts Attention queue API
 │       │   ├── push.ts     Push subscription API
 │       │   ├── uploads.ts  File upload + serve API
+│       │   ├── files.ts    Local file proxy (image serving)
 │       │   ├── settings.ts Settings CRUD API
 │       │   └── tailscale.ts Tailscale status API
 │       ├── push/           Web Push notification management
@@ -69,9 +70,12 @@ orchestra/
 │       │   ├── MobileNewSession.tsx New session form for mobile
 │       │   ├── SlashCommandInput.tsx Textarea with slash command autocomplete
 │       │   ├── AttachmentPreview.tsx Thumbnail previews for file attachments
+│       │   ├── FilePathLink.tsx  Clickable file path (vscode:// local, copy remote)
+│       │   ├── ImageLightbox.tsx Full-screen image overlay
 │       │   └── PrBadge.tsx        PR status badge (draft/open/merged/closed)
 │       ├── lib/             Shared utilities
-│       │   └── askUser.ts   AskUserQuestion parsing + inline rendering helpers
+│       │   ├── askUser.ts   AskUserQuestion parsing + inline rendering helpers
+│       │   └── fileUtils.ts isImageFile, shortenPath, fileServeUrl utilities
 │       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications
 └── shared/          Shared TypeScript types
 ```
@@ -135,6 +139,9 @@ cd server && bun run src/index.ts  # Production server
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
 - Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings` with typed `Settings` interface; gear icon in sidebar footer + header; WorktreeManager updated live on save
 - File attachments: paste/drag-drop/picker in InputBar → upload to DATA_DIR/uploads/ → file paths appended to Claude prompt so it can Read them → rendered inline in chat messages
+- Inline image previews: when agent reads an image file (e.g., screenshot from browse tool), ReadRenderer detects image extension via `isImageFile()` and renders `<img>` pointing at `/api/files/serve?path=...` proxy endpoint; click opens `ImageLightbox` overlay; non-image binaries still show "Binary file" placeholder; SVG excluded from allowlist (XSS risk)
+- File proxy endpoint: `GET /api/files/serve?path=<absolute-path>` serves local filesystem images with extension allowlist (.png/.jpg/.jpeg/.gif/.webp/.bmp), path traversal prevention (`..` blocked), `nosniff` header; inherits auth middleware for remote access; `private, no-cache` since files may change between reads
+- Clickable file paths: `FilePathLink` component wraps file paths in renderer headers (Read, Search, Diff); on localhost renders `vscode://file/path:line` links; on remote renders copy-to-clipboard button (server paths don't exist on client device); `shortenPath()` extracted to shared `fileUtils.ts`
 - Unread thread indicator: client-side `Set<string>` tracks threads with unseen `thread_updated` WS events; blue dot shown in ProjectSidebar and MobileSessions; cleared on thread selection; `activeThreadRef` handles WS race where event arrives before React state update
 - **QA testing from worktrees**: You CANNOT test against the already-running main-branch instance. Each worktree gets its own port (via hash), so you must `cd` into the worktree, build the client (`cd client && bun run build`), and start a fresh server (`cd server && bun run src/index.ts`) there. Only then browse to the worktree's port for QA.
 - Integrated terminal: xterm.js v6 (client) + Bun native PTY via `Bun.spawn({ terminal })` (server); TerminalManager uses event-emitter pattern (like SessionManager) with 50KB replay buffer for reconnect viewport restore, output batching at ~60fps, 15-min idle timeout, max 20 concurrent PTYs; toggle via `Ctrl+`` or header button; terminal panel sits below InputBar; PTY persists per-thread across switches (idempotent `terminal_create` returns existing); desktop only (hidden on mobile); server-side `closeForThread()` on thread archive prevents zombie PTYs
