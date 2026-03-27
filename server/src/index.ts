@@ -208,7 +208,7 @@ app.get("*", async (c) => {
 
 // ── Server ──────────────────────────────────────────────
 
-const wsHandler = createWSHandler(sessionManager, db);
+const wsHandler = createWSHandler(sessionManager, db, terminalManager);
 
 let server: ReturnType<typeof Bun.serve>;
 try {
