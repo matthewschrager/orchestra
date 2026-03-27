@@ -137,11 +137,21 @@ function formatModelName(raw: string): string {
 // ── Context Window Indicator ──────────────────────────────
 
 function ContextWindowIndicator({ metrics }: { metrics: TurnMetrics }) {
-  const { inputTokens, outputTokens, contextWindow } = metrics;
-  if (!contextWindow || contextWindow <= 0) return null;
+  const summary = getTokenUsageSummary(metrics);
+  if (!summary) return null;
 
-  const totalTokens = inputTokens + outputTokens;
-  const pct = Math.min((totalTokens / contextWindow) * 100, 100);
+  const { totalTokens, contextWindow, pct } = summary;
+
+  if (!contextWindow || contextWindow <= 0) {
+    return (
+      <span
+        className="text-[10px] tabular-nums text-content-3"
+        title={`${formatTokenCount(totalTokens)} tokens this turn`}
+      >
+        {formatTokenCount(totalTokens)}
+      </span>
+    );
+  }
 
   // Color thresholds: green → yellow → orange → red
   const barColor =
@@ -177,6 +187,18 @@ function formatTokenCount(n: number): string {
   return String(n);
 }
 
+function getTokenUsageSummary(metrics: TurnMetrics): { totalTokens: number; contextWindow: number; pct: number } | null {
+  const totalTokens = metrics.inputTokens + metrics.outputTokens;
+  if (totalTokens <= 0) return null;
+
+  const contextWindow = metrics.contextWindow;
+  const pct = contextWindow > 0
+    ? Math.min((totalTokens / contextWindow) * 100, 100)
+    : 0;
+
+  return { totalTokens, contextWindow, pct };
+}
+
 // ── Tool Action Formatting ──────────────────────────────
 
 const TOOL_ACTION_MAP: Record<string, string> = {
@@ -207,4 +229,4 @@ function formatToolAction(tool: string, context: string | null): string {
 }
 
 // Export for testing
-export { formatModelName };
+export { formatModelName, formatTokenCount, getTokenUsageSummary };

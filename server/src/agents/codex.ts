@@ -152,15 +152,22 @@ export class CodexParser {
   // ── Event handlers ──────────────────────────────────────
 
   private handleTurnCompleted(event: Record<string, unknown>): ParseResult {
-    const usage = event.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+    const usage = event.usage as {
+      input_tokens?: number;
+      cached_input_tokens?: number;
+      output_tokens?: number;
+    } | undefined;
     const deltas: ParseResult["deltas"] = [];
 
     if (usage) {
-      // Codex provides token counts but no USD cost
+      // Codex SDK turn.completed exposes token usage, but not cost/model/context metadata.
       deltas.push({
         deltaType: "metrics",
         costUsd: undefined,
         durationMs: undefined,
+        inputTokens: (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0),
+        outputTokens: usage.output_tokens ?? 0,
+        finalMetrics: true,
       });
     }
     deltas.push({ deltaType: "turn_end" });
@@ -400,13 +407,14 @@ export class CodexParser {
     opts?: { terminal?: boolean },
   ): ParseResult {
     const items = (item.items as Array<{ text?: string; completed?: boolean }>) ?? [];
-    const toolInput = JSON.stringify({ items });
+    const todos = this.normalizeTodoItems(items, { activelyRunning: !opts?.terminal });
+    const toolInput = JSON.stringify({ todos });
     const prev = this.lastTodoSnapshotByItemId.get(itemId);
-    const changed = items.length > 0 && toolInput !== prev;
+    const changed = todos.length > 0 && toolInput !== prev;
 
     if (opts?.terminal) {
       this.lastTodoSnapshotByItemId.delete(itemId);
-    } else if (items.length > 0) {
+    } else if (todos.length > 0) {
       this.lastTodoSnapshotByItemId.set(itemId, toolInput);
     }
 
@@ -415,8 +423,8 @@ export class CodexParser {
     const messages: ParsedMessage[] = changed
       ? [{
           role: "tool",
-          content: items.map((t) =>
-            `${t.completed ? "✅" : "⬜"} ${t.text ?? ""}`
+          content: todos.map((todo) =>
+            `${todo.status === "completed" ? "✅" : todo.status === "in_progress" ? "▸" : "⬜"} ${todo.content}`
           ).join("\n"),
           toolName: "TodoWrite",
           toolInput,
@@ -427,6 +435,33 @@ export class CodexParser {
       messages,
       deltas: opts?.terminal ? [{ deltaType: "tool_end" }] : [],
     };
+  }
+
+  private normalizeTodoItems(
+    items: Array<{ text?: string; completed?: boolean }>,
+    opts: { activelyRunning: boolean },
+  ): Array<{ content: string; status: "pending" | "in_progress" | "completed"; activeForm: string }> {
+    // The Codex SDK exposes todo items as { text, completed } only. It does not tell us
+    // which incomplete item is currently active, so we synthesize one for live updates by
+    // promoting the first unfinished item to in_progress while the todo_list item is active.
+    const firstIncompleteIndex = opts.activelyRunning
+      ? items.findIndex((item) => item.completed !== true)
+      : -1;
+
+    return items.map((item, index) => {
+      const content = item.text ?? "";
+      const status = item.completed === true
+        ? "completed"
+        : index === firstIncompleteIndex
+          ? "in_progress"
+          : "pending";
+
+      return {
+        content,
+        status,
+        activeForm: content,
+      };
+    });
   }
 
   private parseMcpToolResult(
