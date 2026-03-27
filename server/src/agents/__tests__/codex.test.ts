@@ -59,6 +59,9 @@ describe("CodexParser", () => {
     expect(metricsDelta).toBeDefined();
     // Codex doesn't provide USD cost
     expect(metricsDelta!.costUsd).toBeUndefined();
+    expect(metricsDelta!.inputTokens).toBe(120);
+    expect(metricsDelta!.outputTokens).toBe(50);
+    expect(metricsDelta!.finalMetrics).toBe(true);
 
     const turnEnd = result.deltas.find((d) => d.deltaType === "turn_end");
     expect(turnEnd).toBeDefined();
