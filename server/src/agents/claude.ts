@@ -9,6 +9,7 @@ import type {
   PersistentSession,
   StartOpts,
 } from "./types";
+import { normalizeToolResultContent } from "./toolResultMedia";
 
 /** Tool names that trigger attention events */
 const ASK_USER_TOOLS = new Set(["AskUserQuestion", "AskUserTool"]);
@@ -283,18 +284,17 @@ class ClaudeParser {
             // canUseTool(interrupt:true) is noise, not useful content
             if (toolName && ORCHESTRA_HANDLED_TOOLS.has(toolName)) continue;
 
-            const outputContent = typeof block.content === "string"
-              ? block.content
-              : Array.isArray(block.content)
-                ? block.content.filter(b => b.type === "text").map(b => b.text ?? "").join("")
-                : "";
-            const metadata = block.is_error ? { isError: true } : undefined;
+            const normalized = normalizeToolResultContent(block.content);
+            const metadata = {
+              ...(block.is_error ? { isError: true } : {}),
+              ...(normalized.images.length > 0 ? { images: normalized.images } : {}),
+            };
             userMessages.push({
               role: "tool",
-              content: outputContent,
+              content: normalized.text,
               toolName,
-              toolOutput: outputContent || undefined,
-              metadata,
+              toolOutput: normalized.text || undefined,
+              metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
             });
           }
         }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProjectWithStatus, Thread } from "shared";
+import { MergeAllPrsButton } from "./MergeAllPrsButton";
 import { PrBadge } from "./PrBadge";
 
 interface Props {
@@ -11,11 +12,13 @@ interface Props {
   onSelectProject: (id: string) => void;
   onSelectThread: (id: string) => void;
   onNewThread: (projectId: string) => void;
+  onMergeAllPrs: (projectId: string) => void;
   onArchiveThread: (id: string, opts?: { cleanupWorktree?: boolean }) => void;
   onRemoveProject: (id: string) => void;
   onCleanupPushed: (projectId: string) => void;
   onAddProject: () => void;
   onOpenSettings: () => void;
+  mergingProjectId: string | null;
   open: boolean;
   onClose: () => void;
 }
@@ -45,11 +48,13 @@ export function ProjectSidebar({
   onSelectProject,
   onSelectThread,
   onNewThread,
+  onMergeAllPrs,
   onArchiveThread,
   onRemoveProject,
   onCleanupPushed,
   onAddProject,
   onOpenSettings,
+  mergingProjectId,
   open,
   onClose,
 }: Props) {
@@ -155,6 +160,20 @@ export function ProjectSidebar({
                       </span>
                     )}
                   </button>
+                  {project.outstandingPrCount > 0 && (
+                    <div className="shrink-0">
+                      <MergeAllPrsButton
+                        count={project.outstandingPrCount}
+                        iconOnly
+                        stopPropagation
+                        busy={mergingProjectId === project.id}
+                        onClick={() => {
+                          onMergeAllPrs(project.id);
+                          onClose();
+                        }}
+                      />
+                    </div>
+                  )}
                   <div className="relative shrink-0" ref={menuOpenFor === project.id ? menuRef : undefined}>
                     <button
                       onClick={(e) => {

@@ -5,8 +5,11 @@ import {
   deleteProject,
   getProject,
   getProjectThreadCounts,
+  listOutstandingPrThreads,
   listProjects,
   projectRowToApi,
+  threadRowToApi,
+  touchProjectUpdatedAt,
   updateProject,
   validateAndInsertProject,
 } from "../db";
@@ -15,6 +18,7 @@ import type { ProjectWithStatus } from "shared";
 import type { SessionManager } from "../sessions/manager";
 import type { WorktreeManager } from "../worktrees/manager";
 import type { TerminalManager } from "../terminal/manager";
+import { buildMergeAllPrsPrompt } from "../projects/merge-all-prs";
 
 export function createProjectRoutes(
   db: DB,
@@ -42,6 +46,7 @@ export function createProjectRoutes(
           currentBranch,
           threadCount: counts.total,
           activeThreadCount: counts.active,
+          outstandingPrCount: counts.outstandingPrs,
         };
       }),
     );
@@ -182,6 +187,57 @@ export function createProjectRoutes(
     }
 
     return c.json({ cleaned, skipped });
+  });
+
+  app.post("/:id/merge-all-prs", async (c) => {
+    if (!sessionManager) {
+      return c.json({ error: "Session manager not available" }, 500);
+    }
+
+    const projectId = c.req.param("id");
+    const project = getProject(db, projectId);
+    if (!project) return c.json({ error: "Not found" }, 404);
+
+    const body = await c.req.json<{ agent?: string }>().catch(() => ({}));
+    if (!body.agent) {
+      return c.json({ error: "agent is required" }, 400);
+    }
+
+    if (!existsSync(project.path)) {
+      return c.json({ error: "Project path no longer exists" }, 400);
+    }
+
+    const outstanding = listOutstandingPrThreads(db, projectId);
+    if (outstanding.length === 0) {
+      return c.json({ error: "This project has no outstanding PRs" }, 400);
+    }
+
+    const prompt = buildMergeAllPrsPrompt(
+      project.name,
+      outstanding.map((thread) => ({
+        id: thread.id,
+        title: thread.title,
+        prUrl: thread.pr_url,
+        prNumber: thread.pr_number,
+        prStatus: thread.pr_status,
+        branch: thread.branch,
+        worktree: thread.worktree,
+      })),
+    );
+
+    try {
+      const thread = await sessionManager.startThread({
+        agent: body.agent,
+        prompt,
+        repoPath: project.path,
+        projectId,
+        title: `Merge all PRs (${outstanding.length})`,
+      });
+      touchProjectUpdatedAt(db, projectId);
+      return c.json(threadRowToApi(thread), 201);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
   });
 
   return app;

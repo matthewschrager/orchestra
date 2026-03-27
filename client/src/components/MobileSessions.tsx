@@ -1,4 +1,5 @@
 import type { ProjectWithStatus, Thread } from "shared";
+import { MergeAllPrsButton } from "./MergeAllPrsButton";
 import { PrBadge } from "./PrBadge";
 
 interface MobileSessionsProps {
@@ -9,6 +10,8 @@ interface MobileSessionsProps {
   onSelectThread: (threadId: string) => void;
   onNewThread: (projectId: string) => void;
   onArchiveThread: (threadId: string, opts?: { cleanupWorktree?: boolean }) => void;
+  onMergeAllPrs: (projectId: string) => void;
+  mergingProjectId: string | null;
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -34,6 +37,8 @@ export function MobileSessions({
   onSelectThread,
   onNewThread,
   onArchiveThread,
+  onMergeAllPrs,
+  mergingProjectId,
 }: MobileSessionsProps) {
   if (projects.length === 0) {
     return (
@@ -65,18 +70,30 @@ export function MobileSessions({
           <div key={project.id}>
             {/* Project header */}
             <div className="sticky top-0 bg-base/90 backdrop-blur-sm border-b border-edge-1 px-4 py-2.5 z-10">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-sm font-semibold text-content-1 truncate">{project.name}</div>
                   <div className="text-[10px] text-content-3 font-mono">{project.currentBranch}</div>
                 </div>
-                <button
-                  onClick={() => onNewThread(project.id)}
-                  className="px-3 py-1.5 text-xs text-accent hover:bg-accent/10 rounded-lg font-medium shrink-0"
-                >
-                  + New
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => onNewThread(project.id)}
+                    className="px-3 py-1.5 text-xs text-accent hover:bg-accent/10 rounded-lg font-medium shrink-0"
+                  >
+                    + New
+                  </button>
+                </div>
               </div>
+              {project.outstandingPrCount > 0 && (
+                <div className="mt-2">
+                  <MergeAllPrsButton
+                    count={project.outstandingPrCount}
+                    compact
+                    busy={mergingProjectId === project.id}
+                    onClick={() => onMergeAllPrs(project.id)}
+                  />
+                </div>
+              )}
             </div>
 
             {/* Thread list */}

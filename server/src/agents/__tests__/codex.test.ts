@@ -429,6 +429,46 @@ describe("CodexParser", () => {
     expect(result.messages[0].toolInput).toContain("https://example.com");
   });
 
+  test("item.completed (mcp_tool_call) preserves image blocks in metadata", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.completed",
+      item: {
+        id: "mcp-image-1",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "js_repl",
+        arguments: { code: "emit screenshot" },
+        result: {
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                mediaType: "image/png",
+                data: "YWJjMTIz",
+              },
+            },
+          ],
+        },
+        status: "completed",
+      },
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].toolName).toBe("js_repl");
+    expect(result.messages[0].toolOutput).toBeUndefined();
+    expect(result.messages[0].metadata).toEqual({
+      images: [
+        {
+          src: "data:image/png;base64,YWJjMTIz",
+          mimeType: "image/png",
+          alt: "Tool image 1",
+        },
+      ],
+    });
+  });
+
   test("item.completed (mcp_tool_call) with error sets isError metadata", () => {
     const parser = createParser();
     const result = parser.handleEvent({
@@ -464,6 +504,71 @@ describe("CodexParser", () => {
 
   // ── Todo list ──────────────────────────────────────────
 
+  test("item.started (todo_list) surfaces the initial TodoWrite snapshot", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.started",
+      item: {
+        id: "todo-live-1",
+        type: "todo_list",
+        items: [
+          { text: "Investigate bug", completed: false },
+          { text: "Patch parser", completed: false },
+        ],
+      },
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].toolName).toBe("TodoWrite");
+    expect(result.messages[0].toolInput).toContain("Investigate bug");
+  });
+
+  test("item.updated (todo_list) emits changed snapshots and dedupes identical updates", () => {
+    const parser = createParser();
+
+    parser.handleEvent({
+      type: "item.started",
+      item: {
+        id: "todo-live-2",
+        type: "todo_list",
+        items: [
+          { text: "Investigate bug", completed: false },
+          { text: "Patch parser", completed: false },
+        ],
+      },
+    });
+
+    const changed = parser.handleEvent({
+      type: "item.updated",
+      item: {
+        id: "todo-live-2",
+        type: "todo_list",
+        items: [
+          { text: "Investigate bug", completed: true },
+          { text: "Patch parser", completed: false },
+        ],
+      },
+    });
+
+    expect(changed.messages).toHaveLength(1);
+    expect(changed.messages[0].toolInput).toContain('"completed":true');
+
+    const duplicate = parser.handleEvent({
+      type: "item.updated",
+      item: {
+        id: "todo-live-2",
+        type: "todo_list",
+        items: [
+          { text: "Investigate bug", completed: true },
+          { text: "Patch parser", completed: false },
+        ],
+      },
+    });
+
+    expect(duplicate.messages).toHaveLength(0);
+    expect(duplicate.deltas).toHaveLength(0);
+  });
+
   test("item.completed (todo_list) produces TodoWrite tool message", () => {
     const parser = createParser();
     const result = parser.handleEvent({
@@ -483,6 +588,49 @@ describe("CodexParser", () => {
     expect(result.messages[0].content).toContain("Fix bug");
     expect(result.messages[0].content).toContain("✅");
     expect(result.messages[0].content).toContain("⬜");
+  });
+
+  test("item.completed (todo_list) does not duplicate the last snapshot when nothing changed", () => {
+    const parser = createParser();
+
+    parser.handleEvent({
+      type: "item.started",
+      item: {
+        id: "todo-live-3",
+        type: "todo_list",
+        items: [
+          { text: "Investigate bug", completed: false },
+          { text: "Patch parser", completed: false },
+        ],
+      },
+    });
+
+    parser.handleEvent({
+      type: "item.updated",
+      item: {
+        id: "todo-live-3",
+        type: "todo_list",
+        items: [
+          { text: "Investigate bug", completed: true },
+          { text: "Patch parser", completed: true },
+        ],
+      },
+    });
+
+    const result = parser.handleEvent({
+      type: "item.completed",
+      item: {
+        id: "todo-live-3",
+        type: "todo_list",
+        items: [
+          { text: "Investigate bug", completed: true },
+          { text: "Patch parser", completed: true },
+        ],
+      },
+    });
+
+    expect(result.messages).toHaveLength(0);
+    expect(result.deltas).toEqual([{ deltaType: "tool_end" }]);
   });
 
   // ── Reasoning (should be silent) ──────────────────────

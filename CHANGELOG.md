@@ -2,15 +2,22 @@
 
 ## [0.1.29.0] - 2026-03-27
 
+### Added
+
+- **Merge-all PR workflow** — projects with open or draft PRs now expose a merge action that starts a pre-seeded agent thread with the outstanding PR list and explicit GitHub-first merge instructions; available in the desktop project view, the project empty state, and mobile project headers
+- **Inline tool-result image rendering** — raster images emitted by tool results now survive the Claude and Codex adapters and render inline inside expanded tool rows, with the same SVG blocking and lightbox behavior as file previews
+
 ### Changed
 
 - **Bash tool calls now read like terminal activity** — completed Bash steps render as inline `Bash(...)` cards with success/failure state, the first four output lines, and a working expand/collapse control instead of a generic collapsed `Ran ...` row
 - **Codex command executions now expose exit-code metadata** — `command_execution` tool messages include `exitCode` metadata so the client can render explicit success state without depending only on raw output parsing
+- **Sidebar merge action is quieter** — the Projects side panel now uses a compact merge glyph with a count badge and tooltip instead of a full-width button
 
 ### Fixed
 
 - **Codex inline diffs now show real edits for completed-only file changes** — the Codex adapter snapshots the worktree at `turn.started`, falls back to that baseline when the SDK only emits a completed `file_change`, and rolls the baseline forward after each edit so update diffs no longer collapse into whole-file additions; added regression coverage for completed-only and multi-edit turn sequences
 - **Bash previews stay stable as adapters evolve** — regression coverage now locks in metadata-backed exit codes and preview-line truncation, so the Claude-style preview keeps behaving the same release to release
+- **Codex todo cards now update live** — Orchestra persists TodoWrite snapshots on start, update, and completion so task lists appear immediately and check off as work progresses instead of popping in stale at the end
 
 ## [0.1.28.3] - 2026-03-27
 
