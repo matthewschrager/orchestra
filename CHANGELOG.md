@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- **Logo not rendering** — OrchestraLogo SVG was invisible because `color="var(--accent)"` referenced a non-existent CSS variable; corrected to `var(--color-accent)` matching the Tailwind v4 `@theme` definition in all three usage sites (header, welcome state, auth gate)
 - **ExitPlanMode no longer triggers Zod validation errors** — ExitPlanMode is now denied in `canUseTool` with `interrupt: true` (same flow as AskUserQuestion), preventing the SDK's headless-mode Zod error from reaching the agent. The agent gets a clean denial message instead of a cryptic error.
 - **ExitPlanMode surfaces as attention item immediately** — the parser creates a "confirmation" attention event directly from the tool_use event, with "Approve plan" / "Reject plan" options. No more delayed detection at turn-end boundaries.
 - **Plan approval exits plan mode at CLI level** — on approval, `resolveAttention` calls `setPermissionMode("bypassPermissions")` to flip the CLI subprocess out of plan mode before messaging the agent to proceed.
