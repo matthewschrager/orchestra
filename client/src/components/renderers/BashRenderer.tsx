@@ -8,6 +8,14 @@ interface ParsedBash {
 }
 
 const BASH_PREVIEW_LINES = 4;
+const BASH_PREVIEW_LINE_CHARS = 200;
+
+interface BashPreview {
+  text: string;
+  totalLines: number;
+  hiddenLineCount: number;
+  truncatedLineCount: number;
+}
 
 export function parseBash(
   input: string | null,
@@ -40,15 +48,24 @@ interface Props {
   forceExpand?: boolean;
 }
 
-export function getBashPreview(output: string, maxLines = BASH_PREVIEW_LINES) {
+export function getBashPreview(
+  output: string,
+  maxLines = BASH_PREVIEW_LINES,
+  maxCharsPerLine = BASH_PREVIEW_LINE_CHARS,
+) {
   const lines = output ? output.split("\n") : [];
-  if (lines.length <= maxLines) {
-    return { text: output, totalLines: lines.length, hiddenLineCount: 0 };
-  }
+  let truncatedLineCount = 0;
+  const previewLines = lines.slice(0, maxLines).map((line) => {
+    if (line.length <= maxCharsPerLine) return line;
+    truncatedLineCount++;
+    return truncatePreviewLine(line, maxCharsPerLine);
+  });
+
   return {
-    text: lines.slice(0, maxLines).join("\n"),
+    text: previewLines.join("\n"),
     totalLines: lines.length,
-    hiddenLineCount: lines.length - maxLines,
+    hiddenLineCount: Math.max(0, lines.length - maxLines),
+    truncatedLineCount,
   };
 }
 
@@ -61,7 +78,7 @@ export function BashRenderer({ input, output, metadata, forceExpand = false }: P
   const hasOutput = bash.output.length > 0;
   const preview = getBashPreview(bash.output);
   const isOpen = expanded || forceExpand;
-  const canExpand = preview.hiddenLineCount > 0;
+  const canExpand = preview.hiddenLineCount > 0 || preview.truncatedLineCount > 0;
   const displayOutput = isOpen ? bash.output : preview.text;
   const displayCmd = formatBashLabel(bash.command);
   const statusClasses = bash.exitCode === null
@@ -109,7 +126,7 @@ export function BashRenderer({ input, output, metadata, forceExpand = false }: P
         <div className="px-3 pb-3">
           <div className="flex gap-2">
             <span className="pt-0.5 text-[11px] leading-5 text-content-3">└</span>
-            <pre className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[11px] leading-5 text-content-2">
+            <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre text-[11px] leading-5 text-content-2">
               {highlightBashOutput(displayOutput)}
             </pre>
           </div>
@@ -119,7 +136,7 @@ export function BashRenderer({ input, output, metadata, forceExpand = false }: P
               onClick={toggle}
               className="ml-5 mt-1 text-[10px] text-content-3 hover:text-content-2"
             >
-              {isOpen ? "Show less" : `… ${preview.hiddenLineCount} more lines`}
+              {isOpen ? "Show less" : getBashExpandLabel(preview)}
             </button>
           )}
         </div>
@@ -185,6 +202,22 @@ function parseBashOutput(
 function countOutputLines(output: string): number {
   if (!output) return 0;
   return output.split("\n").length;
+}
+
+function truncatePreviewLine(line: string, maxChars: number): string {
+  if (line.length <= maxChars) return line;
+  return line.slice(0, Math.max(1, maxChars - 1)) + "…";
+}
+
+function getBashExpandLabel(preview: BashPreview): string {
+  const parts: string[] = [];
+  if (preview.hiddenLineCount > 0) {
+    parts.push(`${preview.hiddenLineCount} more line${preview.hiddenLineCount === 1 ? "" : "s"}`);
+  }
+  if (preview.truncatedLineCount > 0) {
+    parts.push(`${preview.truncatedLineCount} long line${preview.truncatedLineCount === 1 ? "" : "s"} truncated`);
+  }
+  return `… ${parts.join(", ")}`;
 }
 
 function formatBashLabel(command: string): string {

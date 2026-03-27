@@ -521,6 +521,8 @@ describe("CodexParser", () => {
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0].toolName).toBe("TodoWrite");
     expect(result.messages[0].toolInput).toContain("Investigate bug");
+    expect(result.messages[0].toolInput).toContain('"status":"in_progress"');
+    expect(result.messages[0].toolInput).toContain('"status":"pending"');
   });
 
   test("item.updated (todo_list) emits changed snapshots and dedupes identical updates", () => {
@@ -551,7 +553,8 @@ describe("CodexParser", () => {
     });
 
     expect(changed.messages).toHaveLength(1);
-    expect(changed.messages[0].toolInput).toContain('"completed":true');
+    expect(changed.messages[0].toolInput).toContain('"status":"completed"');
+    expect(changed.messages[0].toolInput).toContain('"status":"in_progress"');
 
     const duplicate = parser.handleEvent({
       type: "item.updated",
@@ -588,6 +591,8 @@ describe("CodexParser", () => {
     expect(result.messages[0].content).toContain("Fix bug");
     expect(result.messages[0].content).toContain("✅");
     expect(result.messages[0].content).toContain("⬜");
+    expect(result.messages[0].toolInput).toContain('"status":"pending"');
+    expect(result.messages[0].toolInput).not.toContain('"status":"in_progress"');
   });
 
   test("item.completed (todo_list) does not duplicate the last snapshot when nothing changed", () => {
