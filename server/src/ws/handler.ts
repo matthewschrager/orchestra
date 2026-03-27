@@ -247,15 +247,19 @@ export function createWSHandler(
           break;
 
         case "resolve_attention": {
-          const resolved = sessionManager.resolveAttention(msg.attentionId, msg.resolution);
-          if (!resolved) {
-            ws.send(
-              JSON.stringify({
-                type: "error",
-                error: `Attention item ${msg.attentionId} not found`,
-              } satisfies WSServerMessage),
-            );
-          }
+          // resolveAttention is async (setPermissionMode for ExitPlanMode approval)
+          sessionManager.resolveAttention(msg.attentionId, msg.resolution).then((resolved) => {
+            if (!resolved) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  error: `Attention item ${msg.attentionId} not found`,
+                } satisfies WSServerMessage),
+              );
+            }
+          }).catch((err) => {
+            console.error(`[ws] Failed to resolve attention ${msg.attentionId}:`, err);
+          });
           break;
         }
 
