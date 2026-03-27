@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.28.0] - 2026-03-26
+
+### Fixed
+
+- **Codex edit diffs render correctly** — the Codex adapter now snapshots file contents when a `file_change` begins and emits `old_string` / `new_string` payloads on completion, so Orchestra shows real inline diffs for Codex edits instead of raw JSON; added regression coverage for update, add, and delete cases
+
+
 ## [0.1.27.0] - 2026-03-26
 
 ### Added
