@@ -299,6 +299,7 @@ export class CodexParser {
             toolName: "Bash",
             toolInput,
             toolOutput: toolOutput || undefined,
+            metadata: exitCode === undefined ? undefined : { exitCode },
           }],
           deltas: [{ deltaType: "tool_end" }],
         };

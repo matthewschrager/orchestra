@@ -208,6 +208,7 @@ describe("CodexParser", () => {
     expect(msg.toolName).toBe("Bash");
     expect(msg.toolInput).toBe('{"command":"echo hello"}');
     expect(msg.toolOutput).toBe("hello\n");
+    expect(msg.metadata).toEqual({ exitCode: 0 });
 
     const toolEnd = result.deltas.find((d) => d.deltaType === "tool_end");
     expect(toolEnd).toBeDefined();
@@ -228,6 +229,7 @@ describe("CodexParser", () => {
     });
 
     expect(result.messages[0].toolOutput).toContain("[exit code: 1]");
+    expect(result.messages[0].metadata).toEqual({ exitCode: 1 });
   });
 
   // ── File change ────────────────────────────────────────
