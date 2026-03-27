@@ -102,6 +102,9 @@ export const api = {
   cleanupWorktree: (id: string) =>
     request<import("shared").Thread>(`/threads/${id}/cleanup`, { method: "POST" }),
 
+  refreshPrStatus: (id: string) =>
+    request<import("shared").Thread>(`/threads/${id}/refresh-pr`, { method: "POST" }),
+
   updateThread: (id: string, fields: { title?: string }) =>
     request<import("shared").Thread>(`/threads/${id}`, {
       method: "PATCH",

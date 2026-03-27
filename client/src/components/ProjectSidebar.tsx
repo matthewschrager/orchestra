@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProjectWithStatus, Thread } from "shared";
+import { PrBadge } from "./PrBadge";
 
 interface Props {
   projects: ProjectWithStatus[];
@@ -266,11 +267,11 @@ export function ProjectSidebar({
                                   </span>
                                 </span>
                               )}
-                              {thread.prUrl && (
-                                <span className="text-[10px] px-1 py-0.5 rounded bg-emerald-900/40 text-emerald-300">
-                                  PR
-                                </span>
-                              )}
+                              <PrBadge
+                                prUrl={thread.prUrl}
+                                prStatus={thread.prStatus}
+                                prNumber={thread.prNumber}
+                              />
                             </div>
                           </button>
                           <button
