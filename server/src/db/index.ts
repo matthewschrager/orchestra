@@ -101,8 +101,9 @@ const COLUMN_MIGRATIONS = [
   {
     table: "threads",
     column: "last_interacted_at",
-    sql: `ALTER TABLE threads ADD COLUMN last_interacted_at TEXT NOT NULL DEFAULT (datetime('now'))`,
-    // Backfill existing threads: use created_at so existing threads keep their relative order
+    // SQLite rejects expression defaults (datetime('now')) in ALTER TABLE on non-empty tables.
+    // Use empty string as placeholder, then backfill from created_at to preserve relative order.
+    sql: `ALTER TABLE threads ADD COLUMN last_interacted_at TEXT NOT NULL DEFAULT ''`,
     postMigrate: `UPDATE threads SET last_interacted_at = created_at`,
   },
 ];
