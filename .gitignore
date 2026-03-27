@@ -9,3 +9,4 @@ server/static/
 bun.lock
 .DS_Store
 .gstack/
+.orchestra-worktree/
