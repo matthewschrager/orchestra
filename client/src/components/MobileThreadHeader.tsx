@@ -1,4 +1,4 @@
-import type { Thread } from "shared";
+import { getEffortLabel, type Thread } from "shared";
 import { EditableTitle } from "./EditableTitle";
 
 interface MobileThreadHeaderProps {
@@ -26,6 +26,8 @@ function StatusDot({ status }: { status: Thread["status"] }) {
 }
 
 export function MobileThreadHeader({ thread, onBack, onSaveTitle }: MobileThreadHeaderProps) {
+  const effortLabel = getEffortLabel(thread.agent, thread.effortLevel);
+
   return (
     <div className="md:hidden flex items-center gap-2 px-2 py-2 bg-base/80 backdrop-blur-xl border-b border-edge-1 shrink-0 z-20">
       <button
@@ -38,11 +40,19 @@ export function MobileThreadHeader({ thread, onBack, onSaveTitle }: MobileThread
         </svg>
       </button>
 
-      <EditableTitle
-        title={thread.title}
-        onSave={onSaveTitle}
-        className="text-sm font-medium min-w-0 flex-1"
-      />
+      <div className="min-w-0 flex-1">
+        <EditableTitle
+          title={thread.title}
+          onSave={onSaveTitle}
+          className="text-sm font-medium min-w-0"
+        />
+        <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-content-3">
+          <span className={thread.agent === "codex" ? "text-cyan-400" : "text-amber-400"}>{thread.agent}</span>
+          {effortLabel && (
+            <span className="font-mono text-content-2">effort {effortLabel.toLowerCase()}</span>
+          )}
+        </div>
+      </div>
 
       <StatusDot status={thread.status} />
     </div>

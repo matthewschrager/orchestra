@@ -16,7 +16,8 @@ import {
 import type { AgentRegistry } from "../agents/registry";
 import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage, PersistentSession } from "../agents/types";
 import type { WorktreeManager } from "../worktrees/manager";
-import type { Attachment, AttentionItem, AttentionResolution, StreamDelta } from "shared";
+import { isEffortLevelSupported } from "shared";
+import type { Attachment, AttentionItem, AttentionResolution, EffortLevel, StreamDelta } from "shared";
 import { resolveAttachmentPaths } from "../routes/uploads";
 import { generateTitle } from "../titles/generator";
 
@@ -87,6 +88,7 @@ export class SessionManager {
 
   async startThread(opts: {
     agent: string;
+    effortLevel?: EffortLevel;
     prompt: string;
     repoPath: string;
     projectId: string;
@@ -97,6 +99,10 @@ export class SessionManager {
   }): Promise<ThreadRow> {
     const adapter = this.registry.get(opts.agent);
     if (!adapter) throw new Error(`Unknown agent: ${opts.agent}`);
+    if (opts.effortLevel && !isEffortLevelSupported(opts.agent, opts.effortLevel)) {
+      throw new Error(`Effort level "${opts.effortLevel}" is not supported for ${opts.agent}`);
+    }
+    const effortLevel = opts.effortLevel ?? null;
 
     const threadId = nanoid(12);
     const title = opts.title || opts.prompt.slice(0, 80);
@@ -114,10 +120,10 @@ export class SessionManager {
     // Insert thread record
     this.db
       .query(
-        `INSERT INTO threads (id, title, agent, repo_path, project_id, worktree, branch, status, last_interacted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'running', datetime('now'))`,
+        `INSERT INTO threads (id, title, agent, effort_level, repo_path, project_id, worktree, branch, status, last_interacted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', datetime('now'))`,
       )
-      .run(threadId, title, opts.agent, opts.repoPath, opts.projectId, worktree, branch);
+      .run(threadId, title, opts.agent, effortLevel, opts.repoPath, opts.projectId, worktree, branch);
 
     // Validate and build prompt with attachment references
     const validAttachments = this.validateAttachments(opts.attachments);
@@ -137,9 +143,9 @@ export class SessionManager {
 
     // Start agent session — use persistent mode when supported
     if (adapter.supportsPersistent?.()) {
-      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, null);
+      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, null, effortLevel);
     } else {
-      this.startTurn(threadId, adapter, cwd, agentPrompt, null);
+      this.startTurn(threadId, adapter, cwd, agentPrompt, null, effortLevel);
     }
 
     const thread = getThread(this.db, threadId)!;
@@ -209,6 +215,7 @@ export class SessionManager {
 
     const adapter = this.registry.get(thread.agent);
     if (!adapter) throw new Error(`Unknown agent: ${thread.agent}`);
+    const effortLevel = isEffortLevelSupported(thread.agent, thread.effort_level) ? thread.effort_level : null;
 
     const existing = this.sessions.get(threadId);
 
@@ -318,7 +325,7 @@ export class SessionManager {
         // No session_id — can't inject. Fall back to restart.
         console.warn(`[session] No sessionId for persistent inject on ${threadId}, falling back to restart`);
         this.teardownSession(threadId);
-        this.startTurn(threadId, adapter, cwd, agentPrompt, null);
+        this.startTurn(threadId, adapter, cwd, agentPrompt, null, effortLevel);
         return;
       }
 
@@ -366,9 +373,9 @@ export class SessionManager {
     updateThread(this.db, threadId, { status: "running", error_message: null });
     this.notifyThread(threadId);
     if (adapter.supportsPersistent?.()) {
-      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, sessionId);
+      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, sessionId, effortLevel);
     } else {
-      this.startTurn(threadId, adapter, cwd, agentPrompt, sessionId);
+      this.startTurn(threadId, adapter, cwd, agentPrompt, sessionId, effortLevel);
     }
   }
 
@@ -500,10 +507,12 @@ export class SessionManager {
     cwd: string,
     prompt: string,
     resumeSessionId: string | null,
+    effortLevel: EffortLevel | null,
   ): void {
     if (DEBUG) console.log(`[session] startTurn thread=${threadId} resume=${resumeSessionId ?? "new"} cwd=${cwd}`);
     const session = adapter.start({
       cwd,
+      effortLevel: effortLevel ?? undefined,
       prompt,
       resumeSessionId: resumeSessionId ?? undefined,
     });
@@ -548,6 +557,7 @@ export class SessionManager {
     cwd: string,
     prompt: string,
     resumeSessionId: string | null,
+    effortLevel: EffortLevel | null,
     restartCount: number = 0,
   ): void {
     if (DEBUG) console.log(`[session] startPersistentSession thread=${threadId} resume=${resumeSessionId ?? "new"} cwd=${cwd} restarts=${restartCount}`);
@@ -559,6 +569,7 @@ export class SessionManager {
 
     const session = adapter.startPersistent({
       cwd,
+      effortLevel: effortLevel ?? undefined,
       prompt,
       resumeSessionId: resumeSessionId ?? undefined,
     });
@@ -848,10 +859,16 @@ export class SessionManager {
     updateThread(this.db, threadId, { status: "running", error_message: null });
     this.notifyThread(threadId);
     if (adapter.supportsPersistent?.()) {
-      this.startPersistentSession(threadId, adapter, cwd, prompt, sessionId, restartCount);
+      this.startPersistentSession(threadId, adapter, cwd, prompt, sessionId, this.getThreadEffortLevel(threadId), restartCount);
     } else {
-      this.startTurn(threadId, adapter, cwd, prompt, sessionId);
+      this.startTurn(threadId, adapter, cwd, prompt, sessionId, this.getThreadEffortLevel(threadId));
     }
+  }
+
+  private getThreadEffortLevel(threadId: string): EffortLevel | null {
+    const thread = getThread(this.db, threadId);
+    if (!thread) return null;
+    return isEffortLevelSupported(thread.agent, thread.effort_level) ? thread.effort_level : null;
   }
 
   private persistMessage(
@@ -926,7 +943,7 @@ export class SessionManager {
     res: { optionIndex?: number; text?: string },
   ): Promise<void> {
     const isApproved = res.optionIndex === 0; // "Approve plan" is index 0
-    const activeSession = this.activeSessions.get(threadId);
+    const activeSession = this.sessions.get(threadId);
 
     if (isApproved && activeSession?.persistent) {
       // Exit plan mode at the CLI level before telling the agent to proceed

@@ -1,7 +1,8 @@
-import type { AttentionKind, StreamDelta } from "shared";
+import type { AttentionKind, EffortLevel, StreamDelta } from "shared";
 
 export interface StartOpts {
   cwd: string;
+  effortLevel?: EffortLevel;
   prompt: string;
   resumeSessionId?: string;
 }

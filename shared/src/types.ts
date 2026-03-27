@@ -1,3 +1,5 @@
+import type { EffortLevel } from "./effort";
+
 // ── Project ─────────────────────────────────────────────
 
 export interface Project {
@@ -30,6 +32,7 @@ export interface Thread {
   id: string;
   title: string;
   agent: string;
+  effortLevel: EffortLevel | null;
   projectId: string;
   repoPath: string;
   worktree: string | null;
@@ -224,6 +227,7 @@ export interface TailscaleStatus {
 
 export interface CreateThreadRequest {
   agent: string;
+  effortLevel?: EffortLevel;
   prompt: string;
   projectId: string;
   title?: string;

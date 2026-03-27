@@ -1,10 +1,17 @@
 # Changelog
 
-## [0.1.29.1] - 2026-03-27
+## [0.1.30.0] - 2026-03-27
 
 ### Added
 
 - **Pinned TODO panel** — when an agent is working with an active task list, a compact TODO panel pins to the bottom of the thread (between the status bar and the input), showing task progress in real time without needing to scroll; collapsible via chevron, auto-hides when the turn ends
+- **Per-thread effort selector for Claude and Codex** — desktop and mobile new-session flows now let users choose reasoning effort before launch, with Codex-specific `Minimal/Low/Medium/High/Max` options and Claude-specific `Low/Medium/High` options
+- **Effort-level regression coverage** — shared helper tests and session-manager coverage now lock in agent-specific option validation and verify that resumed Codex turns keep the originally selected effort
+
+### Changed
+
+- **Active thread headers now show the chosen effort** — desktop and mobile thread chrome now render `effort ...` beside the agent label so users can confirm how a session was started
+- **SDK thread startup now persists and reuses effort** — effort is stored on the thread record, forwarded into the Claude and Codex adapters, and reused on resumed turns instead of falling back to SDK defaults
 
 ## [0.1.29.0] - 2026-03-27
 

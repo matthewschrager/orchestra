@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { Message, Thread } from "shared";
+import { getEffortLabel, type Message, type Thread } from "shared";
 import { MarkdownContent } from "./MarkdownContent";
 import { DiffRenderer, parseDiff } from "./renderers/DiffRenderer";
 import { BashRenderer } from "./renderers/BashRenderer";
@@ -36,6 +36,7 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const effortLabel = useMemo(() => getEffortLabel(thread.agent, thread.effortLevel), [thread.agent, thread.effortLevel]);
   // Track how many messages existed when user scrolled away, for the "N new" badge
   const [msgCountAtScrollAway, setMsgCountAtScrollAway] = useState(0);
   // Guard: suppress handleScroll during programmatic smooth-scroll to prevent flicker
@@ -139,6 +140,12 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
         )}
         <div className="flex items-center gap-2 mt-1.5 text-xs text-content-3">
           <span className={thread.agent === "codex" ? "text-cyan-400" : "text-amber-400"}>{thread.agent}</span>
+          {effortLabel && (
+            <>
+              <span className="text-content-3">&middot;</span>
+              <span className="font-mono text-content-2">effort {effortLabel.toLowerCase()}</span>
+            </>
+          )}
           <span className="text-content-3">&middot;</span>
           <ThreadStatusBadge status={thread.status} errorMessage={thread.errorMessage} />
           {thread.branch && (
