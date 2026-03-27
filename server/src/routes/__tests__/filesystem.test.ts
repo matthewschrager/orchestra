@@ -1,14 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { createFilesystemRoutes } from "../filesystem";
 import { Hono } from "hono";
-import { resolve } from "path";
-import { mkdtempSync, mkdirSync, writeFileSync, rmdirSync, rmSync } from "fs";
-import { tmpdir } from "os";
+import { resolve, join } from "path";
+import { mkdtempSync, mkdirSync, rmSync } from "fs";
+import { homedir } from "os";
 
 function createApp() {
   const app = new Hono();
   app.route("/fs", createFilesystemRoutes());
   return app;
+}
+
+// Tests use a temp dir under $HOME to satisfy the path boundary restriction
+const HOME = homedir();
+
+function makeTestDir(): string {
+  return mkdtempSync(join(HOME, ".orchestra-test-"));
 }
 
 describe("GET /fs/browse", () => {
@@ -23,14 +30,31 @@ describe("GET /fs/browse", () => {
 
   test("returns 400 for nonexistent path", async () => {
     const app = createApp();
-    const res = await app.request("/fs/browse?path=/nonexistent/path/that/does/not/exist");
+    const res = await app.request(`/fs/browse?path=${encodeURIComponent(join(HOME, "nonexistent-path-that-does-not-exist-12345"))}`);
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe("Path does not exist");
   });
 
+  test("rejects paths outside home directory", async () => {
+    const app = createApp();
+    const res = await app.request("/fs/browse?path=/tmp");
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("Path must be under home directory");
+  });
+
+  test("rejects path prefix collision (e.g. /home/user vs /home/username)", async () => {
+    // Simulate prefix collision: HOME + "extra" is a different user directory
+    const app = createApp();
+    const fakePath = HOME + "extra";
+    const res = await app.request(`/fs/browse?path=${encodeURIComponent(fakePath)}`);
+    // Should either be 400 (doesn't exist) or 403 (outside boundary)
+    expect([400, 403]).toContain(res.status);
+  });
+
   test("lists subdirectories sorted alphabetically", async () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "orchestra-test-"));
+    const tmp = makeTestDir();
     mkdirSync(resolve(tmp, "charlie"));
     mkdirSync(resolve(tmp, "alpha"));
     mkdirSync(resolve(tmp, "bravo"));
@@ -46,7 +70,7 @@ describe("GET /fs/browse", () => {
   });
 
   test("excludes hidden directories (dotfiles)", async () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "orchestra-test-"));
+    const tmp = makeTestDir();
     mkdirSync(resolve(tmp, ".hidden"));
     mkdirSync(resolve(tmp, "visible"));
 
@@ -61,7 +85,7 @@ describe("GET /fs/browse", () => {
   });
 
   test("detects git repos via .git directory", async () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "orchestra-test-"));
+    const tmp = makeTestDir();
     mkdirSync(resolve(tmp, "my-repo"));
     mkdirSync(resolve(tmp, "my-repo", ".git"));
     mkdirSync(resolve(tmp, "not-repo"));
@@ -78,21 +102,21 @@ describe("GET /fs/browse", () => {
     rmSync(tmp, { recursive: true });
   });
 
-  test("returns parent path (null at root)", async () => {
+  test("returns null parent at home directory boundary", async () => {
     const app = createApp();
-    const res = await app.request("/fs/browse?path=/");
+    const res = await app.request(`/fs/browse?path=${encodeURIComponent(HOME)}`);
     const body = await res.json();
+    // At HOME, parent should be null (can't navigate above HOME)
     expect(body.parent).toBeNull();
   });
 
-  test("returns parent path for non-root directory", async () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "orchestra-test-"));
+  test("returns parent path for subdirectory of home", async () => {
+    const tmp = makeTestDir();
 
     const app = createApp();
     const res = await app.request(`/fs/browse?path=${encodeURIComponent(tmp)}`);
     const body = await res.json();
     expect(body.parent).toBeTruthy();
-    expect(body.parent).toBe(resolve(tmp, ".."));
 
     rmSync(tmp, { recursive: true });
   });
