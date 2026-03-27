@@ -41,6 +41,7 @@ import { MergeAllPrsButton } from "./components/MergeAllPrsButton";
 import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
 import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal";
 import { buildCleanupAlert } from "./lib/cleanup";
+import { buildInputHistory } from "./lib/inputHistory";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -272,6 +273,7 @@ function AppInner() {
     [agents],
   );
   const activeMessages = (activeThreadId ? messages.get(activeThreadId) : null) ?? [];
+  const activeInputHistory = useMemo(() => buildInputHistory(activeMessages), [activeMessages]);
   const activeStreamingText = activeThreadId ? streaming.text.get(activeThreadId) : undefined;
   const activeStreamingTool = activeThreadId ? streaming.tool.get(activeThreadId) : undefined;
   const activeStreamingToolInput = activeThreadId ? streaming.toolInput.get(activeThreadId) : undefined;
@@ -946,6 +948,7 @@ function AppInner() {
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject?.name ?? null}
                 commands={commands}
+                history={activeInputHistory}
                 pendingQuestion={pendingQuestion}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}

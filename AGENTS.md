@@ -134,7 +134,7 @@ cd server && bun run src/index.ts  # Production server
 - Mobile UI: bottom tab navigation (Inbox/Sessions/New), attention inbox with interactive cards; `MobileThreadHeader` provides sticky thread title with back button and editable title on mobile
 - AI thread titles: `generateTitle()` in `titles/generator.ts` uses `query()` from the Agent SDK (fire-and-forget) to produce 3-6 word summaries; race guard compares current title against original `prompt.slice(0, 80)` to avoid overwriting user edits; PATCH `/threads/:id` broadcasts via `notifyThread()` for cross-client sync
 - Inline title editing: `EditableTitle` component renders click-to-edit title with Enter/Escape/blur handling; used in both `MobileThreadHeader` and `ChatView`; optimistic update + WS broadcast
-- Input: Enter sends, Shift+Enter for newline (with IME composition guard for CJK input)
+- Input: Enter sends, Shift+Enter for newline (with IME composition guard for CJK input); ArrowUp on an empty thread composer recalls prior user inputs for that thread, ArrowDown walks forward and clears back to a blank draft
 - AskUserQuestion rendered inline as interactive cards with answer buttons
 - WebSocket heartbeat prevents idle disconnection
 - Slash command autocompletion: scoped per project via `installed_plugins.json` + `settings.json` (global + project-level merge); `.agents/` internal skills excluded; cached per projectId
