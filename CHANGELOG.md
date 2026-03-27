@@ -1,11 +1,17 @@
 # Changelog
 
-## [0.1.24.1] - 2026-03-26
+## [0.1.25.1] - 2026-03-26
 
 ### Fixed
 
 - **Stale attention items no longer prevent thread completion** — when a user answers an AskUserQuestion by typing directly in chat (instead of using the attention resolution UI), pending attention items are now orphaned on the next `sendMessage` call, allowing the turn_end handler to correctly transition thread status to "done"
 - **Defensive status update on turn end** — the `hasPendingAttention` branch now always sets thread status to "waiting" and broadcasts to clients, preventing threads from getting stuck in "running" if status was overwritten by a follow-up message
+
+## [0.1.25.0] - 2026-03-26
+
+### Fixed
+
+- **ASCII art rendering** — agent output containing box-drawing characters (diagrams with `┌─┐│└┘├┤┬┴┼`) now renders in monospace code blocks instead of proportional-font paragraphs; preprocesses markdown to wrap structural box-drawing lines in `text` code fences; excludes horizontal-only separator characters (`─═━`) that Claude uses as decorative dividers
 
 ## [0.1.24.0] - 2026-03-26
 

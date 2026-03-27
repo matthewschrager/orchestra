@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { Message, Thread } from "shared";
 import { MarkdownContent } from "./MarkdownContent";
-import { DiffRenderer } from "./renderers/DiffRenderer";
+import { DiffRenderer, parseDiff } from "./renderers/DiffRenderer";
 import { BashRenderer } from "./renderers/BashRenderer";
 import { ReadRenderer } from "./renderers/ReadRenderer";
 import { SearchRenderer, searchSummary } from "./renderers/SearchRenderer";
@@ -417,7 +417,8 @@ const TOOL_RENDERERS: Record<string, (ctx: ToolRenderContext) => React.ReactNode
 };
 
 function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false, latestTodoId = null }: { pair: ToolPair; isAnswered: boolean; onSubmitAnswers?: (text: string) => void; forceExpand?: boolean; latestTodoId?: string | null }) {
-  const [expanded, setExpanded] = useState(false);
+  // Auto-expand Edit tools so diffs are visible by default (like Claude CLI)
+  const [expanded, setExpanded] = useState(pair.name === "Edit");
   const hasDetails = pair.input || pair.output;
   const isOpen = expanded || forceExpand;
 
@@ -481,7 +482,7 @@ function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false, late
 function getRichRenderer(pair: ToolPair): React.ReactNode | null {
   switch (pair.name) {
     case "Edit":
-      return <DiffRenderer input={pair.input} />;
+      return <DiffRenderer input={pair.input} inline />;
     case "Bash":
       return <BashRenderer input={pair.input} output={pair.output} />;
     case "Read":
@@ -494,12 +495,22 @@ function getRichRenderer(pair: ToolPair): React.ReactNode | null {
   }
 }
 
-/** Get an optional badge for the tool line (e.g., match count for search) */
-function getToolBadge(pair: ToolPair): string | null {
+/** Get an optional badge for the tool line (e.g., match count for search, +/- for edits) */
+function getToolBadge(pair: ToolPair): React.ReactNode | null {
   switch (pair.name) {
     case "Grep":
     case "Glob":
       return pair.output ? searchSummary(pair.input, pair.output) : null;
+    case "Edit": {
+      const diff = parseDiff(pair.input);
+      if (!diff || (diff.additions === 0 && diff.removals === 0)) return null;
+      return (
+        <span className="inline-flex gap-1.5">
+          {diff.additions > 0 && <span className="text-diff-add">+{diff.additions}</span>}
+          {diff.removals > 0 && <span className="text-diff-remove">−{diff.removals}</span>}
+        </span>
+      );
+    }
     default:
       return null;
   }
