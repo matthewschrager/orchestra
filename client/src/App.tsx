@@ -239,7 +239,7 @@ function AppInner() {
   const recentProjectThreads = useMemo(() =>
     threads
       .filter((t) => t.projectId === activeProjectId && !t.archivedAt)
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .sort((a, b) => new Date(b.lastInteractedAt).getTime() - new Date(a.lastInteractedAt).getTime())
       .slice(0, 5),
     [threads, activeProjectId],
   );

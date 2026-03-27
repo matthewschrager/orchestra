@@ -7,6 +7,7 @@ import {
   getSetting,
   insertMessage,
   updateThread,
+  touchThreadInteraction,
   createAttentionItem,
   resolveAttentionItem,
   orphanAttentionItems,
@@ -218,6 +219,9 @@ export class SessionManager {
       content,
       metadata: validAttachments?.length ? { attachments: validAttachments } : undefined,
     });
+
+    // Bump interaction timestamp for sidebar sort order
+    touchThreadInteraction(this.db, threadId);
 
     // Build prompt with attachment references
     const agentPrompt = this.buildPromptWithAttachments(content, validAttachments);
