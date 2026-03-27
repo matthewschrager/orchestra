@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { readdirSync, existsSync } from "fs";
+import { readdirSync, existsSync, realpathSync } from "fs";
 import { resolve } from "path";
 import { homedir } from "os";
 
@@ -15,24 +15,39 @@ interface BrowseResponse {
   directories: DirEntry[];
 }
 
+const HOME = homedir();
+
 export function createFilesystemRoutes() {
   const app = new Hono();
 
   app.get("/browse", (c) => {
-    const rawPath = c.req.query("path") || homedir();
+    const rawPath = c.req.query("path") || HOME;
     const resolvedPath = resolve(rawPath);
 
-    if (!existsSync(resolvedPath)) {
+    // Fix 4: Restrict browsing to home directory (prevents full-disk enumeration)
+    // Use realpath to follow symlinks before boundary check
+    let realPath: string;
+    try {
+      realPath = realpathSync(resolvedPath);
+    } catch {
+      return c.json({ error: "Path does not exist" }, 400);
+    }
+
+    if (realPath !== HOME && !realPath.startsWith(HOME + "/")) {
+      return c.json({ error: "Path must be under home directory" }, 403);
+    }
+
+    if (!existsSync(realPath)) {
       return c.json({ error: "Path does not exist" }, 400);
     }
 
     try {
-      const entries = readdirSync(resolvedPath, { withFileTypes: true });
+      const entries = readdirSync(realPath, { withFileTypes: true });
       const directories: DirEntry[] = entries
         .filter((e) => e.isDirectory() && !e.name.startsWith("."))
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((e) => {
-          const fullPath = resolve(resolvedPath, e.name);
+          const fullPath = resolve(realPath, e.name);
           return {
             name: e.name,
             path: fullPath,
@@ -40,10 +55,12 @@ export function createFilesystemRoutes() {
           };
         });
 
-      const parent = resolve(resolvedPath, "..");
+      const parent = resolve(realPath, "..");
+      // Don't allow navigating above HOME
+      const parentAllowed = parent !== realPath && (parent === HOME || parent.startsWith(HOME + "/"));
       const response: BrowseResponse = {
-        current: resolvedPath,
-        parent: parent !== resolvedPath ? parent : null,
+        current: realPath,
+        parent: parentAllowed ? parent : null,
         directories,
       };
 

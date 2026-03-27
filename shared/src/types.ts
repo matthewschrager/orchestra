@@ -77,7 +77,7 @@ export interface AgentConfig {
 
 export interface StreamDelta {
   threadId: string;
-  deltaType: "text" | "tool_start" | "tool_input" | "tool_end" | "turn_end" | "metrics";
+  deltaType: "text" | "tool_start" | "tool_input" | "tool_end" | "turn_end" | "metrics" | "queued_message";
   text?: string;
   toolName?: string;
   toolInput?: string;
@@ -92,6 +92,8 @@ export interface StreamDelta {
   contextWindow?: number;
   /** Primary model name (e.g. "claude-sonnet-4-20250514") */
   modelName?: string;
+  /** Current queue depth (for queued_message deltas) */
+  queuedCount?: number;
 }
 
 // ── Turn Metrics ──────────────────────────────────────
@@ -115,7 +117,7 @@ export interface TurnMetrics {
 export type WSClientMessage =
   | { type: "subscribe"; threadId: string; lastSeq?: number }
   | { type: "unsubscribe"; threadId: string }
-  | { type: "send_message"; threadId: string; content: string; attachments?: Attachment[] }
+  | { type: "send_message"; threadId: string; content: string; attachments?: Attachment[]; interrupt?: boolean }
   | { type: "stop_thread"; threadId: string }
   | { type: "resolve_attention"; attentionId: string; resolution: AttentionResolution }
   | { type: "terminal_create"; threadId: string }

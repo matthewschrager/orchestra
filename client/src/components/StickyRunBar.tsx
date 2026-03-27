@@ -10,9 +10,11 @@ interface Props {
   onInterrupt: () => void;
   onScrollToBottom?: () => void;
   todos: TodoItem[] | null;
+  /** Number of user messages queued during current agent turn */
+  queuedCount?: number;
 }
 
-export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool, metrics, elapsedMs, onInterrupt, onScrollToBottom, todos }: Props) {
+export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool, metrics, elapsedMs, onInterrupt, onScrollToBottom, todos, queuedCount = 0 }: Props) {
   // Treat "process still running but turn ended" as idle — agent is just cleaning up
   const activelyWorking = isRunning && !turnEnded;
   if (!activelyWorking && metrics.turnCount === 0) return null;
@@ -103,6 +105,11 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
       <div className="flex items-center gap-3 shrink-0 text-[11px] text-content-3">
         <ContextWindowIndicator metrics={metrics} />
         <span>{formatDuration(elapsedMs)}</span>
+        {queuedCount > 0 && (
+          <span className="text-accent/80 font-medium" title={`${queuedCount} message${queuedCount !== 1 ? "s" : ""} queued for next turn`}>
+            · {queuedCount} queued
+          </span>
+        )}
         <button
           onClick={onInterrupt}
           className="px-2 py-0.5 text-red-400 hover:text-red-300 hover:bg-red-950/40 rounded text-[11px] font-medium border border-red-900/20"

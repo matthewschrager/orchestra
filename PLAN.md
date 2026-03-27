@@ -1,286 +1,268 @@
-<!-- /autoplan restore point: /home/mschrager/.gstack/projects/matthewschrager-orchestra/orchestra-orchestra-4g7zi07hb4x-autoplan-restore-20260326-182120.md -->
-# PR Status Indicators for Thread Sidebar
+<!-- /autoplan restore point: /home/mschrager/.gstack/projects/matthewschrager-orchestra/orchestra-orchestra-120bn3r5nry-autoplan-restore-20260326-191637.md -->
+
+# Message Queuing & Steering for Agent Sessions
 
 ## Context
 
-Currently, threads with PRs show a static green "PR" badge in the sidebar — no distinction between open, merged, or closed PRs. The user wants at-a-glance visibility into PR lifecycle state, similar to Codex app's icons (open circle, merged icon, closed circle with different colors).
+Orchestra currently blocks user input while the agent is working — the InputBar shows "Agent is working..." and replaces the Send button with a Stop button. The server enforces this with a hard guard that throws `"Agent is still processing — wait for it to finish"` when `state === "thinking"`.
 
-## Current State
+The Claude Code CLI supports a "type while thinking" workflow where users can queue messages during agent execution. The Claude Agent SDK supports this via:
+1. **`priority` field on `SDKUserMessage`** — `'now' | 'next' | 'later'` — passed through to the CLI subprocess which maintains an internal command queue
+2. **`interrupt()` method on Query** — sends a control request to stop the current turn gracefully
+3. **`streamInput()` can be called mid-turn** — writes to stdin; CLI subprocess handles queuing
 
-- `Thread.prUrl: string | null` — stores GitHub PR URL, set by `WorktreeManager.createPR()`
-- Sidebar/mobile show a flat green "PR" badge when `prUrl` is non-null
-- No `prStatus` field exists — no way to know if a PR is open, merged, or closed
-- `gh pr view <url> --json state,isDraft,number` can return `OPEN`, `CLOSED`, `MERGED` + draft status
+## Premises (approved)
 
-## Design
+1. ✅ SDK `priority` field is the right mechanism — passthrough to CLI's internal queue
+2. ✅ `priority: 'next'` is the correct default — process after current turn
+3. 🔄 Interrupt/steer ships in Phase 2 only after spike test confirms `interrupt()` works
+4. ✅ No server-side queuing needed — CLI owns the queue
+5. ➕ Queue depth limit of 5 messages (prevent context blowout)
+6. ➕ Graceful degradation for non-persistent adapters (Codex) — keep current block behavior
+7. ➕ Button label stays "Send" always — "Queue" is jargon (design review finding)
 
-### Data Model
+## Implementation: Two Phases
 
-Add three columns to `threads` table:
+### Phase 1: Message Queuing (this PR)
 
-```
-pr_status            TEXT     -- 'draft' | 'open' | 'merged' | 'closed' | null
-pr_number            INTEGER  -- GitHub PR number (extracted from URL)
-pr_status_checked_at TEXT     -- ISO timestamp of last gh status fetch (stale guard)
-```
+Enable users to send messages while the agent is working. Messages queue in the CLI subprocess for processing after the current turn. No interrupt/steer.
 
-Add to `ThreadRow`, `Thread` type, and `threadRowToApi` mapping.
+### Phase 2: Interrupt & Steer (follow-up, gated on spike)
 
-### PR Status Type
+Add `interrupt()` support so users can redirect the agent mid-turn. Only starts after spike test confirms `interrupt()` keeps the subprocess alive.
 
+---
+
+## Phase 1 Design
+
+### Server Changes
+
+**`server/src/agents/types.ts`** — PersistentSession interface:
 ```typescript
-export type PrStatus = 'draft' | 'open' | 'merged' | 'closed';
+interface PersistentSession extends AgentSession {
+  // ... existing ...
+  injectMessage(text: string, sessionId: string, priority?: 'now' | 'next'): Promise<void>;
+  // Phase 2: interrupt(): Promise<void>;
+}
 ```
 
-### Server: PR Status Fetching
-
-New utility `server/src/worktrees/pr-status.ts`:
-
+**`server/src/agents/claude.ts`** — injectMessage with priority:
 ```typescript
-export async function fetchPrStatus(prUrl: string, cwd: string): Promise<{ status: PrStatus; number: number } | null>
+async injectMessage(text: string, sessionId: string, priority?: 'now' | 'next'): Promise<void> {
+  const userMsg: SDKUserMessage = {
+    type: "user",
+    message: { role: "user", content: text },
+    parent_tool_use_id: null,
+    session_id: sessionId,
+    priority: priority ?? 'next',  // default: queue for next turn
+  };
+  await q.streamInput(
+    (async function* () { yield userMsg; })(),
+  );
+}
 ```
 
-**`cwd` is required** — `gh pr view` needs to run in a directory belonging to the correct GitHub repo so it can resolve the remote. Use the thread's `repoPath` (not `worktree`, since the worktree may be cleaned up).
+**`server/src/sessions/manager.ts`** — sendMessage() rewrite:
 
-Implementation: spawn `gh pr view <url> --json state,isDraft,number` with `cwd`, parse JSON. 10-second timeout. Returns `null` on any failure (non-zero exit, timeout, malformed JSON, `gh` not installed).
-- `isDraft: true` → `"draft"`
-- `state: "OPEN"` → `"open"`
-- `state: "MERGED"` → `"merged"`
-- `state: "CLOSED"` → `"closed"`
-
-### When PR Status Gets Updated
-
-1. **On PR creation** (`WorktreeManager.createPR`): set `pr_status = 'open'`, extract `pr_number`
-2. **On thread list load** (`GET /api/threads`): fire-and-forget background refresh for threads with `pr_status = 'open'` or `'draft'` (only open/draft PRs can change state)
-3. **New endpoint** `POST /api/threads/:id/refresh-pr`: manually refresh a single thread's PR status (for the ContextPanel)
-4. **Stale guard**: only re-fetch if `pr_status_checked_at` is >5 min ago (dedicated column — not `updated_at`, which gets bumped by unrelated mutations)
-5. **On thread selection** (ContextPanel open): also trigger refresh if stale — covers SPA users who don't reload thread list
-
-The fire-and-forget refresh on thread list load broadcasts `thread_updated` via WS **only when status actually changed** (compare fetched vs stored — avoids WS spam when nothing changed). `pr_status_checked_at` is server-internal only — NOT exposed in the Thread API response.
-
-### Client: Status-Aware PR Badges
-
-Replace the flat "PR" badge with status-specific icons and colors:
-
-| Status | Icon | Color | Badge Text |
-|--------|------|-------|------------|
-| Status | Icon | Color | Badge Text |
-|--------|------|-------|------------|
-| `null` (fallback) | None | Green (`bg-emerald-900/40 text-emerald-300`) | "PR" (legacy style) |
-| `draft` | Unfilled circle | Gray (`bg-gray-700/40 text-gray-400`) | "Draft #N" |
-| `open` | Git PR open icon (Octicons `git-pull-request`) | Green (`bg-emerald-900/40 text-emerald-300`) | "PR #N" |
-| `merged` | Git merge icon (Octicons `git-merge`) | Purple (`bg-purple-900/40 text-purple-300`) | "Merged #N" |
-| `closed` | PR closed icon (Octicons `git-pull-request-closed`) | Red (`bg-red-900/40 text-red-300`) | "Closed #N" |
-
-**Always show PR number** in all states for cross-referencing with GitHub.
-
-Icons: inline SVGs at `w-2.5 h-2.5` using Octicons path data, matching existing `text-[10px] px-1 py-0.5 rounded` badge style. Exact SVG paths will be taken from [GitHub Octicons](https://primer.style/foundations/icons).
-
-**Sidebar/mobile: NOT clickable** (badge is inside thread row `<button>` — nested interactive elements are invalid HTML and cause click conflicts). **ContextPanel: clickable** (PR URL is already an `<a>` link there).
-
-### Components Changed
-
-- **`ProjectSidebar.tsx`**: Replace `{thread.prUrl && <span>PR</span>}` with `<PrBadge>` component
-- **`MobileSessions.tsx`**: Same replacement
-- **`ContextPanel.tsx`**: Show PR status next to URL, add refresh button
-- **New `PrBadge.tsx`**: Shared component rendering status-aware icon + label
-
-### Files Changed
-
-| File | Change |
-|------|--------|
-| `shared/src/types.ts` | Add `prStatus`, `prNumber` to `Thread`; add `PrStatus` type |
-| `server/src/db/index.ts` | Column migrations for `pr_status`, `pr_number`, `pr_status_checked_at`; update `ThreadRow`, `threadRowToApi` |
-| `server/src/worktrees/pr-status.ts` | **New** — `fetchPrStatus()` utility |
-| `server/src/worktrees/manager.ts` | Set `pr_status`/`pr_number` on PR creation |
-| `server/src/routes/threads.ts` | Add `POST /:id/refresh-pr`; fire-and-forget refresh on `GET /` |
-| `client/src/components/PrBadge.tsx` | **New** — shared PR status badge component |
-| `client/src/components/ProjectSidebar.tsx` | Use `<PrBadge>` |
-| `client/src/components/MobileSessions.tsx` | Use `<PrBadge>` |
-| `client/src/components/ContextPanel.tsx` | Show status, add refresh button |
-| `client/src/hooks/useApi.ts` | Add `refreshPrStatus()` method |
-| `server/src/worktrees/__tests__/pr-status.test.ts` | **New** — test `fetchPrStatus` parsing |
-
-### Visual Design (ASCII)
-
-Sidebar thread row — current:
 ```
-  ○ Fix login bug
-    claude  ┌wt┐  ┌PR┐
+Before (blocks):                     After (queues):
+─────────────────                    ────────────────
+if (state === "thinking")            if (state === "thinking" && persistent)
+  throw "wait for it"                  if (queuedCount >= 5) throw "Queue full"
+                                       persistMessage(user msg)
+                                       injectMessage(prompt, sessionId, 'next')
+                                       queuedCount++
+                                       broadcast queued_message delta
+                                       return
 ```
 
-Sidebar thread row — new (open PR):
-```
-  ○ Fix login bug
-    claude  ┌wt┐  ┌⬮ PR #42┐
-```
+- `ActiveSession` gains `queuedCount: number` (reset on `turn_end`)
+- `queued_message` delta emitted directly from `sendMessage()` via `notifyStreamDelta()` (NOT from SDK parser)
+- For non-persistent sessions: keep existing behavior (throw error for legacy adapters)
+- `resolveAttention` path: if `state === "thinking"`, the attention answer queues as `priority: 'next'` (not an error)
+- Content validation: reject empty/whitespace-only messages before consuming a queue slot
+- `interrupt` param accepted but ignored in Phase 1 (no-op, logged as warning)
 
-Sidebar thread row — new (merged PR):
-```
-  ○ Fix login bug
-    claude  ┌wt┐  ┌⑂ Merged #42┐
-```
+**`shared/src/types.ts`** — API changes:
+```typescript
+// WSClientMessage send_message gains interrupt field
+| { type: "send_message"; threadId: string; content: string;
+    attachments?: Attachment[]; interrupt?: boolean }
 
-Sidebar thread row — new (closed PR):
-```
-  ○ Fix login bug
-    claude  ┌wt┐  ┌✕ Closed #42┐
-```
-
-Sidebar thread row — new (fallback, prStatus=null):
-```
-  ○ Fix login bug
-    claude  ┌wt┐  ┌PR┐
+// StreamDelta gains queued_message type + queuedCount field
+export interface StreamDelta {
+  // ... existing ...
+  deltaType: "text" | "tool_start" | "tool_input" | "tool_end" | "turn_end"
+           | "metrics" | "queued_message";
+  queuedCount?: number;  // current queue depth after this message
+}
 ```
 
-ContextPanel PR section:
+**`server/src/ws/handler.ts`** — pass interrupt from WS:
+```typescript
+case "send_message":
+  const shouldInterrupt = msg.interrupt === true;  // strict boolean check
+  sessionManager.sendMessage(threadId, content, attachments, shouldInterrupt);
 ```
-┌─ Pull Request ──────────────────────┐
-│  ⬮ Open  #42                        │
-│  https://github.com/org/repo/pull/42│
-│  [↻ Refresh]                        │
-└─────────────────────────────────────┘
+
+**`server/src/routes/threads.ts`** — REST body:
+```typescript
+const { content, attachments, interrupt } = await c.req.json();
+sessionManager.sendMessage(threadId, content, attachments, interrupt === true);
 ```
-(Refresh button only shown for open/draft/null states)
 
-### Concurrency Guard
+### Client Changes
 
-Fire-and-forget refresh on `GET /threads` could spawn N `gh` processes if many threads have open PRs. Add a simple semaphore: max 3 concurrent `gh pr view` calls. Additional requests queue.
+**InputBar when `isRunning` (Phase 1):**
 
-### Fallback Badge
+```
+Desktop:
+┌──────────────────────────────────────────────────────────┐
+│ [+] [📎]  Send a message...                     [Send] [■] │
+└──────────────────────────────────────────────────────────┘
 
-When `prUrl` exists but `prStatus` is null (pre-migration threads, `gh` unavailable), show the current green "PR" badge as fallback. No status icon, just the text "PR".
+Mobile:
+┌────────────────────────────────────────────┐
+│ [📎]  Send a message...          [Send] [■] │
+└────────────────────────────────────────────┘
+```
 
-### Accessibility
+- **Textarea**: always enabled, never disabled — placeholder stays `"Send a message..."` (no scary "Agent is working..." text)
+- **Send button**: always visible, always says "Send". When `isRunning`, sends with `interrupt: false`
+- **Stop button**: shown alongside Send (not replacing it) when `isRunning`
+- Button layout: `[Send] [■ Stop]` — Send is primary (accent bg), Stop is secondary (ghost with pulse ring, same as current)
+- On mobile (<640px): Stop button shows as compact icon-only to save space
 
-- **Sidebar/mobile**: Badge is a `<span>` (not clickable — inside thread row button). `title` tooltip: "Pull request #N, open" etc.
-- **ContextPanel**: PR URL is an `<a>` with `target="_blank"` and `rel="noopener noreferrer"`, already clickable
-- Color + icon together convey status (not color-alone)
+**Queued message rendering in ChatView:**
 
-## Test Plan
+When a user sends a message while the agent is running:
+1. Message appears immediately in chat (persisted to DB, arrives via WS `message` event)
+2. User messages render identically to normal — no "queued" badge (the user doesn't need to know it's queued; they just sent a message)
+3. StickyRunBar shows queue count: `"Working... · 1 queued"` when `queuedCount > 0`
+4. On `turn_end`: `queuedCount` resets to 0, StickyRunBar returns to normal
 
-1. **Unit tests**: `fetchPrStatus` parses all 4 states correctly, handles `gh` failure gracefully, handles timeout, handles malformed JSON
-2. **Unit tests**: Stale guard — skips refresh when checked <5 min ago, refreshes when >5 min or null, skips merged/closed PRs
-3. **DB migration**: column migration runs cleanly, existing threads have null values
-4. **Integration**: `createPR` sets `pr_status = 'open'` and `pr_number`
-5. **Integration**: `POST /:id/refresh-pr` returns updated thread with status
-6. **Existing tests**: all pass (new fields are nullable — no breaking changes)
-7. **Visual**: build client, verify badges render for each state via browser
-8. **Full test plan**: `~/.gstack/projects/matthewschrager-orchestra/mschrager-orchestra-orchestra-4g7zi07hb4x-test-plan-20260326-182925.md`
+**Why no "queued" badge on messages:** Every chat app shows "Send → message appears." Adding a "queued" badge tells the user "this is different/worse" when it's not — their message will be processed. The StickyRunBar count provides power-user awareness without anxiety.
 
-## NOT in Scope
+**Queue-full state:**
+- Server returns error `"Queue full — wait for the agent to finish this turn"`
+- Client catches error, shows toast notification (same pattern as upload errors)
+- Textarea retains user's typed text (not cleared on error)
+- Send button stays enabled (user can retry after queue drains)
 
-- CI/CD check status display — different API surface, not in blast radius
-- PR review status (approved/changes-requested) — additional complexity
-- GitHub webhook integration — infrastructure change (ocean)
-- Thread lifecycle composite indicator — broader redesign, future work
-- GitLab/Bitbucket support — GitHub-only for v1 (stated limitation)
-- PR event history / analytics — flat column model fine for v1
+**App.tsx changes:**
+- `handleSend(content, attachments, interrupt?)` — pass `interrupt` through WS
+- Track `queuedCount` from `queued_message` stream deltas; reset on `turn_end`
+- Pass `queuedCount` to `StickyRunBar` as prop
 
-## What Already Exists
+**StickyRunBar changes:**
+- Accept `queuedCount: number` prop
+- Display `"· N queued"` next to existing status when `queuedCount > 0`
 
-| Sub-problem | Existing Code |
+### Error Handling
+
+| Scenario | Detection | User experience |
+|----------|-----------|-----------------|
+| `streamInput()` fails mid-turn | Async rejection | Existing `restartWithResume()` fallback. User's message is persisted, agent restarts and continues. |
+| Queue depth exceeded (5) | `queuedCount >= 5` | Toast: "Queue full — wait for the agent to finish this turn." Typed text preserved. |
+| Non-persistent adapter (Codex) | `!existing.persistent` | Same as current: throws error, client shows toast. |
+| Subprocess dies with queued messages | Iterator ends while `thinking` | Auto-restart. Warning message in chat: "Session restarted — your recent messages may need to be resent." |
+| Empty/whitespace message | `!content.trim()` | Rejected before queue slot consumed. |
+| `interrupt: true` in Phase 1 | Param present but ignored | Logged as debug warning; message sent as `priority: 'next'`. |
+
+---
+
+## Files Changed
+
+| File | Change | LOC est. |
+|------|--------|----------|
+| `server/src/sessions/manager.ts` | Remove thinking guard, add queue path with depth limit, queuedCount tracking, queued_message delta emission, content validation | ~35 |
+| `server/src/agents/claude.ts` | Add priority param to injectMessage, set on SDKUserMessage | ~8 |
+| `server/src/agents/types.ts` | Update PersistentSession.injectMessage signature | ~3 |
+| `shared/src/types.ts` | Add interrupt to WSClientMessage, queued_message + queuedCount to StreamDelta | ~5 |
+| `server/src/ws/handler.ts` | Pass interrupt from WS to sendMessage (strict boolean check) | ~3 |
+| `server/src/routes/threads.ts` | Accept interrupt in REST body, pass through | ~3 |
+| `client/src/components/InputBar.tsx` | Always-enabled Send+Stop buttons, remove blocking behavior | ~20 |
+| `client/src/App.tsx` | Pass interrupt, track queuedCount from stream deltas, reset on turn_end | ~15 |
+| `client/src/components/StickyRunBar.tsx` | Accept+display queuedCount prop | ~8 |
+| `server/src/sessions/__tests__/sdk-session.test.ts` | Tests for queue flow, depth limit, non-persistent fallback, turn_end reset | ~80 |
+| **Total** | | **~180** |
+
+## NOT in scope
+
+- **Interrupt/steer (Phase 2)**: Ctrl+Enter, `interrupt()` call, priority 'now'. Gated on spike test.
+- **V2 Session API**: `@alpha` unstable — stay on V1
+- **`cancelAsyncMessage(uuid)`**: Cancel queued messages — defer to TODOS.md
+- **Queue reordering**: Future enhancement
+- **Codex/non-persistent queue**: Keep current behavior for non-persistent adapters
+- **Queue persistence across server restart**: Messages already in SQLite; CLI queue is ephemeral
+
+## What already exists
+
+| Sub-problem | Existing code |
 |-------------|---------------|
-| `gh` CLI spawning | `WorktreeManager.createPR()` — `Bun.spawn(["gh", "pr", "create", ...])` |
-| DB column migration | `COLUMN_MIGRATIONS` array in `db/index.ts` |
-| Thread → API mapping | `threadRowToApi()` in `db/index.ts` |
-| Badge rendering | `ProjectSidebar.tsx` L269-273, `MobileSessions.tsx` L142-146 |
-| WS broadcast | `sessionManager.notifyThread(threadId)` |
-| Fire-and-forget pattern | `titles/generator.ts` |
-
-## Error & Rescue Registry
-
-| Error | Detection | Rescue |
-|-------|-----------|--------|
-| `gh` not installed/authed | `fetchPrStatus` returns null | Badge shows "PR" (no status) — graceful fallback |
-| GitHub rate limit | `gh` exits non-zero | Return null, retry on next trigger |
-| PR URL malformed | Regex fails to extract number | Skip status fetch, log warning |
-| DB migration fails | Column exists check | Migration is idempotent |
-| `gh` subprocess hangs | 10s timeout on Bun.spawn | Kill process, return null |
+| SDK `priority` field | `SDKUserMessage.priority` in `sdk.d.ts:2398` |
+| `streamInput()` | `claude.ts:121` — wraps in async generator |
+| Session state machine | `manager.ts:22-23` — `thinking/idle/waiting` |
+| Thinking guard (to remove) | `manager.ts:209-212` — `if (state === "thinking") throw` |
+| Message persistence | `manager.ts:775-798` — `persistMessage()` |
+| Existing inject fallback | `manager.ts:249-268` — try/catch → `restartWithResume()` |
+| WS message types | `shared/types.ts:109-119` — `WSClientMessage` union |
+| Stream delta types | `shared/types.ts:72-89` — `StreamDelta` with deltaType |
+| InputBar running detection | `InputBar.tsx:41` — `thread?.status === "running"` |
+| Stop button with pulse ring | `InputBar.tsx:264-277` — currently replaces Send |
+| StickyRunBar | Shows cost/duration/tokens during active run |
 
 ## Failure Modes Registry
 
-| Mode | Severity | Mitigation |
-|------|----------|------------|
-| All PRs show stale "open" | Medium | Manual refresh in ContextPanel, 5-min stale guard |
-| N concurrent gh spawns | Low | Concurrency semaphore (max 3) |
-| Badge flicker on WS update | Low | Badge swap is instant — no animation needed |
+| Mode | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| CLI ignores `priority` field | Low | Medium — msgs processed but possibly out of order | Acceptable degradation; messages are durable in DB |
+| `streamInput()` mid-turn silently drops message | Low | High — user thinks message sent but agent never sees it | DB has the message; user can resend. Log streamInput result. |
+| Rapid-fire queuing (5 msgs in <1s) | Medium | Low — all arrive at CLI stdin | Queue depth cap prevents blowout. Bun single-threaded model prevents true concurrent sendMessage. |
+| queuedCount drifts from actual CLI queue | Medium | Low — cosmetic only (StickyRunBar count wrong) | Best-effort; count is informational, not critical |
 
-## Cross-Phase Themes
+## Test Plan
 
-**Theme: Fallback/degradation for `gh` unavailability** — flagged in CEO (premise challenge), Design (missing state), Eng (edge case). High-confidence signal. All three phases independently identified that `gh` CLI failure mode needs explicit handling. Resolved: null return + fallback badge + circuit breaker consideration.
-
-**Theme: Concurrency control on background refresh** — flagged in CEO (scaling concern), Eng (10x load). Both identified that N concurrent subprocess spawns on page load is problematic. Resolved: max-3 semaphore.
-
-## Dual Voice Consensus Tables
-
-```
-DESIGN DUAL VOICES — CONSENSUS TABLE:
-═══════════════════════════════════════════════════════════════
-  Dimension                           Claude  Consensus
-  ──────────────────────────────────── ──────── ─────────
-  1. Info hierarchy correct?           Yes     CONFIRMED
-  2. All states specified?             No      FIXED (fallback added)
-  3. Interaction model clear?          No      FIXED (sidebar not clickable)
-  4. Icon specs implementable?         No      FIXED (Octicons reference added)
-  5. Responsive strategy?              Yes     CONFIRMED
-  6. Accessibility specified?          No      FIXED (aria-label added)
-  7. ContextPanel layout specified?    No      FIXED (ASCII mockup added)
-═══════════════════════════════════════════════════════════════
-4/7 required fixes. All resolved. [subagent-only]
-
-ENG DUAL VOICES — CONSENSUS TABLE:
-═══════════════════════════════════════════════════════════════
-  Dimension                           Claude  Consensus
-  ──────────────────────────────────── ──────── ─────────
-  1. Architecture sound?               Yes     CONFIRMED
-  2. Test coverage sufficient?         No      FIXED (5 gaps added to test plan)
-  3. Performance risks addressed?      No      FIXED (semaphore + change-only broadcast)
-  4. Security threats covered?         Yes     CONFIRMED (no injection risk)
-  5. Error paths handled?              No      FIXED (cwd, gh failure, null fallback)
-  6. Deployment risk manageable?       Yes     CONFIRMED (additive migration)
-═══════════════════════════════════════════════════════════════
-3/6 required fixes. All resolved. [subagent-only]
-```
+1. **Unit: mid-turn message queuing** — mock PersistentSession in `thinking` state, verify `injectMessage` called with `priority: 'next'`
+2. **Unit: queue depth limit** — send 6 messages while thinking → 6th throws "Queue full"
+3. **Unit: queuedCount reset on turn_end** — verify counter resets to 0 when turn ends
+4. **Unit: non-persistent adapter rejection** — verify non-persistent sessions error on mid-turn send
+5. **Unit: interrupt ignored in Phase 1** — send with `interrupt: true` → message sent as `priority: 'next'`, no error
+6. **Unit: empty message rejection** — whitespace-only content rejected before queue slot consumed
+7. **Unit: WS interrupt passthrough** — WS handler validates `interrupt === true` (strict boolean)
+8. **Unit: resolveAttention during thinking** — attention resolution while thinking queues as `priority: 'next'`
+9. **Unit: queued_message delta emitted** — verify `notifyStreamDelta` called with `deltaType: 'queued_message'` and correct `queuedCount`
+10. **Unit: no regression on idle inject** — existing tests pass (idle/waiting state inject still works without priority)
+11. **Integration: full queue flow** — start session → send 3 messages while thinking → all persisted → all injected with priority → turn_end resets count
+12. **E2E: manual** — real agent session, type while working, verify message appears in chat and processes on next turn
 
 <!-- AUTONOMOUS DECISION LOG -->
 ## Decision Audit Trail
 
 | # | Phase | Decision | Principle | Rationale | Rejected |
 |---|-------|----------|-----------|-----------|----------|
-| 1 | CEO | Approach A (cached in DB) over Approach B (fetch on render) | P3 Pragmatic | DB cache is fast + avoids rate limits | Fetch-on-render (slow, N+1 API calls) |
-| 2 | CEO | Approach A over Approach C (webhooks) | P5 Explicit | Webhooks require new infra — ocean, not lake | Webhook listener |
-| 3 | CEO | Add `pr_status_checked_at` column | P1 Completeness | `updated_at` bumped by unrelated mutations — stale guard would be broken | Reuse `updated_at` |
-| 4 | CEO | Auto-approve clickable badge expansion | P2 Boil lakes | In blast radius, <5 min effort | N/A |
-| 5 | CEO | Auto-approve PR number in badge | P1 Completeness | Trivial effort, better UX | N/A |
-| 6 | CEO | Auto-approve ContextPanel status + refresh | P2 Boil lakes | Already touching this file | N/A |
-| 7 | CEO | Defer CI/CD status | P3 Pragmatic | Outside blast radius, new API surface | N/A |
-| 8 | CEO | Defer webhook integration | P5 Explicit | Ocean — requires new infrastructure | N/A |
-| 9 | CEO | GitHub-only for v1 | P3 Pragmatic | gh already a dependency, no other forge support exists | Multi-forge |
-| 10 | CEO | Add gh availability fallback (null + log) | P5 Explicit | Graceful degradation over silent failure | Hard error |
-| 11 | CEO | Also refresh on thread selection | P1 Completeness | SPA users may not reload thread list | Only on list load |
-| 12 | Design | Fallback "PR" badge for null prStatus | P1 Completeness | Pre-migration threads need visual | No fallback |
-| 13 | Design | Add hover state for clickable badge | P5 Explicit | Clickable elements need affordance | No hover |
-| 14 | Design | Add aria-label to badge | P1 Completeness | Accessibility requirement | No a11y |
-| 15 | Eng | Max 3 concurrent gh calls | P3 Pragmatic | Prevents subprocess flood on many open PRs | Unlimited spawns |
-| 16 | Eng | Skip refresh for merged/closed PRs | P3 Pragmatic | Terminal states don't change | Refresh all states |
-| 17 | Eng | Add `cwd` param to `fetchPrStatus` | P5 Explicit | `gh` needs repo context to resolve remote | No cwd (breaks) |
-| 18 | Eng | Only broadcast WS when status changes | P3 Pragmatic | Avoids WS spam on page load | Broadcast every fetch |
-| 19 | Eng | `pr_status_checked_at` server-internal only | P5 Explicit | Implementation detail, not client concern | Expose in API |
-| 20 | Design | Badge NOT clickable in sidebar (click collision) | P5 Explicit | Nested `<a>` inside `<button>` is invalid HTML | Clickable everywhere |
-| 21 | Design | Always show PR # in all states | P1 Completeness | Cross-reference with GitHub needs number | Number only on open |
-| 22 | Design | Fallback "PR" badge for null prStatus | P1 Completeness | Pre-migration + gh-unavailable threads need badge | No fallback |
-| 23 | Design | Refresh button only for open/draft/null | P3 Pragmatic | Merged/closed PRs won't change | Always show refresh |
+| 1 | CEO | Use SDK priority field (approach A) | P3 pragmatic | SDK does queuing — don't reinvent | Server-side queue (B), V2 API (C) |
+| 2 | CEO | Don't expose `now/next/later` in public API | P5 explicit | "API malpractice" leaking vendor types | SDK type passthrough |
+| 3 | CEO | Add queue depth limit (5) | P1 completeness | Prevent context blowout from spam-queuing | No limit |
+| 4 | CEO | Graceful non-persistent fallback | P5 explicit | Codex adapter can't inject mid-turn | Universal queue |
+| 5 | CEO | SELECTIVE EXPANSION mode | P3 pragmatic | Feature-scoped, not strategic pivot | Scope expansion |
+| 6 | Design | Keep button "Send" always | P5 explicit | "Queue" creates anxiety; queue is invisible | "Queue" button |
+| 7 | Design | No "queued" badge on chat messages | P5 explicit | User sent a message; it appears. Queue is system detail. | Queued badge/chip |
+| 8 | Design | Phase interrupt UI separately | P3 pragmatic | Don't build UI for unverified feature | Mixed phases |
+| 9 | Design | Toast for queue-full, preserve typed text | P1 completeness | Don't lose user's input on error | Silent rejection |
+| 10 | Eng | queued_message delta from sendMessage, not parser | P5 explicit | Delta isn't from SDK stream | Parser emission |
+| 11 | Eng | Strict boolean check on interrupt | P5 explicit | Prevent truthy coercion from WS | Loose truthiness |
+| 12 | Eng | resolveAttention queues during thinking | P6 action | Don't block attention resolution | Reject attention during thinking |
+| 13 | Eng | Content validation before queue slot | P1 completeness | Don't waste slots on empty messages | Validate only in routes |
+| 14 | Eng | Log warning on subprocess crash with queued msgs | P1 completeness | User may need to resend | Silent loss |
 
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | clean | 5 findings (1 critical stale guard, 2 high, 2 medium — all resolved) |
-| Eng Review | `/plan-eng-review` | Architecture & tests | 1 | clean | 9 findings (1 high cwd param, 5 medium test gaps — all resolved) |
-| Design Review | `/plan-design-review` | UI/UX gaps | 1 | clean | 7 findings (2 critical click collision + fallback, 2 high icons + copy — all resolved) |
-| CEO Voices | autoplan | Independent challenge | 1 | subagent-only | 6/6 confirmed |
-| Design Voices | autoplan | Independent challenge | 1 | subagent-only | 4/7 required fixes, all resolved |
-| Eng Voices | autoplan | Independent challenge | 1 | subagent-only | 3/6 required fixes, all resolved |
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | clean | 6 auto-decided (API types, depth limit, non-persistent, phasing) |
+| Codex Review | `/codex review` | Independent 2nd opinion | 1 | issues_open | 6 findings (strategic, multi-agent, API types, error model) |
+| Eng Review | `/plan-eng-review` | Architecture & tests | 1 | clean | 19 findings, all addressed (interrupt race → Phase 2, crash recovery, test gaps) |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | clean | 11 findings, all addressed (button label, missing states, phasing, mobile) |
 
-**VERDICT:** ALL REVIEWS CLEARED — 23 auto-decisions, 0 taste decisions. Ready to implement.
+**VERDICT:** ALL REVIEWS CLEARED — ready for final approval

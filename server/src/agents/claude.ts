@@ -127,12 +127,13 @@ export class ClaudeAdapter implements AgentAdapter {
       sessionId: opts.resumeSessionId,
       close: () => q.close(),
       resetTurnState: () => parser.resetTurnState(),
-      async injectMessage(text: string, sessionId: string): Promise<void> {
+      async injectMessage(text: string, sessionId: string, priority?: "now" | "next"): Promise<void> {
         const userMsg: SDKUserMessage = {
           type: "user",
           message: { role: "user", content: text },
           parent_tool_use_id: null,
           session_id: sessionId,
+          priority: priority ?? "next",
         };
         // streamInput expects AsyncIterable — wrap in single-element generator
         await q.streamInput(
