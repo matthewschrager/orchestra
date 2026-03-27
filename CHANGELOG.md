@@ -2,6 +2,15 @@
 
 ## [0.1.25.0] - 2026-03-26
 
+### Changed
+
+- **ExitPlanMode user approval** — replaced silent auto-approval with a "confirmation" attention item so the user can review and approve/reject the agent's plan before it proceeds with implementation
+- **Stream death recovery** — when the SDK stream dies with ExitPlanMode unresolved, creates an attention item instead of showing a generic "session ended unexpectedly" error
+
+### Added
+
+- **Integration tests** — two new SessionManager tests covering ExitPlanMode attention item creation at turn boundary and on stream death
+
 ### Fixed
 
 - **ASCII art rendering** — agent output containing box-drawing characters (diagrams with `┌─┐│└┘├┤┬┴┼`) now renders in monospace code blocks instead of proportional-font paragraphs; preprocesses markdown to wrap structural box-drawing lines in `text` code fences; excludes horizontal-only separator characters (`─═━`) that Claude uses as decorative dividers
