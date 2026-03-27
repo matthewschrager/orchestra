@@ -42,6 +42,8 @@ export interface Thread {
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Timestamp of the last user-initiated message (used for sidebar sort order) */
+  lastInteractedAt: string;
 }
 
 // ── Message ─────────────────────────────────────────────

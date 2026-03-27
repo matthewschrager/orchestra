@@ -7,6 +7,7 @@ import {
   getSetting,
   insertMessage,
   updateThread,
+  touchThreadInteraction,
   createAttentionItem,
   resolveAttentionItem,
   orphanAttentionItems,
@@ -108,8 +109,8 @@ export class SessionManager {
     // Insert thread record
     this.db
       .query(
-        `INSERT INTO threads (id, title, agent, repo_path, project_id, worktree, branch, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'running')`,
+        `INSERT INTO threads (id, title, agent, repo_path, project_id, worktree, branch, status, last_interacted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'running', datetime('now'))`,
       )
       .run(threadId, title, opts.agent, opts.repoPath, opts.projectId, worktree, branch);
 
@@ -196,7 +197,7 @@ export class SessionManager {
     }
   }
 
-  sendMessage(threadId: string, content: string, attachments?: Attachment[]): void {
+  sendMessage(threadId: string, content: string, attachments?: Attachment[], opts?: { internal?: boolean }): void {
     if (DEBUG) console.log(`[session] sendMessage thread=${threadId} content=${content.slice(0, 60)}`);
     const thread = getThread(this.db, threadId) as ThreadRow | null;
     if (!thread) throw new Error(`Thread ${threadId} not found`);
@@ -227,6 +228,11 @@ export class SessionManager {
       content,
       metadata: validAttachments?.length ? { attachments: validAttachments } : undefined,
     });
+
+    // Bump interaction timestamp for sidebar sort order (skip for internal/synthetic messages)
+    if (!opts?.internal) {
+      touchThreadInteraction(this.db, threadId);
+    }
 
     // Build prompt with attachment references
     const agentPrompt = this.buildPromptWithAttachments(content, validAttachments);

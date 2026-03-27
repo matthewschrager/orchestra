@@ -88,7 +88,7 @@ export function ProjectSidebar({
   const threadsByProject = (projectId: string) =>
     threads
       .filter((t) => t.projectId === projectId)
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      .sort((a, b) => new Date(b.lastInteractedAt).getTime() - new Date(a.lastInteractedAt).getTime());
 
   return (
     <>

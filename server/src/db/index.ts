@@ -100,6 +100,14 @@ const COLUMN_MIGRATIONS = [
   },
   {
     table: "threads",
+    column: "last_interacted_at",
+    // SQLite rejects expression defaults (datetime('now')) in ALTER TABLE on non-empty tables.
+    // Use empty string as placeholder, then backfill from created_at to preserve relative order.
+    sql: `ALTER TABLE threads ADD COLUMN last_interacted_at TEXT NOT NULL DEFAULT ''`,
+    postMigrate: `UPDATE threads SET last_interacted_at = created_at`,
+  },
+  {
+    table: "threads",
     column: "pr_status",
     sql: `ALTER TABLE threads ADD COLUMN pr_status TEXT`,
   },
@@ -134,10 +142,11 @@ export function createDb(dbPath?: string): Database {
   }
 
   // Run column migrations (safe if column already exists)
-  for (const { table, column, sql } of COLUMN_MIGRATIONS) {
+  for (const { table, column, sql, postMigrate } of COLUMN_MIGRATIONS) {
     const cols = db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === column)) {
       db.exec(sql);
+      if (postMigrate) db.exec(postMigrate);
     }
   }
 
@@ -265,6 +274,11 @@ export function touchProjectUpdatedAt(db: DB, projectId: string): void {
   db.query("UPDATE projects SET updated_at = datetime('now') WHERE id = ?").run(projectId);
 }
 
+/** Update last_interacted_at — call only when the user sends a message */
+export function touchThreadInteraction(db: DB, threadId: string): void {
+  db.query("UPDATE threads SET last_interacted_at = datetime('now') WHERE id = ?").run(threadId);
+}
+
 export function getProjectThreadCounts(
   db: DB,
   projectId: string,
@@ -296,7 +310,7 @@ export function getThread(db: DB, id: string) {
 
 export function listThreads(db: DB) {
   return db
-    .query("SELECT * FROM threads WHERE archived_at IS NULL ORDER BY updated_at DESC")
+    .query("SELECT * FROM threads WHERE archived_at IS NULL ORDER BY last_interacted_at DESC")
     .all() as ThreadRow[];
 }
 
@@ -495,6 +509,7 @@ export interface ThreadRow {
   archived_at: string | null;
   created_at: string;
   updated_at: string;
+  last_interacted_at: string;
 }
 
 export interface MessageRow {
@@ -530,6 +545,7 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    lastInteractedAt: row.last_interacted_at,
   };
   // Note: pr_status_checked_at is intentionally omitted — server-internal only
 }
