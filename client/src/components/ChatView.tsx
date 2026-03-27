@@ -66,9 +66,12 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
   }, [messages]);
 
   // Auto-scroll on new messages or streaming content
+  // Uses scrollTo on the container (not scrollIntoView) to prevent scrolling
+  // ancestor containers / viewport — which causes page jumps on mobile when
+  // ChatView is mounted behind an overlay (e.g., the "New Session" tab).
   useEffect(() => {
-    if (autoScroll) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (autoScroll && containerRef.current) {
+      containerRef.current.scrollTo({ top: containerRef.current.scrollHeight, behavior: "smooth" });
     }
   }, [messages.length, streamingText, streamingTool, streamingToolInput, autoScroll]);
 
@@ -102,7 +105,9 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
 
   const scrollToBottom = useCallback(() => {
     isProgrammaticScroll.current = true;
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (containerRef.current) {
+      containerRef.current.scrollTo({ top: containerRef.current.scrollHeight, behavior: "smooth" });
+    }
     setAutoScroll(true);
     // Re-enable scroll detection after animation settles
     setTimeout(() => { isProgrammaticScroll.current = false; }, 500);
