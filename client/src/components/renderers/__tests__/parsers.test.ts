@@ -297,6 +297,7 @@ describe("getBashPreview", () => {
     expect(preview.text).toBe("one\ntwo");
     expect(preview.totalLines).toBe(2);
     expect(preview.hiddenLineCount).toBe(0);
+    expect(preview.truncatedLineCount).toBe(0);
   });
 
   test("truncates output to the requested number of lines", () => {
@@ -304,6 +305,23 @@ describe("getBashPreview", () => {
     expect(preview.text).toBe("1\n2\n3");
     expect(preview.totalLines).toBe(5);
     expect(preview.hiddenLineCount).toBe(2);
+    expect(preview.truncatedLineCount).toBe(0);
+  });
+
+  test("truncates very long single lines even when output fits within the line limit", () => {
+    const preview = getBashPreview("abcdefghijklmno", 4, 10);
+    expect(preview.text).toBe("abcdefghi…");
+    expect(preview.totalLines).toBe(1);
+    expect(preview.hiddenLineCount).toBe(0);
+    expect(preview.truncatedLineCount).toBe(1);
+  });
+
+  test("tracks hidden lines and truncated long lines together", () => {
+    const preview = getBashPreview("1\nabcdefghijklmno\n3\n4\n5", 4, 10);
+    expect(preview.text).toBe("1\nabcdefghi…\n3\n4");
+    expect(preview.totalLines).toBe(5);
+    expect(preview.hiddenLineCount).toBe(1);
+    expect(preview.truncatedLineCount).toBe(1);
   });
 });
 

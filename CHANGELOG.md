@@ -21,6 +21,8 @@
 - **Tagged Tailscale requests now fail closed** — when Tailscale Serve omits user identity headers, Orchestra requires the bearer token instead of implicitly trusting loopback traffic
 - **IPv6 Host parsing no longer corrupts auth decisions** — bracketed hosts like `[::1]:4850` are normalized correctly before Host validation and request classification
 - **Auth hardening is covered by targeted regressions** — added tests for first-request Tailscale bootstrap, tagged-device fallback, LAN origin allowlisting, and IPv6 Host parsing
+- **Long single-line bash previews no longer explode vertically** — bash tool previews now truncate pathological one-line output in collapsed mode, offer an expand affordance for truncated single lines, and keep expanded output on one visual row via horizontal scrolling instead of vertical wrapping
+- **Bash long-line truncation is now regression-tested** — renderer parser coverage now locks in single-line truncation and mixed hidden-line-plus-truncated-line preview behavior
 
 ## [0.1.30.0] - 2026-03-27
 
