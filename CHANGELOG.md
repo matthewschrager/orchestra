@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.26.1] - 2026-03-26
+
+### Fixed
+
+- **Logo not rendering** — OrchestraLogo SVG was invisible because `color="var(--accent)"` referenced a non-existent CSS variable; corrected to `var(--color-accent)` matching the Tailwind v4 `@theme` definition in all three usage sites (header, welcome state, auth gate)
+
 ## [0.1.26.0] - 2026-03-26
 
 ### Added
