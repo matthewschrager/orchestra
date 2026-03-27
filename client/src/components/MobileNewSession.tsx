@@ -20,13 +20,16 @@ export function MobileNewSession({
 }: MobileNewSessionProps) {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(activeProjectId);
   const [prompt, setPrompt] = useState("");
-  const [isolate, setIsolate] = useState(false);
+  const [isolate, setIsolate] = useState(true);
   const [worktreeName, setWorktreeName] = useState(() => {
     const project = projects.find((p) => p.id === activeProjectId);
     const suffix = Math.random().toString(36).slice(2, 13);
     return `orchestra/${project?.name ?? "project"}-${suffix}`;
   });
-  const defaultAgent = agents.find((a) => a.detected)?.name ?? "claude";
+  const detectedAgents = agents.filter((a) => a.detected);
+  const [selectedAgent, setSelectedAgent] = useState(
+    () => detectedAgents[0]?.name ?? "claude"
+  );
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
 
   if (projects.length === 0) {
@@ -43,7 +46,7 @@ export function MobileNewSession({
 
   const handleSubmit = () => {
     if (!prompt.trim() || !selectedProjectId) return;
-    onNewThread(defaultAgent, prompt.trim(), isolate, selectedProjectId, isolate ? worktreeName : undefined);
+    onNewThread(selectedAgent, prompt.trim(), isolate, selectedProjectId, isolate ? worktreeName : undefined);
     setPrompt("");
   };
 
@@ -83,6 +86,26 @@ export function MobileNewSession({
             </button>
           ))}
         </div>
+
+        {/* Agent selector */}
+        {detectedAgents.length > 1 && (
+          <>
+            <label className="text-xs font-medium text-content-3 uppercase tracking-wider mb-1.5 block">
+              Agent
+            </label>
+            <select
+              value={selectedAgent}
+              onChange={(e) => setSelectedAgent(e.target.value)}
+              className="w-full text-sm bg-surface-1 border border-edge-1 rounded-lg px-3 py-2.5 text-content-2 mb-4 min-h-[44px]"
+            >
+              {detectedAgents.map((a) => (
+                <option key={a.name} value={a.name}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
       </div>
 
       {/* Prompt area */}

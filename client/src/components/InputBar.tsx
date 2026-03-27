@@ -29,7 +29,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
   const [agent, setAgent] = useState(agents.find((a) => a.detected)?.name ?? "claude");
-  const [isolate, setIsolate] = useState(false);
+  const [isolate, setIsolate] = useState(true);
   const [worktreeName, setWorktreeName] = useState(() => generateDefaultWorktreeName(activeProjectName));
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
