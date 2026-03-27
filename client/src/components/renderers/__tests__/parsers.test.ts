@@ -613,4 +613,36 @@ describe("parseTodos", () => {
     expect(result).not.toBeNull();
     expect(result!.items[0].status).toBe("pending");
   });
+
+  test("parses Claude stringified todos payload with title fields", () => {
+    const input = JSON.stringify({
+      todos: JSON.stringify([
+        { id: "1", title: "First task", status: "in_progress" },
+        { id: "2", title: "Second task", status: "pending" },
+      ]),
+    });
+    const result = parseTodos(input);
+    expect(result).not.toBeNull();
+    expect(result!.total).toBe(2);
+    expect(result!.items[0]).toMatchObject({
+      content: "First task",
+      activeForm: "First task",
+      status: "in_progress",
+    });
+    expect(result!.items[1].content).toBe("Second task");
+  });
+
+  test("parses bare array todo payloads", () => {
+    const input = JSON.stringify([
+      { title: "Standalone task", status: "completed" },
+    ]);
+    const result = parseTodos(input);
+    expect(result).not.toBeNull();
+    expect(result!.completed).toBe(1);
+    expect(result!.items[0]).toMatchObject({
+      content: "Standalone task",
+      activeForm: "Standalone task",
+      status: "completed",
+    });
+  });
 });
