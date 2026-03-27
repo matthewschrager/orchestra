@@ -11,6 +11,10 @@
 
 - **Integration tests** — two new SessionManager tests covering ExitPlanMode attention item creation at turn boundary and on stream death
 
+### Fixed
+
+- **ASCII art rendering** — agent output containing box-drawing characters (diagrams with `┌─┐│└┘├┤┬┴┼`) now renders in monospace code blocks instead of proportional-font paragraphs; preprocesses markdown to wrap structural box-drawing lines in `text` code fences; excludes horizontal-only separator characters (`─═━`) that Claude uses as decorative dividers
+
 ## [0.1.24.0] - 2026-03-26
 
 ### Added
