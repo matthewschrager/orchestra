@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { SlashCommand } from "shared";
+import { canNavigateInputHistory, getNextInputHistoryState } from "../lib/inputHistory";
 
 /** Find the slash token at the given cursor position within text. */
 export function findSlashToken(value: string, cursorPos: number): { token: string; start: number; end: number } | null {
@@ -59,6 +60,7 @@ interface Props {
   onSubmit: () => void;
   onPaste?: (e: React.ClipboardEvent) => void;
   commands: SlashCommand[];
+  history?: string[];
   placeholder?: string;
   rows?: number;
 }
@@ -69,6 +71,7 @@ export function SlashCommandInput({
   onSubmit,
   onPaste,
   commands,
+  history = [],
   placeholder,
   rows = 2,
 }: Props) {
@@ -78,6 +81,7 @@ export function SlashCommandInput({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [cursorPos, setCursorPos] = useState(0);
   const [dismissed, setDismissed] = useState(false);
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
 
   // Find the slash token at the cursor position
   const slashToken = useMemo(() => findSlashToken(value, cursorPos), [value, cursorPos]);
@@ -109,6 +113,13 @@ export function SlashCommandInput({
     }
   }, [filteredCommands.length, selectedIndex]);
 
+  useEffect(() => {
+    if (historyIndex === null) return;
+    if (history[historyIndex] !== value) {
+      setHistoryIndex(null);
+    }
+  }, [history, historyIndex, value]);
+
   // Scroll selected item into view within the dropdown
   useEffect(() => {
     if (!showAutocomplete) return;
@@ -134,6 +145,24 @@ export function SlashCommandInput({
       }, 0);
     },
     [onChange, value, slashToken],
+  );
+
+  const applyHistoryValue = useCallback(
+    (nextValue: string) => {
+      const nextCursorPos = nextValue.length;
+      onChange(nextValue);
+      setCursorPos(nextCursorPos);
+      setSelectedIndex(0);
+      setDismissed(false);
+      setTimeout(() => {
+        const ta = textareaRef.current;
+        if (ta) {
+          ta.focus();
+          ta.setSelectionRange(nextCursorPos, nextCursorPos);
+        }
+      }, 0);
+    },
+    [onChange],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -163,6 +192,32 @@ export function SlashCommandInput({
       if (e.key === "Escape") {
         e.preventDefault();
         setDismissed(true);
+        return;
+      }
+    }
+
+    const hasHistoryModifiers = e.altKey || e.ctrlKey || e.metaKey || e.shiftKey;
+    const ta = textareaRef.current;
+    const selectionStart = ta?.selectionStart ?? cursorPos;
+    const selectionEnd = ta?.selectionEnd ?? cursorPos;
+    const canNavigateHistory = !hasHistoryModifiers && canNavigateInputHistory(value, selectionStart, selectionEnd, historyIndex);
+
+    if (e.key === "ArrowUp" && canNavigateHistory) {
+      const nextHistory = getNextInputHistoryState(history, historyIndex, "older");
+      if (nextHistory) {
+        e.preventDefault();
+        setHistoryIndex(nextHistory.index);
+        applyHistoryValue(nextHistory.value);
+        return;
+      }
+    }
+
+    if (e.key === "ArrowDown" && historyIndex !== null && canNavigateHistory) {
+      const nextHistory = getNextInputHistoryState(history, historyIndex, "newer");
+      if (nextHistory) {
+        e.preventDefault();
+        setHistoryIndex(nextHistory.index);
+        applyHistoryValue(nextHistory.value);
         return;
       }
     }
@@ -242,6 +297,7 @@ export function SlashCommandInput({
           value={value}
           onChange={(e) => {
             onChange(e.target.value);
+            setHistoryIndex(null);
             setCursorPos(e.target.selectionStart);
             setSelectedIndex(0);
             setDismissed(false);

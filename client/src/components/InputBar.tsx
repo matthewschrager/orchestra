@@ -11,6 +11,7 @@ interface Props {
   activeProjectId: string | null;
   activeProjectName: string | null;
   commands: SlashCommand[];
+  history?: string[];
   pendingQuestion?: boolean | null;
   onSend: (content: string, attachments?: Attachment[], interrupt?: boolean) => void;
   onNewThread: (agent: string, effortLevel: EffortLevel | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => void;
@@ -25,7 +26,7 @@ function generateDefaultWorktreeName(projectName: string | null): string {
   return `orchestra/${base}-${suffix}`;
 }
 
-export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, pendingQuestion, onSend, onNewThread, onStop }: Props) {
+export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, history, pendingQuestion, onSend, onNewThread, onStop }: Props) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
   const [agent, setAgent] = useState(agents.find((a) => a.detected)?.name ?? "claude");
@@ -258,6 +259,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
           onSubmit={handleSubmit}
           onPaste={handlePaste}
           commands={commands}
+          history={history}
           placeholder={
             mode === "new" || !thread
               ? "Describe what you want to build..."
