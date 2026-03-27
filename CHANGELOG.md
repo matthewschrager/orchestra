@@ -26,6 +26,7 @@
 
 ### Changed
 
+- **Codex full-access sandbox mode** — changed Codex SDK `sandboxMode` from `"workspace-write"` to `"danger-full-access"`, matching Claude's `bypassPermissions` behavior so Codex agents can operate without filesystem restrictions
 - **DOMPurify in MarkdownContent** — Shiki HTML output now sanitized before `dangerouslySetInnerHTML`, matching existing `ReadRenderer` pattern
 - **Shared origins helper** — `server/src/utils/origins.ts` centralizes allowed-origins logic across CORS, Origin validation, Host validation, and WS Origin check (DRY)
 - **TunnelManager initialization** — moved before CORS middleware registration so `tunnelManager.url` getter is available for origin checks
