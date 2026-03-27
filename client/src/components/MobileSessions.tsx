@@ -124,7 +124,11 @@ export function MobileSessions({
                       <span className="text-[10px] text-content-3">
                         {STATUS_LABEL[thread.status] || thread.status}
                       </span>
-                      <span className="text-[10px] px-1 py-0.5 rounded bg-surface-4 text-content-3 font-mono">
+                      <span className={`text-[10px] px-1 py-0.5 rounded font-mono ${
+                        thread.agent === "codex"
+                          ? "bg-cyan-900/40 text-cyan-300"
+                          : "bg-amber-900/40 text-amber-300"
+                      }`}>
                         {thread.agent}
                       </span>
                       {thread.worktree && (

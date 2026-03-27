@@ -22,7 +22,8 @@ orchestra/
 │       │   ├── manager.ts  Create, status, PR, cleanup
 │       │   └── pr-status.ts PR status fetching via gh CLI
 │       ├── utils/          Shared utilities
-│       │   └── git.ts      Git validation + branch detection
+│       │   ├── git.ts      Git validation + branch detection
+│       │   └── origins.ts  Shared allowed-origins helper (CORS/Origin/Host/WS)
 │       ├── routes/         REST API routes
 │       │   ├── projects.ts Project CRUD
 │       │   ├── threads.ts  Thread CRUD + actions
@@ -89,6 +90,7 @@ cd server && bun run src/index.ts  # Production server
 
 - Agents use `@anthropic-ai/claude-agent-sdk` (pinned v0.2.81) — SDK manages subprocess lifecycle internally
 - **Persistent sessions**: Claude Code sessions use a long-lived `Query` object per thread — subprocess stays alive between turns, follow-ups injected via `streamInput()`. Eliminates MCP reconnection delay on follow-up messages. State machine: `thinking → idle/waiting → thinking`. Falls back to legacy `resume` path if subprocess crashes.
+- **Message queuing**: Users can send messages while the agent is working (state `"thinking"`). Messages are persisted immediately and injected into the CLI subprocess via `streamInput()` with `priority: 'next'` (SDK passthrough to CLI's internal queue). Queue depth limit: 5 messages per turn. `queuedCount` tracked on `ActiveSession`, reset on `turn_end`. `queued_message` stream delta emitted from `sendMessage()` (not parser). Non-persistent adapters (Codex) keep current blocking behavior. `interrupt` boolean accepted in WS/REST API but ignored in Phase 1 (no-op). InputBar always enabled — Send + Stop shown side-by-side during active runs. StickyRunBar shows "· N queued" when messages pending.
 - Legacy sessions (non-persistent adapters): `query()` with `resume` per turn
 - SDK options: `permissionMode: "bypassPermissions"`, `cwd` per-call for multi-project isolation
 - Multi-project: single server manages multiple registered git repos via `projects` table
@@ -96,6 +98,7 @@ cd server && bun run src/index.ts  # Production server
 - Real-time streaming via ephemeral WebSocket deltas (not persisted to DB)
 - Complete messages persisted to SQLite with WAL mode, seq-based replay on reconnect
 - Token auth enforced for non-localhost requests (and always when `--tunnel` is active)
+- Security hardening: CORS restricted to known origins via shared `getAllowedOrigins()` helper (`utils/origins.ts`); Origin header validation on mutations (CSRF); Host header validation with Tailscale support (DNS rebinding); WebSocket Origin check on upgrade (CORS doesn't protect WS); CSP + X-Frame-Options + nosniff + Referrer-Policy headers; filesystem browse restricted to `$HOME` with `realpathSync` + trailing-slash prefix collision fix; SQL column allowlists on `updateProject`/`updateThread`; per-client WS rate limiting (60/10s sliding window); attachment extension + MIME type control-char sanitization; SW targetUrl same-origin validation; DOMPurify on MarkdownContent Shiki output
 - Rich tool renderers parse stream-json tool data into visual components (diffs, terminal blocks, search results); special tools (AskUser, Agent, TodoWrite) registered in declarative `TOOL_RENDERERS` map
 - TodoWrite rendering: latest TodoWrite renders as prominent card with all tasks, per-task status (✓ completed/▸ running/○ queued), progress bar, ARIA roles; prior TodoWrites collapse to expandable summary lines; `parseTodos()` normalizes both Claude SDK `{todos}` and Codex `{items}` shapes; `latestTodos` hydrated from REST history with streaming race guard
 - Shiki syntax highlighting lazy-loaded via shared module-level singleton (`lib/shiki.ts`) with DOMPurify sanitization; ReadRenderer uses `codeToHtml`, DiffRenderer uses `codeToTokens` (per-line control for diff backgrounds)
@@ -105,7 +108,7 @@ cd server && bun run src/index.ts  # Production server
 - Context window indicator: token usage (input+output) vs model context window shown as color-coded progress bar; uses **per-request** tokens from `message_start` stream events (not cumulative `modelUsage` which inflates across turns); `Math.max` for contextWindow to prevent sub-agent regression; primary-model filtering via `parent_tool_use_id === null`
 - Model name display: extracted from SDK events (`system` init, `modelUsage` result keys); streamed via `modelName` field on `StreamDelta`/`TurnMetrics`; displayed in StickyRunBar with date-suffix stripping (`formatModelName`); no hard-coded model list
 - Attention queue: AskUserQuestion/permission tool_use events detected in SDK message stream, persisted to `attention_required` table, broadcast to ALL WS clients (cross-thread), resolvable via REST or WS with first-caller-wins race guard; `sendMessage()` orphans pending attention items (user is moving on — old questions become stale); turn_end handler defensively sets status to "waiting" when pending attention exists
-- ExitPlanMode user approval: SDK bug where `requiresUserInteraction()` short-circuits `bypassPermissions` causes ExitPlanMode to be denied in headless SDK mode. Workaround: detect ExitPlanMode tool_use in stream via `exitPlanMode` flag on `ParseResult`, then surface a "confirmation" attention item with "Approve plan" / "Reject plan" options so the user can review and decide. Also handles stream-died-before-turn-end case.
+- ExitPlanMode user approval: SDK bug where `requiresUserInteraction()` causes a Zod validation error in headless mode. Fix: ExitPlanMode is denied in `canUseTool` with `interrupt: true` (same flow as AskUserQuestion) — the parser creates a "confirmation" attention event with "Approve plan" / "Reject plan" options directly from the tool_use event. On approval, `resolveAttention` calls `setPermissionMode("bypassPermissions")` to exit plan mode at the CLI level before messaging the agent to proceed. Stream-death-with-pending-attention case handled by checking DB for pending items before marking error.
 - Session IDs persisted to `session_id` column on threads table (survives server restart)
 - Tunnel integration: `--tunnel` flag spawns cloudflared, captures URL, forces auth
 - Push notifications: VAPID keys auto-generated, Web Push dispatch on attention events; per-subscription `origin` column on `push_subscriptions` table enables per-sub `targetUrl` in push payloads for cross-origin notification deep-links

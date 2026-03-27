@@ -28,6 +28,7 @@ import { TailscaleDetector } from "./tailscale/detector";
 import { createTailscaleRoutes } from "./routes/tailscale";
 import { TerminalManager } from "./terminal/manager";
 import { detectWorktree } from "./utils/git";
+import { getAllowedOrigins, getAllowedHosts } from "./utils/origins";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -95,6 +96,7 @@ const sessionManager = new SessionManager(db, registry, worktreeManager, uploads
 const pushManager = new PushManager(db);
 const terminalManager = new TerminalManager();
 const tailscaleDetector = new TailscaleDetector(PORT);
+const tunnelManager = new TunnelManager();
 
 // Wire push notifications to attention events
 sessionManager.onAttention((_threadId, attention) => {
@@ -110,11 +112,61 @@ if (isExternal) {
   console.log(`Token stored in ${DATA_DIR || "~/.orchestra"}/auth-token`);
 }
 
+// ── Tailscale hostname (cached for origin/host validation) ──
+let tailscaleHostname: string | null = null;
+
 // ── App ─────────────────────────────────────────────────
 
 const app = new Hono();
 
-app.use("*", cors());
+// Fix 1: Restrict CORS to known origins (prevents cross-origin localhost attacks)
+app.use("*", cors({
+  origin: (origin) => {
+    const allowed = getAllowedOrigins(PORT, db, tunnelManager, tailscaleHostname);
+    return allowed.includes(origin) ? origin : null;
+  },
+}));
+
+// Fix 3: Security headers (CSP, clickjacking, MIME sniffing, referrer)
+app.use("*", async (c, next) => {
+  await next();
+  c.header("Content-Security-Policy",
+    "default-src 'self'; " +
+    "script-src 'self' 'unsafe-inline'; " +
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "font-src 'self' https://fonts.gstatic.com; " +
+    "img-src 'self' data: blob:; " +
+    "connect-src 'self' ws: wss:");
+  c.header("X-Frame-Options", "DENY");
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+});
+
+// Fix 2B: Host header validation (DNS rebinding protection)
+app.use("*", async (c, next) => {
+  const host = c.req.header("host")?.split(":")[0];
+  if (host) {
+    const allowed = getAllowedHosts(tailscaleHostname);
+    if (!allowed.includes(host) && !authToken) {
+      return c.text("Invalid Host", 403);
+    }
+  }
+  await next();
+});
+
+// Fix 2A: Origin validation for state-changing requests (CSRF protection)
+app.use("/api/*", async (c, next) => {
+  if (["POST", "PATCH", "PUT", "DELETE"].includes(c.req.method)) {
+    const origin = c.req.header("origin");
+    if (origin) {
+      const allowed = getAllowedOrigins(PORT, db, tunnelManager, tailscaleHostname);
+      if (!allowed.includes(origin)) {
+        return c.json({ error: "Forbidden" }, 403);
+      }
+    }
+  }
+  await next();
+});
 
 // Auth middleware — enforced for non-local requests (tunnel traffic has CF-Connecting-IP)
 app.use("/api/*", async (c, next) => {
@@ -156,7 +208,7 @@ app.get("*", async (c) => {
 
 // ── Server ──────────────────────────────────────────────
 
-const wsHandler = createWSHandler(sessionManager, db);
+const wsHandler = createWSHandler(sessionManager, db, terminalManager);
 
 let server: ReturnType<typeof Bun.serve>;
 try {
@@ -168,6 +220,15 @@ try {
 
       // WebSocket upgrade
       if (url.pathname === "/ws") {
+        // Fix 2C: WebSocket Origin check (CORS does NOT protect WebSocket connections)
+        const wsOrigin = req.headers.get("origin");
+        if (wsOrigin) {
+          const allowed = getAllowedOrigins(PORT, db, tunnelManager, tailscaleHostname);
+          if (!allowed.includes(wsOrigin)) {
+            return new Response("Forbidden origin", { status: 403 });
+          }
+        }
+
         // Auth check for external WS connections (tunnel traffic has CF-Connecting-IP)
         if (authToken) {
           const isTunneled = !!req.headers.get("cf-connecting-ip");
@@ -208,8 +269,6 @@ console.log(`Orchestra server running at http://${HOST}:${PORT}`);
 if (DATA_DIR) console.log(`Data directory: ${DATA_DIR}`);
 
 // ── Tunnel ───────────────────────────────────────────────
-const tunnelManager = new TunnelManager();
-
 // Expose tunnel URL via API (for PWA reconnection)
 app.get("/api/tunnel", (c) => {
   return c.json({ url: tunnelManager.url, active: tunnelManager.isRunning });
@@ -242,6 +301,8 @@ if (useTunnel) {
 // ── Tailscale detection (runs regardless of isExternal) ──────
 tailscaleDetector.detect().then((ts) => {
   if (!ts.installed) return;
+  // Cache hostname for Origin/Host validation
+  if (ts.hostname) tailscaleHostname = ts.hostname;
   if (!ts.running) {
     console.log(`\n[tailscale] Installed but not running. Start with: tailscale up`);
     return;
