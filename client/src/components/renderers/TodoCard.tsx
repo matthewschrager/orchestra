@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { TodoItem } from "shared";
+import { TodoItemList } from "../TodoItemList";
 import { parseTodos } from "./TodoRenderer";
 
 interface Props {
@@ -74,40 +74,6 @@ export function TodoCard({ input, isLatest }: Props) {
 
       {/* Task list */}
       <TodoItemList items={items} />
-    </div>
-  );
-}
-
-// ── Shared item list ─────────────────────────────────────
-
-function TodoItemList({ items }: { items: TodoItem[] }) {
-  return (
-    <div role="list">
-      {items.map((item, i) => (
-        <div
-          key={i}
-          role="listitem"
-          className={`flex items-start gap-2 py-0.5 text-xs ${
-            item.status === "completed"
-              ? "text-content-3"
-              : item.status === "in_progress"
-                ? "text-accent"
-                : "text-content-2"
-          }`}
-        >
-          <span
-            className={`shrink-0 w-4 text-center ${
-              item.status === "completed" ? "text-emerald-400" : ""
-            }`}
-            aria-label={item.status.replace("_", " ")}
-          >
-            {item.status === "completed" ? "✓" : item.status === "in_progress" ? "▸" : "○"}
-          </span>
-          <span className={item.status === "completed" ? "line-through" : ""}>
-            {item.status === "in_progress" ? item.activeForm : item.content}
-          </span>
-        </div>
-      ))}
     </div>
   );
 }
