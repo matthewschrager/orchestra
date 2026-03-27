@@ -366,7 +366,7 @@ function ToolGroupRow({ pairs, forceExpand, latestTodoId }: { pairs: ToolPair[];
       >
         <ToolIcon name={pairs[0].name} />
         <span className="font-mono">
-          {TOOL_VERBS[pairs[0].name]?.[1] ?? pairs[0].name} {pairs.length} files
+          {TOOL_VERBS[pairs[0].name]?.[1] ?? pairs[0].name} {pairs.length} {TOOL_VERBS[pairs[0].name]?.[2] ?? "files"}
         </span>
         <span className={`text-[10px] text-content-3 transition-transform duration-200 ${isOpen ? "rotate-90" : ""}`}>
           &#9656;
@@ -749,19 +749,19 @@ function MessageBubble({ message }: { message: Message }) {
 
 // ── Helpers ─────────────────────────────────────────────
 
-const TOOL_VERBS: Record<string, [string, string]> = {
+const TOOL_VERBS: Record<string, [string, string, string?]> = {
   Read: ["Reading", "Read"],
   Edit: ["Editing", "Edited"],
   Write: ["Writing", "Wrote"],
-  Bash: ["Running", "Ran"],
-  Grep: ["Searching", "Searched"],
-  Glob: ["Finding files", "Found files"],
-  Agent: ["Spawning agent", "Agent"],
-  WebSearch: ["Searching web", "Searched web"],
-  WebFetch: ["Fetching", "Fetched"],
-  NotebookEdit: ["Editing notebook", "Edited notebook"],
-  AskUserQuestion: ["Asking", "Asked"],
-  AskUserTool: ["Asking", "Asked"],
+  Bash: ["Running", "Ran", "commands"],
+  Grep: ["Searching", "Searched", "patterns"],
+  Glob: ["Finding files", "Found files", "patterns"],
+  Agent: ["Spawning agent", "Agent", "agents"],
+  WebSearch: ["Searching web", "Searched web", "queries"],
+  WebFetch: ["Fetching", "Fetched", "URLs"],
+  NotebookEdit: ["Editing notebook", "Edited notebook", "cells"],
+  AskUserQuestion: ["Asking", "Asked", "questions"],
+  AskUserTool: ["Asking", "Asked", "questions"],
   TodoWrite: ["Updating tasks", "Updated tasks"],
 };
 
