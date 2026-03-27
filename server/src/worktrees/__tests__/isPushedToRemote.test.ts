@@ -24,7 +24,8 @@ function createTestDb(): Database {
   db.exec(`CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY, title TEXT NOT NULL, agent TEXT NOT NULL,
     repo_path TEXT NOT NULL, project_id TEXT, worktree TEXT, branch TEXT,
-    pr_url TEXT, pid INTEGER, status TEXT NOT NULL DEFAULT 'pending',
+    pr_url TEXT, pr_status TEXT, pr_number INTEGER, pr_status_checked_at TEXT,
+    pid INTEGER, status TEXT NOT NULL DEFAULT 'pending',
     session_id TEXT, archived_at TEXT, error_message TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -33,13 +34,26 @@ function createTestDb(): Database {
   return db;
 }
 
+interface ThreadOverrides {
+  title?: string;
+  agent?: string;
+  repo_path?: string;
+  status?: string;
+  worktree?: string | null;
+  branch?: string | null;
+  pr_url?: string | null;
+  pr_status?: string | null;
+}
+
 function insertThread(
   db: Database,
   id: string,
-  overrides: Partial<Record<string, string | null>> = {},
+  overrides: ThreadOverrides = {},
 ) {
   db.query(
-    "INSERT INTO threads (id, title, agent, repo_path, status, worktree, branch) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    `INSERT INTO threads (
+      id, title, agent, repo_path, status, worktree, branch, pr_url, pr_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     overrides.title ?? "Test",
@@ -48,6 +62,8 @@ function insertThread(
     overrides.status ?? "done",
     overrides.worktree ?? null,
     overrides.branch ?? null,
+    overrides.pr_url ?? null,
+    overrides.pr_status ?? null,
   );
 }
 
@@ -196,5 +212,60 @@ describe("WorktreeManager.isPushedToRemote", () => {
 
     const result = await mgr.isPushedToRemote("empty-branch");
     expect(result.pushed).toBe(true);
+  });
+
+  test("returns pushed=true for merged PR after remote branch is deleted", async () => {
+    const wt = await mgr.create("merged-pr", repos.local);
+    insertThread(db, "merged-pr", {
+      worktree: wt.path,
+      branch: wt.branch,
+      repo_path: repos.local,
+      pr_url: "https://github.com/octo/repo/pull/1",
+      pr_status: "merged",
+    });
+
+    Bun.spawnSync(["git", "commit", "--allow-empty", "-m", "work"], { cwd: wt.path });
+    const headOid = Bun.spawnSync(["git", "rev-parse", "HEAD"], {
+      cwd: wt.path,
+      stdout: "pipe",
+    }).stdout.toString().trim();
+    Bun.spawnSync(["git", "push", "-u", "origin", wt.branch], { cwd: wt.path });
+    Bun.spawnSync(["git", "push", "origin", "--delete", wt.branch], { cwd: wt.path });
+    Bun.spawnSync(["git", "fetch", "origin", "--prune"], { cwd: wt.path });
+
+    const result = await mgr.isPushedToRemote("merged-pr", {
+      mergedPrHeadOid: headOid,
+    });
+    expect(result.pushed).toBe(true);
+    expect(result.requiresConfirmation).toBe(true);
+    expect(result.reason).toBe("remote_branch_deleted");
+  });
+
+  test("returns pushed=false when merged PR branch has local commits after merge", async () => {
+    const wt = await mgr.create("merged-pr-dirty", repos.local);
+    insertThread(db, "merged-pr-dirty", {
+      worktree: wt.path,
+      branch: wt.branch,
+      repo_path: repos.local,
+      pr_url: "https://github.com/octo/repo/pull/2",
+      pr_status: "merged",
+    });
+
+    Bun.spawnSync(["git", "commit", "--allow-empty", "-m", "merged head"], { cwd: wt.path });
+    const mergedHeadOid = Bun.spawnSync(["git", "rev-parse", "HEAD"], {
+      cwd: wt.path,
+      stdout: "pipe",
+    }).stdout.toString().trim();
+    Bun.spawnSync(["git", "push", "-u", "origin", wt.branch], { cwd: wt.path });
+    Bun.spawnSync(["git", "push", "origin", "--delete", wt.branch], { cwd: wt.path });
+    Bun.spawnSync(["git", "fetch", "origin", "--prune"], { cwd: wt.path });
+    Bun.spawnSync(["git", "commit", "--allow-empty", "-m", "post merge"], { cwd: wt.path });
+
+    const result = await mgr.isPushedToRemote("merged-pr-dirty", {
+      mergedPrHeadOid: mergedHeadOid,
+    });
+    expect(result.pushed).toBe(false);
+    expect(result.requiresConfirmation).toBe(true);
+    expect(result.reason).toBe("post_merge_commits");
   });
 });

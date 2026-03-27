@@ -17,7 +17,8 @@ function createTestDb(): Database {
   db.exec(`CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY, title TEXT NOT NULL, agent TEXT NOT NULL,
     repo_path TEXT NOT NULL, project_id TEXT REFERENCES projects(id),
-    worktree TEXT, branch TEXT, pr_url TEXT, pid INTEGER,
+    worktree TEXT, branch TEXT, pr_url TEXT, pr_status TEXT,
+    pr_number INTEGER, pr_status_checked_at TEXT, pid INTEGER,
     status TEXT NOT NULL DEFAULT 'pending', session_id TEXT,
     archived_at TEXT, error_message TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -35,15 +36,30 @@ function insertProject(db: Database, id: string, path = "/tmp/repo") {
   );
 }
 
+interface ThreadOverrides {
+  title?: string;
+  agent?: string;
+  repo_path?: string;
+  status?: string;
+  worktree?: string | null;
+  branch?: string | null;
+  pr_url?: string | null;
+  pr_status?: string | null;
+  pr_number?: number | null;
+  pr_status_checked_at?: string | null;
+}
+
 function insertThread(
   db: Database,
   id: string,
   projectId: string,
-  overrides: Partial<Record<string, string | null>> = {},
+  overrides: ThreadOverrides = {},
 ) {
   db.query(
-    `INSERT INTO threads (id, title, agent, repo_path, project_id, status, worktree, branch)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO threads (
+      id, title, agent, repo_path, project_id, status, worktree, branch,
+      pr_url, pr_status, pr_number, pr_status_checked_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     overrides.title ?? "Test thread",
@@ -53,12 +69,28 @@ function insertThread(
     overrides.status ?? "done",
     overrides.worktree ?? null,
     overrides.branch ?? null,
+    overrides.pr_url ?? null,
+    overrides.pr_status ?? null,
+    overrides.pr_number ?? null,
+    overrides.pr_status_checked_at ?? null,
   );
 }
 
 interface CleanupResult {
   cleaned: Array<{ id: string; title: string }>;
   skipped: Array<{ id: string; title: string; reason: string }>;
+  needsConfirmation: Array<{
+    id: string;
+    title: string;
+    reason: string;
+    defaultSelected: boolean;
+  }>;
+}
+
+interface MockCleanupStatus {
+  pushed: boolean;
+  reason?: string;
+  requiresConfirmation?: boolean;
 }
 
 function createMockSessionManager(): SessionManager {
@@ -70,10 +102,14 @@ function createMockSessionManager(): SessionManager {
 
 function createMockWorktreeManager(opts?: {
   isPushed?: Record<string, boolean>;
+  statuses?: Record<string, MockCleanupStatus>;
   shouldFailCleanup?: boolean;
 }): WorktreeManager {
   return {
     isPushedToRemote: async (threadId: string) => {
+      if (opts?.statuses?.[threadId]) {
+        return opts.statuses[threadId];
+      }
       const pushed = opts?.isPushed?.[threadId] ?? false;
       return pushed
         ? { pushed: true }
@@ -89,6 +125,11 @@ function createApp(
   db: Database,
   sessionManager?: SessionManager,
   worktreeManager?: WorktreeManager,
+  prStatusFetcher?: (prUrl: string, cwd: string) => Promise<{
+    status: "draft" | "open" | "merged" | "closed";
+    number: number;
+    headRefOid: string | null;
+  } | null>,
 ) {
   const app = new Hono();
   app.route(
@@ -97,6 +138,8 @@ function createApp(
       db as any,
       sessionManager,
       worktreeManager,
+      undefined,
+      prStatusFetcher,
     ),
   );
   return app;
@@ -147,6 +190,7 @@ describe("POST /projects/:id/cleanup-pushed", () => {
     const body = (await res.json()) as CleanupResult;
     expect(body.cleaned).toHaveLength(1);
     expect(body.cleaned[0].id).toBe("t-pushed");
+    expect(body.needsConfirmation).toHaveLength(0);
 
     // Thread should be archived
     const row = db.query("SELECT archived_at FROM threads WHERE id = ?").get("t-pushed") as {
@@ -176,6 +220,7 @@ describe("POST /projects/:id/cleanup-pushed", () => {
     expect(body.cleaned).toHaveLength(0);
     expect(body.skipped).toHaveLength(1);
     expect(body.skipped[0].reason).toBe("still_active");
+    expect(body.needsConfirmation).toHaveLength(0);
 
     // Thread should NOT be archived
     const row = db.query("SELECT archived_at FROM threads WHERE id = ?").get("t-running") as {
@@ -201,6 +246,7 @@ describe("POST /projects/:id/cleanup-pushed", () => {
     // Non-worktree threads are silently skipped (not in cleaned OR skipped)
     expect(body.cleaned).toHaveLength(0);
     expect(body.skipped).toHaveLength(0);
+    expect(body.needsConfirmation).toHaveLength(0);
   });
 
   test("skips unpushed worktree threads", async () => {
@@ -225,6 +271,7 @@ describe("POST /projects/:id/cleanup-pushed", () => {
     expect(body.skipped).toHaveLength(1);
     expect(body.skipped[0].id).toBe("t-unpushed");
     expect(body.skipped[0].reason).toBe("not_on_remote");
+    expect(body.needsConfirmation).toHaveLength(0);
   });
 
   test("handles mixed pushed/unpushed/active threads", async () => {
@@ -272,6 +319,7 @@ describe("POST /projects/:id/cleanup-pushed", () => {
     const reasons = body.skipped.map((s) => s.reason);
     expect(reasons).toContain("still_active");
     expect(reasons).toContain("not_on_remote");
+    expect(body.needsConfirmation).toHaveLength(0);
   });
 
   test("skips thread when cleanup throws but continues processing", async () => {
@@ -299,6 +347,7 @@ describe("POST /projects/:id/cleanup-pushed", () => {
     expect(body.cleaned).toHaveLength(0);
     expect(body.skipped).toHaveLength(1);
     expect(body.skipped[0].reason).toBe("cleanup_failed");
+    expect(body.needsConfirmation).toHaveLength(0);
 
     // Thread should NOT be archived when cleanup fails
     const row = db.query("SELECT archived_at FROM threads WHERE id = ?").get("t-fail") as {
@@ -393,5 +442,263 @@ describe("POST /projects/:id/cleanup-pushed", () => {
     // Already-archived threads are excluded by the WHERE clause
     expect(body.cleaned).toHaveLength(0);
     expect(body.skipped).toHaveLength(0);
+    expect(body.needsConfirmation).toHaveLength(0);
+  });
+
+  test("returns merged-but-unclean threads for confirmation without archiving them", async () => {
+    insertProject(db, "proj-1");
+    insertThread(db, "t-merged", "proj-1", {
+      title: "Merged, deleted branch",
+      status: "done",
+      worktree: "/tmp/wt-1",
+      branch: "orchestra/merged",
+    });
+
+    const app = createApp(
+      db,
+      createMockSessionManager(),
+      createMockWorktreeManager({
+        statuses: {
+          "t-merged": {
+            pushed: true,
+            reason: "remote_branch_deleted",
+            requiresConfirmation: true,
+          },
+        },
+      }),
+    );
+
+    const res = await app.request("/projects/proj-1/cleanup-pushed", {
+      method: "POST",
+    });
+    const body = (await res.json()) as CleanupResult;
+
+    expect(body.cleaned).toHaveLength(0);
+    expect(body.skipped).toHaveLength(0);
+    expect(body.needsConfirmation).toHaveLength(1);
+    expect(body.needsConfirmation[0]).toEqual({
+      id: "t-merged",
+      title: "Merged, deleted branch",
+      reason: "remote_branch_deleted",
+      defaultSelected: true,
+    });
+
+    const row = db.query("SELECT archived_at FROM threads WHERE id = ?").get("t-merged") as {
+      archived_at: string | null;
+    };
+    expect(row.archived_at).toBeNull();
+  });
+
+  test("confirmed merged-but-unclean threads are cleaned up on a second request", async () => {
+    insertProject(db, "proj-1");
+    insertThread(db, "t-confirm", "proj-1", {
+      title: "Needs confirm",
+      status: "done",
+      worktree: "/tmp/wt-1",
+      branch: "orchestra/confirm",
+    });
+
+    const app = createApp(
+      db,
+      createMockSessionManager(),
+      createMockWorktreeManager({
+        statuses: {
+          "t-confirm": {
+            pushed: true,
+            reason: "remote_branch_deleted",
+            requiresConfirmation: true,
+          },
+        },
+      }),
+    );
+
+    const res = await app.request("/projects/proj-1/cleanup-pushed", {
+      method: "POST",
+      body: JSON.stringify({ confirmedThreadIds: ["t-confirm"] }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const body = (await res.json()) as CleanupResult;
+
+    expect(body.cleaned).toHaveLength(1);
+    expect(body.cleaned[0].id).toBe("t-confirm");
+    expect(body.skipped).toHaveLength(0);
+    expect(body.needsConfirmation).toHaveLength(0);
+
+    const row = db.query("SELECT archived_at FROM threads WHERE id = ?").get("t-confirm") as {
+      archived_at: string | null;
+    };
+    expect(row.archived_at).toBeTruthy();
+  });
+
+  test("post-merge commits require confirmation and default to unchecked", async () => {
+    insertProject(db, "proj-1");
+    insertThread(db, "t-post-merge", "proj-1", {
+      title: "Post merge commits",
+      status: "done",
+      worktree: "/tmp/wt-1",
+      branch: "orchestra/post-merge",
+    });
+
+    const app = createApp(
+      db,
+      createMockSessionManager(),
+      createMockWorktreeManager({
+        statuses: {
+          "t-post-merge": {
+            pushed: false,
+            reason: "post_merge_commits",
+            requiresConfirmation: true,
+          },
+        },
+      }),
+    );
+
+    const res = await app.request("/projects/proj-1/cleanup-pushed", {
+      method: "POST",
+    });
+    const body = (await res.json()) as CleanupResult;
+
+    expect(body.cleaned).toHaveLength(0);
+    expect(body.skipped).toHaveLength(0);
+    expect(body.needsConfirmation).toEqual([{
+      id: "t-post-merge",
+      title: "Post merge commits",
+      reason: "post_merge_commits",
+      defaultSelected: false,
+    }]);
+  });
+
+  test("confirmed post-merge commits are cleaned only after explicit confirmation", async () => {
+    insertProject(db, "proj-1");
+    insertThread(db, "t-post-merge-confirm", "proj-1", {
+      title: "Force delete post merge",
+      status: "done",
+      worktree: "/tmp/wt-1",
+      branch: "orchestra/post-merge-confirm",
+    });
+
+    const app = createApp(
+      db,
+      createMockSessionManager(),
+      createMockWorktreeManager({
+        statuses: {
+          "t-post-merge-confirm": {
+            pushed: false,
+            reason: "post_merge_commits",
+            requiresConfirmation: true,
+          },
+        },
+      }),
+    );
+
+    const res = await app.request("/projects/proj-1/cleanup-pushed", {
+      method: "POST",
+      body: JSON.stringify({ confirmedThreadIds: ["t-post-merge-confirm"] }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const body = (await res.json()) as CleanupResult;
+
+    expect(body.cleaned).toHaveLength(1);
+    expect(body.cleaned[0].id).toBe("t-post-merge-confirm");
+    expect(body.skipped).toHaveLength(0);
+    expect(body.needsConfirmation).toHaveLength(0);
+  });
+
+  test("refreshes recent open PR status during cleanup so newly merged threads are eligible", async () => {
+    insertProject(db, "proj-1");
+    insertThread(db, "t-refresh-merged", "proj-1", {
+      title: "Freshly merged",
+      status: "done",
+      repo_path: "/tmp/repo",
+      worktree: "/tmp/wt-1",
+      branch: "orchestra/freshly-merged",
+      pr_url: "https://github.com/octo/repo/pull/123",
+      pr_status: "open",
+      pr_status_checked_at: new Date().toISOString(),
+    });
+
+    const app = createApp(
+      db,
+      createMockSessionManager(),
+      createMockWorktreeManager({
+        statuses: {
+          "t-refresh-merged": {
+            pushed: true,
+            reason: "remote_branch_deleted",
+            requiresConfirmation: true,
+          },
+        },
+      }),
+      async () => ({
+        status: "merged",
+        number: 123,
+        headRefOid: "abc123",
+      }),
+    );
+
+    const res = await app.request("/projects/proj-1/cleanup-pushed", {
+      method: "POST",
+    });
+    const body = (await res.json()) as CleanupResult;
+
+    expect(body.cleaned).toHaveLength(0);
+    expect(body.needsConfirmation).toEqual([{
+      id: "t-refresh-merged",
+      title: "Freshly merged",
+      reason: "remote_branch_deleted",
+      defaultSelected: true,
+    }]);
+
+    const row = db.query(
+      "SELECT pr_status, pr_number, pr_status_checked_at FROM threads WHERE id = ?",
+    ).get("t-refresh-merged") as {
+      pr_status: string | null;
+      pr_number: number | null;
+      pr_status_checked_at: string | null;
+    };
+    expect(row.pr_status).toBe("merged");
+    expect(row.pr_number).toBe(123);
+    expect(row.pr_status_checked_at).toBeTruthy();
+  });
+
+  test("does not preselect remote-branch-deleted cleanup when merged head verification fails", async () => {
+    insertProject(db, "proj-1");
+    insertThread(db, "t-unverified-merged", "proj-1", {
+      title: "Unverified merged head",
+      status: "done",
+      repo_path: "/tmp/repo",
+      worktree: "/tmp/wt-1",
+      branch: "orchestra/unverified-merged",
+      pr_url: "https://github.com/octo/repo/pull/456",
+      pr_status: "merged",
+    });
+
+    const app = createApp(
+      db,
+      createMockSessionManager(),
+      createMockWorktreeManager({
+        statuses: {
+          "t-unverified-merged": {
+            pushed: true,
+            reason: "remote_branch_deleted",
+            requiresConfirmation: true,
+          },
+        },
+      }),
+      async () => null,
+    );
+
+    const res = await app.request("/projects/proj-1/cleanup-pushed", {
+      method: "POST",
+    });
+    const body = (await res.json()) as CleanupResult;
+
+    expect(body.cleaned).toHaveLength(0);
+    expect(body.needsConfirmation).toEqual([{
+      id: "t-unverified-merged",
+      title: "Unverified merged head",
+      reason: "remote_branch_deleted",
+      defaultSelected: false,
+    }]);
   });
 });

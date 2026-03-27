@@ -1,5 +1,19 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { Attachment, AttentionResolution, EffortLevel, Message, ProjectWithStatus, SlashCommand, StreamDelta, Thread, TodoItem, TurnMetrics, WSServerMessage } from "shared";
+import type {
+  Attachment,
+  AttentionResolution,
+  CleanupConfirmationCandidate,
+  CleanupPushedResponse,
+  EffortLevel,
+  Message,
+  ProjectWithStatus,
+  SlashCommand,
+  StreamDelta,
+  Thread,
+  TodoItem,
+  TurnMetrics,
+  WSServerMessage,
+} from "shared";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { api } from "./hooks/useApi";
 import { useAttention } from "./hooks/useAttention";
@@ -25,6 +39,8 @@ import { parseTodos } from "./components/renderers/TodoRenderer";
 import { OrchestraLogo } from "./components/OrchestraLogo";
 import { MergeAllPrsButton } from "./components/MergeAllPrsButton";
 import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
+import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal";
+import { buildCleanupAlert } from "./lib/cleanup";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -204,6 +220,13 @@ function extractToolContextForBar(tool: string | null, input: string): string | 
 }
 
 function AppInner() {
+  interface CleanupConfirmationState {
+    projectId: string;
+    candidates: CleanupConfirmationCandidate[];
+    cleanedCount: number;
+    skipped: CleanupPushedResponse["skipped"];
+  }
+
   const [projects, setProjects] = useState<ProjectWithStatus[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -215,6 +238,8 @@ function AppInner() {
   const [contextOpen, setContextOpen] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [cleanupConfirmation, setCleanupConfirmation] = useState<CleanupConfirmationState | null>(null);
+  const [cleanupConfirming, setCleanupConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mergingProjectId, setMergingProjectId] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
@@ -620,42 +645,97 @@ function AppInner() {
     try {
       setError(null);
       const result = await api.cleanupPushedThreads(projectId);
-      if (result.cleaned.length === 0) {
-        const reasons = result.skipped.map((s) => `  ${s.title}: ${s.reason.replace(/_/g, " ")}`);
-        alert(
-          `No threads to clean up.` +
-            (reasons.length > 0 ? `\n\nSkipped:\n${reasons.join("\n")}` : ""),
-        );
+
+      const cleanedIds = new Set(result.cleaned.map((c) => c.id));
+      if (cleanedIds.size > 0) {
+        setThreads((prev) => prev.filter((t) => !cleanedIds.has(t.id)));
+        if (activeThreadId && cleanedIds.has(activeThreadId)) {
+          setActiveThreadId(null);
+        }
+        setMessages((prev) => {
+          let changed = false;
+          const next = new Map(prev);
+          for (const id of cleanedIds) {
+            if (next.has(id)) {
+              next.delete(id);
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+        api.listProjects().then(setProjects).catch(console.error);
+      }
+
+      if (result.needsConfirmation.length > 0) {
+        setCleanupConfirmation({
+          projectId,
+          candidates: result.needsConfirmation,
+          cleanedCount: result.cleaned.length,
+          skipped: result.skipped,
+        });
         return;
       }
-      // Remove cleaned threads from local state
-      const cleanedIds = new Set(result.cleaned.map((c) => c.id));
-      setThreads((prev) => prev.filter((t) => !cleanedIds.has(t.id)));
-      if (activeThreadId && cleanedIds.has(activeThreadId)) {
-        setActiveThreadId(null);
-      }
-      // Clean up cached messages
-      setMessages((prev) => {
-        let changed = false;
-        const next = new Map(prev);
-        for (const id of cleanedIds) {
-          if (next.has(id)) {
-            next.delete(id);
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
-      // Refresh projects to update counts
-      api.listProjects().then(setProjects).catch(console.error);
 
-      const skippedMsg =
-        result.skipped.length > 0
-          ? `\n\nSkipped ${result.skipped.length} thread(s) with unpushed work.`
-          : "";
-      alert(`Cleaned up ${result.cleaned.length} thread(s) and worktrees.${skippedMsg}`);
+      alert(buildCleanupAlert({
+        cleanedCount: result.cleaned.length,
+        skipped: result.skipped,
+        needsConfirmation: result.needsConfirmation,
+      }));
     } catch (err) {
       setError((err as Error).message);
+    }
+  };
+
+  const handleCleanupConfirmationClose = () => {
+    if (!cleanupConfirmation) return;
+    alert(buildCleanupAlert({
+      cleanedCount: cleanupConfirmation.cleanedCount,
+      skipped: cleanupConfirmation.skipped,
+      needsConfirmation: cleanupConfirmation.candidates,
+    }));
+    setCleanupConfirmation(null);
+  };
+
+  const handleCleanupConfirmationSubmit = async (confirmedThreadIds: string[]) => {
+    if (!cleanupConfirmation) return;
+
+    try {
+      setCleanupConfirming(true);
+      setError(null);
+      const result = await api.cleanupPushedThreads(cleanupConfirmation.projectId, {
+        confirmedThreadIds,
+      });
+
+      const cleanedIds = new Set(result.cleaned.map((c) => c.id));
+      if (cleanedIds.size > 0) {
+        setThreads((prev) => prev.filter((t) => !cleanedIds.has(t.id)));
+        if (activeThreadId && cleanedIds.has(activeThreadId)) {
+          setActiveThreadId(null);
+        }
+        setMessages((prev) => {
+          let changed = false;
+          const next = new Map(prev);
+          for (const id of cleanedIds) {
+            if (next.has(id)) {
+              next.delete(id);
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+        api.listProjects().then(setProjects).catch(console.error);
+      }
+
+      alert(buildCleanupAlert({
+        cleanedCount: cleanupConfirmation.cleanedCount + result.cleaned.length,
+        skipped: [...cleanupConfirmation.skipped, ...result.skipped],
+        needsConfirmation: result.needsConfirmation,
+      }));
+      setCleanupConfirmation(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCleanupConfirming(false);
     }
   };
 
@@ -999,6 +1079,17 @@ function AppInner() {
         <AddProjectDialog
           onAdd={handleAddProject}
           onClose={() => setShowAddProject(false)}
+        />
+      )}
+
+      {cleanupConfirmation && (
+        <CleanupConfirmationModal
+          candidates={cleanupConfirmation.candidates}
+          autoCleanedCount={cleanupConfirmation.cleanedCount}
+          skippedCount={cleanupConfirmation.skipped.length}
+          loading={cleanupConfirming}
+          onClose={handleCleanupConfirmationClose}
+          onConfirm={handleCleanupConfirmationSubmit}
         />
       )}
 

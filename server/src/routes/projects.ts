@@ -10,6 +10,7 @@ import {
   projectRowToApi,
   threadRowToApi,
   touchProjectUpdatedAt,
+  updateThreadSilent,
   updateProject,
   validateAndInsertProject,
 } from "../db";
@@ -19,12 +20,17 @@ import type { SessionManager } from "../sessions/manager";
 import type { WorktreeManager } from "../worktrees/manager";
 import type { TerminalManager } from "../terminal/manager";
 import { buildMergeAllPrsPrompt } from "../projects/merge-all-prs";
+import { fetchPrStatus } from "../worktrees/pr-status";
+import type { CleanupPushedResponse } from "shared";
+
+type PrStatusFetcher = typeof fetchPrStatus;
 
 export function createProjectRoutes(
   db: DB,
   sessionManager?: SessionManager,
   worktreeManager?: WorktreeManager,
   terminalManager?: TerminalManager,
+  prStatusFetcher: PrStatusFetcher = fetchPrStatus,
 ) {
   const app = new Hono();
 
@@ -114,6 +120,9 @@ export function createProjectRoutes(
       return c.json({ error: "Managers not available" }, 500);
     }
 
+    const body = await c.req.json<{ confirmedThreadIds?: string[] }>().catch(() => ({}));
+    const confirmedThreadIds = new Set(body.confirmedThreadIds ?? []);
+
     const projectId = c.req.param("id");
     const project = getProject(db, projectId);
     if (!project) return c.json({ error: "Not found" }, 404);
@@ -137,8 +146,9 @@ export function createProjectRoutes(
       )
       .all(projectId) as ThreadRow[];
 
-    const cleaned: Array<{ id: string; title: string }> = [];
-    const skipped: Array<{ id: string; title: string; reason: string }> = [];
+    const cleaned: CleanupPushedResponse["cleaned"] = [];
+    const skipped: CleanupPushedResponse["skipped"] = [];
+    const needsConfirmation: CleanupPushedResponse["needsConfirmation"] = [];
 
     for (const thread of threads) {
       // Skip active threads
@@ -154,12 +164,54 @@ export function createProjectRoutes(
       // Only consider threads with worktrees
       if (!thread.worktree) continue;
 
-      const pushStatus = await worktreeManager.isPushedToRemote(thread.id);
-      if (!pushStatus.pushed) {
+      let mergedPrHeadOid: string | null = null;
+      let prStatusVerified = false;
+      if (thread.pr_url) {
+        const checkedAt = new Date().toISOString();
+        const prStatus = await prStatusFetcher(thread.pr_url, thread.repo_path);
+        if (prStatus) {
+          updateThreadSilent(db, thread.id, {
+            pr_status: prStatus.status,
+            pr_number: prStatus.number,
+            pr_status_checked_at: checkedAt,
+          });
+          thread.pr_status = prStatus.status;
+          thread.pr_number = prStatus.number;
+          thread.pr_status_checked_at = checkedAt;
+          mergedPrHeadOid = prStatus.headRefOid;
+          prStatusVerified = true;
+        } else {
+          updateThreadSilent(db, thread.id, {
+            pr_status_checked_at: checkedAt,
+          });
+          thread.pr_status_checked_at = checkedAt;
+        }
+      }
+
+      const pushStatus = await worktreeManager.isPushedToRemote(thread.id, {
+        mergedPrHeadOid,
+      });
+      if (pushStatus.requiresConfirmation && !confirmedThreadIds.has(thread.id)) {
+        const canDefaultSelect = pushStatus.reason !== "post_merge_commits" &&
+          (
+            pushStatus.reason !== "remote_branch_deleted" ||
+            prStatusVerified ||
+            thread.pr_status !== "merged" ||
+            !!mergedPrHeadOid
+          );
+        needsConfirmation.push({
+          id: thread.id,
+          title: thread.title,
+          reason: pushStatus.reason || "remote_branch_deleted",
+          defaultSelected: canDefaultSelect,
+        });
+        continue;
+      }
+      if (!pushStatus.pushed && !pushStatus.requiresConfirmation) {
         skipped.push({
           id: thread.id,
           title: thread.title,
-          reason: pushStatus.reason || "not_pushed",
+          reason: pushStatus.reason || "git_error",
         });
         continue;
       }
@@ -186,7 +238,7 @@ export function createProjectRoutes(
       cleaned.push({ id: thread.id, title: thread.title });
     }
 
-    return c.json({ cleaned, skipped });
+    return c.json({ cleaned, skipped, needsConfirmation });
   });
 
   app.post("/:id/merge-all-prs", async (c) => {

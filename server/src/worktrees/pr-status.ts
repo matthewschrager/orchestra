@@ -56,6 +56,7 @@ interface GhPrViewResult {
   state: "OPEN" | "MERGED" | "CLOSED";
   isDraft: boolean;
   number: number;
+  headRefOid: string | null;
 }
 
 /**
@@ -68,18 +69,18 @@ interface GhPrViewResult {
 export async function fetchPrStatus(
   prUrl: string,
   cwd: string,
-): Promise<{ status: PrStatus; number: number } | null> {
+): Promise<{ status: PrStatus; number: number; headRefOid: string | null } | null> {
   if (!prUrl) return null;
 
   await acquireSlot();
   try {
     const proc = Bun.spawn(
-      ["gh", "pr", "view", prUrl, "--json", "state,isDraft,number"],
+      ["gh", "pr", "view", prUrl, "--json", "state,isDraft,number,headRefOid"],
       { cwd, stdout: "pipe", stderr: "pipe" },
     );
 
     // Race against timeout — clear timer on success to avoid resource leak
-    let timerId: ReturnType<typeof setTimeout>;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
     const timeout = new Promise<null>((resolve) => {
       timerId = setTimeout(() => {
         proc.kill();
@@ -91,7 +92,7 @@ export async function fetchPrStatus(
       (async () => {
         const stdout = await new Response(proc.stdout).text();
         await proc.exited;
-        clearTimeout(timerId);
+        if (timerId) clearTimeout(timerId);
 
         if (proc.exitCode !== 0) return null;
 
@@ -104,7 +105,11 @@ export async function fetchPrStatus(
               ? "closed"
               : "open";
 
-        return { status, number: parsed.number };
+        return {
+          status,
+          number: parsed.number,
+          headRefOid: parsed.headRefOid,
+        };
       })(),
       timeout,
     ]);

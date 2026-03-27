@@ -58,11 +58,11 @@ export const api = {
   deleteProject: (id: string) =>
     request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
 
-  cleanupPushedThreads: (projectId: string) =>
-    request<{
-      cleaned: Array<{ id: string; title: string }>;
-      skipped: Array<{ id: string; title: string; reason: string }>;
-    }>(`/projects/${projectId}/cleanup-pushed`, { method: "POST" }),
+  cleanupPushedThreads: (projectId: string, body?: { confirmedThreadIds?: string[] }) =>
+    request<import("shared").CleanupPushedResponse>(`/projects/${projectId}/cleanup-pushed`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
 
   mergeAllPrs: (projectId: string, agent: string) =>
     request<import("shared").Thread>(`/projects/${projectId}/merge-all-prs`, {

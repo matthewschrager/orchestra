@@ -22,6 +22,37 @@ export interface CreateProjectRequest {
   name?: string;
 }
 
+export type CleanupReason =
+  | "still_active"
+  | "uncommitted_changes"
+  | "unpushed_commits"
+  | "not_on_remote"
+  | "remote_branch_deleted"
+  | "post_merge_commits"
+  | "worktree_missing"
+  | "cleanup_failed"
+  | "git_error"
+  | "no_worktree";
+
+export interface CleanupThreadSummary {
+  id: string;
+  title: string;
+}
+
+export interface CleanupThreadIssue extends CleanupThreadSummary {
+  reason: CleanupReason;
+}
+
+export interface CleanupConfirmationCandidate extends CleanupThreadIssue {
+  defaultSelected: boolean;
+}
+
+export interface CleanupPushedResponse {
+  cleaned: CleanupThreadSummary[];
+  skipped: CleanupThreadIssue[];
+  needsConfirmation: CleanupConfirmationCandidate[];
+}
+
 // ── Thread ──────────────────────────────────────────────
 
 export type ThreadStatus = "running" | "pending" | "paused" | "waiting" | "done" | "error";
