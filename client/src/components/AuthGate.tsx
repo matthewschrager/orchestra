@@ -38,7 +38,7 @@ export function AuthGate({ onAuthenticated }: Props) {
       <div className="w-full max-w-sm space-y-5 relative">
         <div className="text-center">
           <div className="inline-flex items-center gap-2.5 mb-3">
-            <OrchestraLogo size={28} color="var(--accent)" />
+            <OrchestraLogo size={28} color="var(--color-accent)" />
             <h1 className="text-2xl font-semibold tracking-tight">Orchestra</h1>
           </div>
           <p className="text-content-2 text-sm">

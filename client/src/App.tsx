@@ -659,7 +659,7 @@ function AppInner() {
             <MenuIcon />
           </button>
           <div className="flex items-center gap-1.5 shrink-0">
-            <OrchestraLogo size={20} color="var(--accent)" />
+            <OrchestraLogo size={20} color="var(--color-accent)" />
             <h1 className="text-sm font-semibold tracking-tight text-content-2">Orchestra</h1>
           </div>
           {activeProject && (
@@ -1071,7 +1071,7 @@ function WelcomeState({ onAddProject }: { onAddProject: () => void }) {
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(34,211,238,0.04)_0%,_transparent_70%)] pointer-events-none" />
       <div className="text-center relative">
         <div className="inline-flex items-center gap-3 mb-4">
-          <OrchestraLogo size={36} color="var(--accent)" />
+          <OrchestraLogo size={36} color="var(--color-accent)" />
           <h2 className="text-4xl font-light tracking-tight">Orchestra</h2>
         </div>
         <p className="text-content-2 text-sm max-w-sm mx-auto">
