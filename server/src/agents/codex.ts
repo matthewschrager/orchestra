@@ -53,7 +53,7 @@ export class CodexAdapter implements AgentAdapter {
       const codex = new Codex();
 
       const threadOpts = {
-        sandboxMode: "workspace-write" as const,
+        sandboxMode: "danger-full-access" as const,
         workingDirectory: opts.cwd,
         approvalPolicy: "never" as const,
       };
