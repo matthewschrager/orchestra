@@ -924,6 +924,7 @@ function AppInner() {
                 setActiveThreadId(null);
                 setMobileTab("new");
               }}
+              onArchiveThread={handleArchiveThread}
             />
           </div>
         )}
