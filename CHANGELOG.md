@@ -8,6 +8,7 @@
 - **Pinned TODO panel** — when an agent is working with an active task list, a compact TODO panel pins to the bottom of the thread (between the status bar and the input), showing task progress in real time without needing to scroll; collapsible via chevron, auto-hides when the turn ends
 - **Per-thread effort selector for Claude and Codex** — desktop and mobile new-session flows now let users choose reasoning effort before launch, with Codex-specific `Minimal/Low/Medium/High/Max` options and Claude-specific `Low/Medium/High` options
 - **Effort-level regression coverage** — shared helper tests and session-manager coverage now lock in agent-specific option validation and verify that resumed Codex turns keep the originally selected effort
+- **Reply-box history recall** — pressing `ArrowUp` in an empty thread composer now restores the last real user message so you can quickly tweak or resend a prior command after stepping away; `ArrowDown` walks forward and returns to a blank draft
 
 ### Changed
 
@@ -18,6 +19,7 @@
 
 ### Fixed
 
+- **Composer history skips synthetic attachment placeholders** — recall only includes real user text, not the internal `(see attached files)` placeholder used for attachment-only sends
 - **Markdown document links now open the file instead of another Orchestra shell** — chat markdown rewrites local filesystem links like `/home/.../PLAN.md` and `~/.../PLAN.md` to the file proxy, safe documents now serve inline as text or PDF, and unsupported localhost file links still fall back to VS Code; added regression coverage for markdown-link rewriting and document serving
 - **Merged PRs with deleted source branches no longer get stuck forever** — cleanup now treats merged PRs with auto-deleted remote branches as eligible, while still routing them through confirmation
 - **Recently merged PRs are recognized immediately during cleanup** — the cleanup pass now refreshes PR status on demand instead of waiting for the stale-status window to expire
