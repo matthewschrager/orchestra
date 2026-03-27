@@ -16,7 +16,7 @@ import {
 import type { AgentRegistry } from "../agents/registry";
 import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage, PersistentSession } from "../agents/types";
 import type { WorktreeManager } from "../worktrees/manager";
-import type { Attachment, AttentionItem, StreamDelta } from "shared";
+import type { Attachment, AttentionItem, AttentionResolution, StreamDelta } from "shared";
 import { resolveAttachmentPaths } from "../routes/uploads";
 import { generateTitle } from "../titles/generator";
 
@@ -189,7 +189,7 @@ export class SessionManager {
     }
     // 4. Cleanup
     this.clearMainWorktreeLock(threadId);
-    orphanAttentionItems(this.db, threadId);
+    this.orphanPendingAttention(threadId, { type: "orphaned", reason: "session_stopped" });
     updateThread(this.db, threadId, { status: "done", pid: null });
     this.notifyThread(threadId);
   }
@@ -221,7 +221,7 @@ export class SessionManager {
     // so old AskUserQuestions are no longer relevant. Without this, stale attention items
     // cause the turn_end handler to skip the status→"done" transition, leaving the thread
     // stuck in "running" forever.
-    const orphaned = orphanAttentionItems(this.db, threadId);
+    const orphaned = this.orphanPendingAttention(threadId, { type: "orphaned", reason: "superseded_by_user_message" });
     if (orphaned > 0 && DEBUG) {
       console.log(`[session] Orphaned ${orphaned} stale attention items for ${threadId} on sendMessage`);
     }
@@ -727,7 +727,7 @@ export class SessionManager {
 
         // Subprocess died mid-turn — surface error, enable resume on next message
         console.warn(`[stream] Thread ${threadId} — persistent session died mid-turn after ${turnMessageCount} msgs`);
-        orphanAttentionItems(this.db, threadId);
+        this.orphanPendingAttention(threadId, { type: "orphaned", reason: "session_ended_unexpectedly" });
         this.persistMessage(threadId, {
           role: "assistant",
           content: "**Session ended unexpectedly.** Send a follow-up message to resume.",
@@ -748,7 +748,7 @@ export class SessionManager {
       // Detect silent failure
       if (messageCount <= 1) {
         console.warn(`[stream] Thread ${threadId} — SDK produced ${messageCount} messages, treating as error`);
-        orphanAttentionItems(this.db, threadId);
+        this.orphanPendingAttention(threadId, { type: "orphaned", reason: "agent_session_failed" });
         this.persistMessage(threadId, {
           role: "assistant",
           content: "**Agent session ended without producing a response.** This may indicate an SDK initialization failure. Try again.",
@@ -766,7 +766,7 @@ export class SessionManager {
       if (thread?.status === "waiting") {
         updateThread(this.db, threadId, { pid: null });
       } else {
-        const orphaned = orphanAttentionItems(this.db, threadId);
+        const orphaned = this.orphanPendingAttention(threadId, { type: "orphaned", reason: "session_completed_without_resolution" });
         if (orphaned > 0) {
           console.log(`Orphaned ${orphaned} attention items for thread ${threadId}`);
         }
@@ -787,7 +787,7 @@ export class SessionManager {
       // Real SDK error
       this.sessions.delete(threadId);
       this.clearMainWorktreeLock(threadId);
-      orphanAttentionItems(this.db, threadId);
+      this.orphanPendingAttention(threadId, { type: "orphaned", reason: "agent_error" });
 
       const errMsg = err instanceof Error ? err.message : String(err);
       this.persistMessage(threadId, {
@@ -978,6 +978,19 @@ export class SessionManager {
     }
   }
 
+  private orphanPendingAttention(threadId: string, resolution: Extract<AttentionResolution, { type: "orphaned" }>): number {
+    const pending = getPendingAttention(this.db, threadId);
+    if (pending.length === 0) return 0;
+
+    const orphaned = orphanAttentionItems(this.db, threadId, resolution.reason);
+    if (orphaned === 0) return 0;
+
+    for (const item of pending) {
+      this.notifyAttentionResolved(item.id, threadId);
+    }
+    return orphaned;
+  }
+
   notifyThread(threadId: string): void {
     const thread = getThread(this.db, threadId);
     if (!thread) return;
@@ -1040,7 +1053,7 @@ export class SessionManager {
 
     // 3. Cleanup
     this.clearMainWorktreeLock(threadId);
-    orphanAttentionItems(this.db, threadId);
+    this.orphanPendingAttention(threadId, { type: "orphaned", reason: "session_timed_out" });
 
     // 4. Persist a visible error message so the user sees it in chat
     this.persistMessage(threadId, {
@@ -1082,7 +1095,7 @@ export class SessionManager {
       .all() as Pick<ThreadRow, "id">[];
 
     for (const thread of running) {
-      orphanAttentionItems(this.db, thread.id);
+      this.orphanPendingAttention(thread.id, { type: "orphaned", reason: "server_restarted" });
       updateThread(this.db, thread.id, {
         status: "error",
         pid: null,

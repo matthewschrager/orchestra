@@ -463,8 +463,8 @@ export function resolveAttentionItem(
   return getAttentionItem(db, id);
 }
 
-export function orphanAttentionItems(db: DB, threadId: string): number {
-  const resolution = JSON.stringify({ type: "orphaned", reason: "agent_process_exited" });
+export function orphanAttentionItems(db: DB, threadId: string, reason: string = "agent_process_exited"): number {
+  const resolution = JSON.stringify({ type: "orphaned", reason });
   const result = db.query(
     "UPDATE attention_required SET resolved_at = datetime('now'), resolution = ? WHERE thread_id = ? AND resolved_at IS NULL",
   ).run(resolution, threadId);

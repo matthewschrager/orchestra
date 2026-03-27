@@ -800,6 +800,10 @@ describe("Persistent Session lifecycle", () => {
     };
 
     const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+    const resolvedEvents: Array<{ attentionId: string; threadId: string }> = [];
+    sessionManager.onAttentionResolved((attentionId, threadId) => {
+      resolvedEvents.push({ attentionId, threadId });
+    });
 
     const thread = await sessionManager.startThread({
       agent: "mock",
@@ -832,6 +836,7 @@ describe("Persistent Session lifecycle", () => {
     // Verify attention item exists
     const pendingBefore = getPendingAttention(db, thread.id);
     expect(pendingBefore.length).toBe(1);
+    const attentionId = pendingBefore[0].id;
 
     // User sends a follow-up WITHOUT resolving the attention item (bypasses UI)
     sessionManager.sendMessage(thread.id, "I prefer option A");
@@ -841,6 +846,7 @@ describe("Persistent Session lifecycle", () => {
     // After sendMessage, stale attention items should be orphaned
     const pendingAfterSend = getPendingAttention(db, thread.id);
     expect(pendingAfterSend.length).toBe(0);
+    expect(resolvedEvents).toEqual([{ attentionId, threadId: thread.id }]);
 
     // Thread should now be "running" (new turn started)
     updated = getThread(db, thread.id);
