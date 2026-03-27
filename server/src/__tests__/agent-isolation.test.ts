@@ -7,6 +7,11 @@ import { AgentRegistry } from "../agents/registry";
 import { WorktreeManager } from "../worktrees/manager";
 import { SessionManager } from "../sessions/manager";
 import { gitSpawn, gitSpawnSync } from "../utils/git";
+import {
+  DEFAULT_ORCHESTRA_PORT,
+  getDefaultWorktreeDataDir,
+  getIsolatedWorktreePort,
+} from "../utils/worktree";
 
 // ── Env var scrubbing ────────────────────────────────────
 
@@ -167,10 +172,12 @@ describe("isolation preamble", () => {
     const sm = createSessionManager();
     const longCwd = "/very" + "/deep".repeat(100);
     const preamble = sm.buildIsolationPreamble(longCwd);
+    const truncatedCwd = longCwd.slice(0, 200);
 
     // The cwd in the preamble should be truncated
     expect(preamble).not.toContain(longCwd);
-    expect(preamble.length).toBeLessThan(longCwd.length + 200);
+    expect(preamble).toContain(`Confine your work to this directory: ${truncatedCwd}`);
+    expect(preamble).toContain(`${truncatedCwd}/.orchestra-worktree`);
   });
 
   test("preamble includes Orchestra context marker", () => {
@@ -179,7 +186,29 @@ describe("isolation preamble", () => {
 
     expect(preamble).toContain("[Orchestra context");
     expect(preamble).toContain("Orchestra-managed session");
-    expect(preamble).toContain("~/.orchestra/");
+    expect(preamble).toContain("ORCHESTRA_ALLOW_NESTED=1");
+    expect(preamble).toContain("ORCHESTRA_DATA_DIR=/tmp/wt/.orchestra-worktree");
+  });
+});
+
+describe("worktree runtime helpers", () => {
+  test("nested Orchestra-managed worktrees use a worktree-local data dir", () => {
+    expect(getDefaultWorktreeDataDir("orchestra-abc", "/tmp/worktrees/orchestra-abc", {
+      orchestraManaged: true,
+      homeDir: "/home/test",
+    })).toBe("/tmp/worktrees/orchestra-abc/.orchestra-worktree");
+  });
+
+  test("non-managed worktrees keep using ~/.orchestra isolation", () => {
+    expect(getDefaultWorktreeDataDir("orchestra-abc", "/tmp/worktrees/orchestra-abc", {
+      orchestraManaged: false,
+      homeDir: "/home/test",
+    })).toBe("/home/test/.orchestra/worktree-orchestra-abc");
+  });
+
+  test("worktree port hashing stays stable", () => {
+    expect(getIsolatedWorktreePort("orchestra-abc")).toBe(getIsolatedWorktreePort("orchestra-abc"));
+    expect(getIsolatedWorktreePort("orchestra-abc")).toBeGreaterThan(DEFAULT_ORCHESTRA_PORT);
   });
 });
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProjectWithStatus, Thread } from "shared";
+import { getEffectiveOutstandingPrCount } from "../lib/prCounts";
 import { MergeAllPrsButton } from "./MergeAllPrsButton";
 import { PrBadge } from "./PrBadge";
 
@@ -131,6 +132,7 @@ export function ProjectSidebar({
             const isExpanded = expandedProjects.has(project.id);
             const isActive = project.id === activeProjectId;
             const projectThreads = threadsByProject(project.id);
+            const outstandingPrCount = getEffectiveOutstandingPrCount(project, projectThreads);
 
             return (
               <div key={project.id} className="project-group group/project" role="treeitem" aria-expanded={isExpanded}>
@@ -160,10 +162,10 @@ export function ProjectSidebar({
                       </span>
                     )}
                   </button>
-                  {project.outstandingPrCount > 0 && (
+                  {outstandingPrCount > 0 && (
                     <div className="shrink-0">
                       <MergeAllPrsButton
-                        count={project.outstandingPrCount}
+                        count={outstandingPrCount}
                         iconOnly
                         stopPropagation
                         busy={mergingProjectId === project.id}
