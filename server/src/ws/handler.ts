@@ -8,6 +8,7 @@ import type { AttentionItem, StreamDelta, WSClientMessage, WSServerMessage } fro
 // Fix 10: Per-client rate limiting for state-changing WS messages
 const RATE_LIMIT_WINDOW_MS = 10_000; // 10 seconds
 const RATE_LIMIT_MAX = 60; // max messages per window
+const RATE_LIMITED_TYPES = new Set(["send_message", "stop_thread", "resolve_attention", "terminal_input", "terminal_create"]);
 
 interface WSData {
   subscriptions: Set<string>;
@@ -190,8 +191,7 @@ export function createWSHandler(
       }
 
       // Rate limit state-changing messages (exempt: subscribe, unsubscribe, ping)
-      const rateLimitedTypes = new Set(["send_message", "stop_thread", "resolve_attention", "terminal_input", "terminal_create"]);
-      if (rateLimitedTypes.has(msg.type)) {
+      if (RATE_LIMITED_TYPES.has(msg.type)) {
         const now = Date.now();
         const timestamps = ws.data.msgTimestamps;
         // Prune timestamps outside the window
