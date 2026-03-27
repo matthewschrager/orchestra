@@ -17,6 +17,7 @@ orchestra/
 │       ├── agents/         Agent adapter interface + implementations
 │       │   ├── types.ts    AgentAdapter interface
 │       │   ├── claude.ts   Claude Code adapter
+│       │   ├── codex.ts    Codex adapter
 │       │   └── registry.ts Agent registry
 │       ├── sessions/       Session lifecycle management
 │       │   └── manager.ts  SDK session orchestration, stream consumption, persistence
@@ -51,17 +52,24 @@ orchestra/
 │   └── src/
 │       ├── App.tsx         Root component with auth gate + streaming reducer
 │       ├── components/     UI components
+│       │   ├── AuthGate.tsx       Token auth login screen
 │       │   ├── ChatView.tsx      Chat messages + tool rendering
+│       │   ├── ContextPanel.tsx  Thread context/worktree panel
 │       │   ├── StickyRunBar.tsx  Real-time status + metrics strip
 │       │   ├── InputBar.tsx      Message input with slash commands
+│       │   ├── MarkdownContent.tsx Markdown rendering with Shiki highlighting
 │       │   ├── ProjectSidebar.tsx Project/thread navigation
+│       │   ├── TerminalPanel.tsx  xterm.js terminal panel
+│       │   ├── WorktreePathInput.tsx Worktree root path selector
+│       │   ├── OrchestraLogo.tsx  SVG logo component
 │       │   └── renderers/        Rich tool output renderers
 │       │       ├── DiffRenderer.tsx    Edit → inline diff
 │       │       ├── BashRenderer.tsx    Bash → terminal block
 │       │       ├── ReadRenderer.tsx    Read → syntax-highlighted file
 │       │       ├── SearchRenderer.tsx  Grep/Glob → match list
 │       │       ├── SubAgentCard.tsx    Agent → status card
-│       │       └── TodoCard.tsx        TodoWrite → task checklist card
+│       │       ├── TodoCard.tsx        TodoWrite → task checklist card
+│       │       └── TodoRenderer.tsx    TodoWrite inline renderer
 │       │   ├── AttentionInbox.tsx  Attention queue inbox
 │       │   ├── SettingsPanel.tsx   Settings modal dialog
 │       │   ├── RemoteAccessSettings.tsx Remote Access section (Tailscale detection + guided setup)
@@ -77,8 +85,10 @@ orchestra/
 │       │   └── PrBadge.tsx        PR status badge (draft/open/merged/closed)
 │       ├── lib/             Shared utilities
 │       │   ├── askUser.ts   AskUserQuestion parsing + inline rendering helpers
+│       │   ├── auth.ts      Auth token storage + validation
+│       │   ├── asciiArt.ts  ASCII art logo for terminal display
 │       │   └── fileUtils.ts isImageFile, shortenPath, fileServeUrl utilities
-│       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications
+│       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications, useTerminal
 └── shared/          Shared TypeScript types
 ```
 

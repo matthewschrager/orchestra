@@ -18,13 +18,26 @@ The missing conductor for your local agent CLIs. Orchestra gives your existing a
 └─────────────────────────────────────┘
 ```
 
+## Why Orchestra?
+
+I wanted an agent dashboard that combined five things no existing tool offered together:
+
+- **Project-organized agent sessions** — threads grouped by repo, not scattered across terminal tabs
+- **Model agnostic** — bring your own CLI agent, not locked to one provider
+- **Mobile access to local sessions** — monitor and steer agents from your phone while they run on your laptop
+- **Seamless worktree isolation** — one click to isolate a thread into its own git worktree, with PR creation built in
+- **Use your existing subscriptions** — runs local CLI agents so you can use flat-rate plans (like Claude Pro/Max) instead of paying per token via API
+
+Existing tools were either tied to a single model, required per-token API billing, lacked mobile access, or didn't understand git workflows. Orchestra fills that gap.
+
 ## Features
 
-- **Thread-based UX** — Manage agent conversations as threads with streaming output and collapsible tool blocks
-- **Remote/mobile access** — Use from your phone while agents run on your laptop
+- **Thread-based UX** — Manage agent conversations as threads with streaming output, collapsible tool blocks, and rich diffs
+- **Remote/mobile access** — Use from your phone while agents run on your laptop, with push notifications for attention events
 - **Git worktree isolation** — One-click isolation of a thread into its own worktree
-- **PR creation** — Create PRs directly from worktree threads via `gh`
-- **Multi-agent** — Bring your own CLIs; Claude Code adapter included, more coming
+- **PR creation** — Create PRs directly from worktree threads via `gh`, with live status badges
+- **Multi-agent** — Bring your own CLIs; Claude Code and Codex adapters included, easy to add more
+- **Integrated terminal** — xterm.js terminal per thread, backed by a real PTY on the server
 - **Token auth** — Secure remote access with bearer token auth
 - **PWA** — Installable on mobile for a native-app feel
 
