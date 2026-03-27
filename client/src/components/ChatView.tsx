@@ -118,6 +118,7 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
   useImperativeHandle(ref, () => ({ scrollToBottom, scrollToTop }), [scrollToBottom, scrollToTop]);
 
   return (
+    <div className="relative flex-1 min-h-0 flex flex-col">
     <div
       ref={containerRef}
       onScroll={handleScroll}
@@ -208,24 +209,23 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
       )}
 
       <div ref={bottomRef} />
+    </div>
 
-      {/* Jump-to-bottom FAB — visible when scrolled up */}
+      {/* Jump-to-bottom FAB — positioned outside scroll container for reliable iOS Safari rendering */}
       {!autoScroll && (
-        <div className="sticky bottom-3 z-10 flex justify-end pointer-events-none pr-2">
-          <button
-            onClick={scrollToBottom}
-            className="pointer-events-auto flex items-center gap-1.5 pl-2.5 pr-3 py-1.5 rounded-full bg-surface-2 border border-edge-2 hover:border-accent/40 hover:bg-surface-3 shadow-lg text-xs text-content-2 hover:text-content-1 transition-all"
-            aria-label={newMessageCount > 0 ? `${newMessageCount} new messages — jump to bottom` : "Jump to bottom"}
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M8 12.5a.5.5 0 01-.354-.146l-4.5-4.5a.5.5 0 01.708-.708L8 11.293l4.146-4.147a.5.5 0 01.708.708l-4.5 4.5A.5.5 0 018 12.5z"/>
-              <path d="M8 8.5a.5.5 0 01-.354-.146l-4.5-4.5a.5.5 0 11.708-.708L8 7.293l4.146-4.147a.5.5 0 11.708.708l-4.5 4.5A.5.5 0 018 8.5z"/>
-            </svg>
-            {newMessageCount > 0 && (
-              <span className="text-accent font-medium">{newMessageCount} new</span>
-            )}
-          </button>
-        </div>
+        <button
+          onClick={scrollToBottom}
+          className="absolute bottom-3 right-3 z-10 flex items-center gap-1.5 pl-2.5 pr-3 py-1.5 rounded-full bg-surface-2 border border-edge-2 hover:border-accent/40 hover:bg-surface-3 shadow-lg text-xs text-content-2 hover:text-content-1 transition-all"
+          aria-label={newMessageCount > 0 ? `${newMessageCount} new messages — jump to bottom` : "Jump to bottom"}
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 12.5a.5.5 0 01-.354-.146l-4.5-4.5a.5.5 0 01.708-.708L8 11.293l4.146-4.147a.5.5 0 01.708.708l-4.5 4.5A.5.5 0 018 12.5z"/>
+            <path d="M8 8.5a.5.5 0 01-.354-.146l-4.5-4.5a.5.5 0 11.708-.708L8 7.293l4.146-4.147a.5.5 0 11.708.708l-4.5 4.5A.5.5 0 018 8.5z"/>
+          </svg>
+          {newMessageCount > 0 && (
+            <span className="text-accent font-medium">{newMessageCount} new</span>
+          )}
+        </button>
       )}
     </div>
   );
