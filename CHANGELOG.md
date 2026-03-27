@@ -14,6 +14,7 @@
 - **Worktree-safe nested QA is covered by regression tests** — new isolation tests lock in the worktree-local data-dir default and the injected safe nested-server command so this workflow does not regress quietly
 - **Codex todo progress now shows a real active task** — live Codex todo snapshots now synthesize an `in_progress` item from the first unfinished step, so Orchestra no longer renders every unfinished task as plain pending
 - **Todo activity coverage is locked in** — added regression coverage for Codex live-vs-terminal todo states and for the shared in-progress task marker in the UI
+- **Large edit diffs no longer inflate into fake whole-file rewrites** — the client diff engine now trims unchanged prefix/suffix before running Myers, preserves correct line numbers through the changed region, and only falls back when the changed core is genuinely large, so Codex edits in big files keep showing the real `+/-` counts instead of full-file noise; added regression coverage for single-line and distant small-edit cases
 
 ## [0.1.30.0] - 2026-03-27
 

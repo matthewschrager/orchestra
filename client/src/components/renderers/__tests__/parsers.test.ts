@@ -190,7 +190,7 @@ describe("computeDiff", () => {
     const oldLines = Array.from({ length: 300 }, (_, i) => `old-line-${i}`).join("\n");
     const newLines = Array.from({ length: 300 }, (_, i) => `new-line-${i}`).join("\n");
     const result = computeDiff(oldLines, newLines);
-    // Should bail out: 300 + 300 > 500
+    // Fully different large files still bail out to block diff.
     expect(result.removals).toBe(300);
     expect(result.additions).toBe(300);
     expect(result.lines).toHaveLength(600);
@@ -198,6 +198,40 @@ describe("computeDiff", () => {
     expect(result.lines[0].type).toBe("remove");
     expect(result.lines[299].type).toBe("remove");
     expect(result.lines[300].type).toBe("add");
+  });
+
+  test("large file with a single changed line does not degrade into a whole-file rewrite", () => {
+    const oldLines = Array.from({ length: 300 }, (_, i) => i === 149 ? "before" : `line-${i}`).join("\n");
+    const newLines = Array.from({ length: 300 }, (_, i) => i === 149 ? "after" : `line-${i}`).join("\n");
+    const result = computeDiff(oldLines, newLines);
+
+    expect(result.removals).toBe(1);
+    expect(result.additions).toBe(1);
+    expect(result.lines[148]).toMatchObject({ type: "context", content: "line-148" });
+    expect(result.lines[149]).toMatchObject({ type: "remove", content: "before", oldLineNum: 150 });
+    expect(result.lines[150]).toMatchObject({ type: "add", content: "after", newLineNum: 150 });
+    expect(result.lines[151]).toMatchObject({ type: "context", content: "line-150" });
+  });
+
+  test("large file with distant small edits still produces a precise diff", () => {
+    const oldLines = Array.from({ length: 1000 }, (_, i) => {
+      if (i === 49) return "alpha-before";
+      if (i === 949) return "omega-before";
+      return `line-${i}`;
+    }).join("\n");
+    const newLines = Array.from({ length: 1000 }, (_, i) => {
+      if (i === 49) return "alpha-after";
+      if (i === 949) return "omega-after";
+      return `line-${i}`;
+    }).join("\n");
+    const result = computeDiff(oldLines, newLines);
+
+    expect(result.removals).toBe(2);
+    expect(result.additions).toBe(2);
+    expect(result.lines[49]).toMatchObject({ type: "remove", content: "alpha-before", oldLineNum: 50 });
+    expect(result.lines[50]).toMatchObject({ type: "add", content: "alpha-after", newLineNum: 50 });
+    expect(result.lines[950]).toMatchObject({ type: "remove", content: "omega-before", oldLineNum: 950 });
+    expect(result.lines[951]).toMatchObject({ type: "add", content: "omega-after", newLineNum: 950 });
   });
 });
 
