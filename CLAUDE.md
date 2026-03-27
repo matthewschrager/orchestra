@@ -1,3 +1,5 @@
+<!-- Keep AGENTS.md and CLAUDE.md identical -->
+
 # Orchestra
 
 Agent-first development interface — a local web/mobile UI that orchestrates agent sessions via the Claude Agent SDK.
