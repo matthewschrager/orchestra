@@ -19,7 +19,8 @@ orchestra/
 │       ├── sessions/       Session lifecycle management
 │       │   └── manager.ts  SDK session orchestration, stream consumption, persistence
 │       ├── worktrees/      Git worktree management
-│       │   └── manager.ts  Create, status, PR, cleanup
+│       │   ├── manager.ts  Create, status, PR, cleanup
+│       │   └── pr-status.ts PR status fetching via gh CLI
 │       ├── utils/          Shared utilities
 │       │   └── git.ts      Git validation + branch detection
 │       ├── routes/         REST API routes
@@ -66,7 +67,8 @@ orchestra/
 │       │   ├── MobileSessions.tsx Thread list for mobile
 │       │   ├── MobileNewSession.tsx New session form for mobile
 │       │   ├── SlashCommandInput.tsx Textarea with slash command autocomplete
-│       │   └── AttachmentPreview.tsx Thumbnail previews for file attachments
+│       │   ├── AttachmentPreview.tsx Thumbnail previews for file attachments
+│       │   └── PrBadge.tsx        PR status badge (draft/open/merged/closed)
 │       ├── lib/             Shared utilities
 │       │   └── askUser.ts   AskUserQuestion parsing + inline rendering helpers
 │       └── hooks/          useWebSocket, useApi, useAttention, usePushNotifications
@@ -124,6 +126,7 @@ cd server && bun run src/index.ts  # Production server
 - Cross-client thread sync: thread creation and archival broadcast `thread_updated` via WS to all clients; client deduplicates optimistic inserts
 - Worktree cleanup on archive: DELETE /threads/:id?cleanup_worktree=true removes worktree+branch; failures return cleanupFailed flag
 - Bulk cleanup pushed: POST /projects/:id/cleanup-pushed archives all non-active threads whose worktree branches are fully pushed to remote (no uncommitted changes, no unpushed commits); project hamburger menu in sidebar triggers it
+- PR status indicators: threads with PRs show status-aware badges (draft/open/merged/closed) with Octicons-style SVG icons and status-specific colors; `pr_status`, `pr_number`, `pr_status_checked_at` columns on threads table; `fetchPrStatus()` in `worktrees/pr-status.ts` spawns `gh pr view` with 10s timeout + max-3 concurrency semaphore; status refreshed fire-and-forget on thread list load (open/draft only, 5-min stale guard via dedicated `pr_status_checked_at` column), on ContextPanel open, and via `POST /threads/:id/refresh-pr`; WS broadcast only when status actually changes; `PrBadge` shared component used in sidebar + mobile; sidebar badges are non-clickable (inside row button), ContextPanel has clickable URL + refresh button; null prStatus falls back to legacy green "PR" badge
 - Session abort: persistent sessions use `Query.close()`; legacy sessions use AbortController. `aborted` flag distinguishes user-stop from SDK error
 - Inactivity timeout (default 30 min, configurable via Settings) replaces PID-based health check for hung SDK iterators
 - `pid` field in Thread type is always null (kept for API compat; SDK manages subprocess internally)
@@ -139,4 +142,4 @@ cd server && bun run src/index.ts  # Production server
 bun test                        # Run all tests
 ```
 
-Tests cover renderer parsing functions, server-side Claude SDK message parsing (including token usage extraction from modelUsage), SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, and settings CRUD (worktreeRoot validation, inactivityTimeoutMinutes bounds, remoteUrl HTTPS enforcement).
+Tests cover renderer parsing functions, server-side Claude SDK message parsing (including token usage extraction from modelUsage), SDK session lifecycle (abort, error, completion), filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, settings CRUD (worktreeRoot validation, inactivityTimeoutMinutes bounds, remoteUrl HTTPS enforcement), and PR status utilities (URL number extraction, stale guard timing).

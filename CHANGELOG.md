@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.26.0] - 2026-03-26
+
+### Added
+
+- **PR status indicators** — threads with PRs now show status-aware badges (draft/open/merged/closed) with Octicons-style SVG icons and color-coded backgrounds in both desktop sidebar and mobile thread list
+- **PR status fetching** — new `fetchPrStatus()` utility spawns `gh pr view` with 10s timeout and max-3 concurrency semaphore; dedicated `pr_status_checked_at` column prevents stale guard from being fooled by unrelated thread mutations
+- **Background status refresh** — `GET /threads` fire-and-forget refreshes open/draft PR statuses with 5-min stale guard; WS broadcast only when status actually changes
+- **Manual PR refresh** — `POST /threads/:id/refresh-pr` endpoint for ContextPanel, with stale guard to prevent rapid re-fetching
+- **ContextPanel PR section** — shows status badge, clickable PR URL, and refresh button (only for open/draft states)
+- **PrBadge shared component** — used in sidebar, mobile, and ContextPanel; null prStatus gracefully falls back to legacy green "PR" badge
+
+### Changed
+
+- **Thread data model** — added `pr_status`, `pr_number`, `pr_status_checked_at` columns to threads table via safe column migrations
+- **PR creation** — `WorktreeManager.createPR()` now sets `pr_status = 'open'` and extracts `pr_number` from URL on creation
+- **Silent thread updates** — new `updateThreadSilent()` DB helper that doesn't bump `updated_at`, used for background PR status refresh to avoid disrupting sidebar sort order
+
 ## [0.1.25.1] - 2026-03-26
 
 ### Fixed
