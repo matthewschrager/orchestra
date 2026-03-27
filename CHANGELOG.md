@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.30.1] - 2026-03-27
+
+### Fixed
+
+- **Large edit diffs no longer inflate into fake whole-file rewrites** — the client diff engine now trims unchanged prefix/suffix before running Myers, preserves correct line numbers through the changed region, and only falls back when the changed core is genuinely large, so Codex edits in big files keep showing the real `+/-` counts instead of full-file noise; added regression coverage for single-line and distant small-edit cases
+
 ## [0.1.30.0] - 2026-03-27
 
 ### Added
