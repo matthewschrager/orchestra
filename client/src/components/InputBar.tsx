@@ -1,5 +1,5 @@
-import { useState, useRef, useCallback } from "react";
-import type { Attachment, Thread, SlashCommand } from "shared";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { getEffortOptions, type Attachment, type EffortLevel, type Thread, type SlashCommand } from "shared";
 import { SlashCommandInput } from "./SlashCommandInput";
 import { WorktreePathInput } from "./WorktreePathInput";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -13,7 +13,7 @@ interface Props {
   commands: SlashCommand[];
   pendingQuestion?: boolean | null;
   onSend: (content: string, attachments?: Attachment[], interrupt?: boolean) => void;
-  onNewThread: (agent: string, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => void;
+  onNewThread: (agent: string, effortLevel: EffortLevel | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => void;
   onStop: () => void;
 }
 
@@ -29,6 +29,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
   const [agent, setAgent] = useState(agents.find((a) => a.detected)?.name ?? "claude");
+  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">("");
   const [isolate, setIsolate] = useState(true);
   const [worktreeName, setWorktreeName] = useState(() => generateDefaultWorktreeName(activeProjectName));
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -39,6 +40,13 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
   const dragCounterRef = useRef(0);
 
   const isRunning = thread?.status === "running";
+  const effortOptions = getEffortOptions(agent);
+
+  useEffect(() => {
+    if (effortLevel && !effortOptions.some((option) => option.value === effortLevel)) {
+      setEffortLevel("");
+    }
+  }, [effortLevel, effortOptions]);
 
   const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -149,7 +157,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
       if (cmd === "/new") {
         const prompt = args || "";
         if (prompt) {
-          onNewThread(agent, prompt, isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined);
+          onNewThread(agent, effortLevel || null, prompt, isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined);
         } else {
           setMode("new");
         }
@@ -166,7 +174,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
     const currentAttachments = hasAttachments ? attachments : undefined;
 
     if (mode === "new" || !thread) {
-      onNewThread(agent, text || "(see attached files)", isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, currentAttachments);
+      onNewThread(agent, effortLevel || null, text || "(see attached files)", isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, currentAttachments);
     } else {
       onSend(text || "(see attached files)", currentAttachments);
     }
@@ -298,19 +306,39 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
               &larr; Back to reply
             </button>
           )}
-          <select
-            value={agent}
-            onChange={(e) => setAgent(e.target.value)}
-            className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
-          >
-            {agents
-              .filter((a) => a.detected)
-              .map((a) => (
-                <option key={a.name} value={a.name}>
-                  {a.name}
+          <label className="flex items-center gap-1.5 text-xs text-content-2">
+            <span className="text-content-3">Agent</span>
+            <select
+              value={agent}
+              onChange={(e) => setAgent(e.target.value)}
+              className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
+              aria-label="Agent"
+            >
+              {agents
+                .filter((a) => a.detected)
+                .map((a) => (
+                  <option key={a.name} value={a.name}>
+                    {a.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-content-2">
+            <span className="text-content-3">Effort</span>
+            <select
+              value={effortLevel}
+              onChange={(e) => setEffortLevel(e.target.value as EffortLevel | "")}
+              className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
+              aria-label="Effort level"
+            >
+              <option value="">Default</option>
+              {effortOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
-          </select>
+            </select>
+          </label>
           <label className="flex items-center gap-1.5 text-xs text-content-2 cursor-pointer">
             <input
               type="checkbox"

@@ -56,6 +56,7 @@ export function createThreadRoutes(
   app.post("/", async (c) => {
     const body = await c.req.json<{
       agent: string;
+      effortLevel?: import("shared").EffortLevel;
       prompt: string;
       projectId: string;
       title?: string;
@@ -86,6 +87,7 @@ export function createThreadRoutes(
     try {
       const thread = await sessionManager.startThread({
         agent: body.agent,
+        effortLevel: body.effortLevel,
         prompt: body.prompt,
         repoPath: project.path,
         projectId: body.projectId,

@@ -9,6 +9,7 @@ const MIGRATIONS = [
     id          TEXT PRIMARY KEY,
     title       TEXT NOT NULL,
     agent       TEXT NOT NULL,
+    effort_level TEXT,
     repo_path   TEXT NOT NULL,
     worktree    TEXT,
     branch      TEXT,
@@ -78,6 +79,11 @@ const MIGRATIONS = [
 
 // Column migration — safe to run multiple times
 const COLUMN_MIGRATIONS = [
+  {
+    table: "threads",
+    column: "effort_level",
+    sql: `ALTER TABLE threads ADD COLUMN effort_level TEXT`,
+  },
   {
     table: "threads",
     column: "project_id",
@@ -259,7 +265,7 @@ export function deleteProject(db: DB, id: string): void {
 const PROJECT_COLUMNS = new Set(["name"]);
 const THREAD_COLUMNS = new Set([
   "title", "status", "worktree", "branch", "pid",
-  "error_message", "pr_url", "archived_at", "session_id",
+  "error_message", "pr_url", "archived_at", "session_id", "effort_level",
 ]);
 
 export function updateProject(db: DB, id: string, fields: Partial<ProjectRow>): void {
@@ -535,6 +541,7 @@ export interface ThreadRow {
   id: string;
   title: string;
   agent: string;
+  effort_level: string | null;
   project_id: string;
   repo_path: string;
   worktree: string | null;
@@ -573,6 +580,7 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
     id: row.id,
     title: row.title,
     agent: row.agent,
+    effortLevel: row.effort_level as import("shared").EffortLevel | null,
     projectId: row.project_id,
     repoPath: row.repo_path,
     worktree: row.worktree,

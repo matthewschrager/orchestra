@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from "react";
-import type { Attachment, ProjectWithStatus, SlashCommand } from "shared";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getEffortOptions, type Attachment, type EffortLevel, type ProjectWithStatus, type SlashCommand } from "shared";
 import { api } from "../hooks/useApi";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { SlashCommandInput } from "./SlashCommandInput";
@@ -14,6 +14,7 @@ interface MobileNewSessionProps {
   activeProjectId: string | null;
   onNewThread: (
     agent: string,
+    effortLevel: EffortLevel | null,
     prompt: string,
     isolate: boolean,
     projectId: string,
@@ -29,7 +30,11 @@ export function MobileNewSession({
   activeProjectId,
   onNewThread,
 }: MobileNewSessionProps) {
+  const detectedAgents = agents.filter((agent) => agent.detected);
+  const defaultAgent = detectedAgents[0]?.name ?? "claude";
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(activeProjectId);
+  const [selectedAgent, setSelectedAgent] = useState(defaultAgent);
+  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">("");
   const [prompt, setPrompt] = useState("");
   const [isolate, setIsolate] = useState(true);
   const [worktreeName, setWorktreeName] = useState(() => {
@@ -41,10 +46,14 @@ export function MobileNewSession({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const detectedAgents = agents.filter((a) => a.detected);
-  const [selectedAgent, setSelectedAgent] = useState(() => detectedAgents[0]?.name ?? "claude");
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const effortOptions = getEffortOptions(selectedAgent);
+
+  useEffect(() => {
+    if (effortLevel && !effortOptions.some((option) => option.value === effortLevel)) {
+      setEffortLevel("");
+    }
+  }, [effortLevel, effortOptions]);
 
   const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -120,6 +129,7 @@ export function MobileNewSession({
     const currentAttachments = attachments.length > 0 ? attachments : undefined;
     onNewThread(
       selectedAgent,
+      effortLevel || null,
       prompt.trim() || "(see attached files)",
       isolate,
       selectedProjectId,
@@ -167,25 +177,6 @@ export function MobileNewSession({
           ))}
         </div>
 
-        {/* Agent selector */}
-        {detectedAgents.length > 1 && (
-          <>
-            <label className="text-xs font-medium text-content-3 uppercase tracking-wider mb-1.5 block">
-              Agent
-            </label>
-            <select
-              value={selectedAgent}
-              onChange={(e) => setSelectedAgent(e.target.value)}
-              className="w-full text-sm bg-surface-1 border border-edge-1 rounded-lg px-3 py-2.5 text-content-2 mb-4 min-h-[44px]"
-            >
-              {detectedAgents.map((agent) => (
-                <option key={agent.name} value={agent.name}>
-                  {agent.name}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
       </div>
 
       {/* Prompt area */}
@@ -239,6 +230,44 @@ export function MobileNewSession({
                 placeholder={`What should the agent do in ${selectedProject.name}?`}
                 rows={4}
               />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mt-3">
+            <div>
+              <label className="text-xs font-medium text-content-3 uppercase tracking-wider mb-1.5 block">
+                Agent
+              </label>
+              <select
+                value={selectedAgent}
+                onChange={(e) => setSelectedAgent(e.target.value)}
+                className="w-full min-h-[44px] bg-surface-1 border border-edge-2 rounded-lg px-3 py-2 text-sm text-content-2 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                aria-label="Agent"
+              >
+                {detectedAgents.map((agent) => (
+                  <option key={agent.name} value={agent.name}>
+                    {agent.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-content-3 uppercase tracking-wider mb-1.5 block">
+                Effort
+              </label>
+              <select
+                value={effortLevel}
+                onChange={(e) => setEffortLevel(e.target.value as EffortLevel | "")}
+                className="w-full min-h-[44px] bg-surface-1 border border-edge-2 rounded-lg px-3 py-2 text-sm text-content-2 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                aria-label="Effort level"
+              >
+                <option value="">Default</option>
+                {effortOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
