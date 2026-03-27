@@ -4,14 +4,23 @@
 
 ### Added
 
+- **Merged-thread cleanup confirmation modal** — when cleanup finds threads that are only deletable because their PR was merged, Orchestra now shows a review modal with per-thread reasons and checkboxes before deleting anything
 - **Pinned TODO panel** — when an agent is working with an active task list, a compact TODO panel pins to the bottom of the thread (between the status bar and the input), showing task progress in real time without needing to scroll; collapsible via chevron, auto-hides when the turn ends
 - **Per-thread effort selector for Claude and Codex** — desktop and mobile new-session flows now let users choose reasoning effort before launch, with Codex-specific `Minimal/Low/Medium/High/Max` options and Claude-specific `Low/Medium/High` options
 - **Effort-level regression coverage** — shared helper tests and session-manager coverage now lock in agent-specific option validation and verify that resumed Codex turns keep the originally selected effort
 
 ### Changed
 
+- **Cleanup now distinguishes auto-clean, review, and skip cases** — the cleanup API returns separate `cleaned`, `needsConfirmation`, and `skipped` buckets so the client can show exact outcomes instead of a generic skipped count
+- **Cleanup labels reflect the broader behavior** — the project action is now labeled "Clean up merged/pushed" to match the merged-PR path and the modal/alert copy names the specific reason each thread was left alone
 - **Active thread headers now show the chosen effort** — desktop and mobile thread chrome now render `effort ...` beside the agent label so users can confirm how a session was started
 - **SDK thread startup now persists and reuses effort** — effort is stored on the thread record, forwarded into the Claude and Codex adapters, and reused on resumed turns instead of falling back to SDK defaults
+
+### Fixed
+
+- **Merged PRs with deleted source branches no longer get stuck forever** — cleanup now treats merged PRs with auto-deleted remote branches as eligible, while still routing them through confirmation
+- **Recently merged PRs are recognized immediately during cleanup** — the cleanup pass now refreshes PR status on demand instead of waiting for the stale-status window to expire
+- **Unverified merged heads default to safe behavior** — if Orchestra cannot verify the merged PR head OID, the confirmation row starts unchecked so local-only post-merge commits are not preselected for deletion
 
 ## [0.1.29.0] - 2026-03-27
 
