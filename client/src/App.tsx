@@ -24,6 +24,7 @@ import { MobileThreadHeader } from "./components/MobileThreadHeader";
 import { parseTodos } from "./components/renderers/TodoRenderer";
 import { OrchestraLogo } from "./components/OrchestraLogo";
 import { MergeAllPrsButton } from "./components/MergeAllPrsButton";
+import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -853,6 +854,11 @@ function AppInner() {
                 onScrollToBottom={() => chatViewRef.current?.scrollToBottom()}
                 todos={activeTodos}
                 queuedCount={activeThreadId ? (streaming.queuedCount.get(activeThreadId) ?? 0) : 0}
+              />
+              <PinnedTodoPanel
+                todos={activeTodos}
+                isRunning={isRunning}
+                turnEnded={activeTurnEnded}
               />
               <InputBar
                 agents={agents}
