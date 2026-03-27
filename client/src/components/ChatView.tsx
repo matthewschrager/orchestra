@@ -389,7 +389,7 @@ function groupConsecutiveTools(pairs: ToolPair[]): ToolPair[][] {
 
   for (const pair of pairs) {
     // Ask-user tools and TodoWrite always get their own group
-    if (isAskUserTool(pair.name) || pair.name === "TodoWrite") {
+    if (isAskUserTool(pair.name) || pair.name === "TodoWrite" || pair.name === "Bash") {
       if (current.length > 0) groups.push(current);
       groups.push([pair]);
       current = [];
@@ -426,6 +426,10 @@ const TOOL_RENDERERS: Record<string, (ctx: ToolRenderContext) => React.ReactNode
 function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false, latestTodoId = null }: { pair: ToolPair; isAnswered: boolean; onSubmitAnswers?: (text: string) => void; forceExpand?: boolean; latestTodoId?: string | null }) {
   // Auto-expand Edit tools so diffs are visible by default (like Claude CLI)
   const [expanded, setExpanded] = useState(pair.name === "Edit");
+  if (pair.name === "Bash") {
+    return <BashRenderer input={pair.input} output={pair.output} metadata={pair.metadata} forceExpand={forceExpand} />;
+  }
+
   const hasDetails = pair.input || pair.output;
   const isOpen = expanded || forceExpand;
 
@@ -490,8 +494,6 @@ function getRichRenderer(pair: ToolPair): React.ReactNode | null {
   switch (pair.name) {
     case "Edit":
       return <DiffRenderer input={pair.input} inline />;
-    case "Bash":
-      return <BashRenderer input={pair.input} output={pair.output} />;
     case "Read":
       return <ReadRenderer input={pair.input} output={pair.output} />;
     case "Grep":

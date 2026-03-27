@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseDiff } from "../DiffRenderer";
 import { computeDiff } from "../../../lib/diffCompute";
-import { parseBash } from "../BashRenderer";
+import { getBashPreview, parseBash } from "../BashRenderer";
 import { parseRead } from "../ReadRenderer";
 import { parseSearch, searchSummary } from "../SearchRenderer";
 import { parseAgentPrompt } from "../SubAgentCard";
@@ -237,6 +237,39 @@ describe("parseBash", () => {
 
   test("returns null for malformed JSON", () => {
     expect(parseBash("not json", "output")).toBeNull();
+  });
+
+  test("extracts exit code metadata and removes fallback marker from output", () => {
+    const input = JSON.stringify({ command: "false" });
+    const result = parseBash(input, "stderr line\n[exit code: 1]", { exitCode: 1 });
+    expect(result).not.toBeNull();
+    expect(result!.output).toBe("stderr line");
+    expect(result!.exitCode).toBe(1);
+  });
+
+  test("tracks successful exit codes from metadata", () => {
+    const input = JSON.stringify({ command: "echo ok" });
+    const result = parseBash(input, "ok\n", { exitCode: 0 });
+    expect(result).not.toBeNull();
+    expect(result!.output).toBe("ok");
+    expect(result!.exitCode).toBe(0);
+    expect(result!.lineCount).toBe(1);
+  });
+});
+
+describe("getBashPreview", () => {
+  test("returns full output when line count is within limit", () => {
+    const preview = getBashPreview("one\ntwo", 4);
+    expect(preview.text).toBe("one\ntwo");
+    expect(preview.totalLines).toBe(2);
+    expect(preview.hiddenLineCount).toBe(0);
+  });
+
+  test("truncates output to the requested number of lines", () => {
+    const preview = getBashPreview("1\n2\n3\n4\n5", 3);
+    expect(preview.text).toBe("1\n2\n3");
+    expect(preview.totalLines).toBe(5);
+    expect(preview.hiddenLineCount).toBe(2);
   });
 });
 
