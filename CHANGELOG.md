@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.26.1] - 2026-03-26
+
+### Changed
+
+- **Codex full-access sandbox mode** — changed Codex SDK `sandboxMode` from `"workspace-write"` to `"danger-full-access"`, matching Claude's `bypassPermissions` behavior so Codex agents can operate without filesystem restrictions
+
 ## [0.1.26.0] - 2026-03-26
 
 ### Added
