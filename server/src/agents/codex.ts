@@ -2,6 +2,8 @@
 // All imports MUST use await import(), never top-level import or require().
 // A top-level import would crash the server if the SDK is not installed.
 
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type {
   AgentAdapter,
   AgentSession,
@@ -46,7 +48,7 @@ export class CodexAdapter implements AgentAdapter {
 
   start(opts: StartOpts): AgentSession {
     const abortController = new AbortController();
-    const parser = new CodexParser();
+    const parser = new CodexParser(opts.cwd);
 
     async function* generateEvents(): AsyncGenerator<unknown> {
       const { Codex } = await import("@openai/codex-sdk");
@@ -92,6 +94,10 @@ export class CodexParser {
   private readonly lastTextByItemId = new Map<string, string>();
   /** Tracks last-seen command per item ID for streaming tool input */
   private readonly lastCommandByItemId = new Map<string, string>();
+  /** Snapshots file contents before a Codex file_change applies. */
+  private readonly fileSnapshotsByItemId = new Map<string, Map<string, string>>();
+
+  constructor(private readonly cwd: string = process.cwd()) {}
 
   handleEvent(msg: unknown): ParseResult {
     const event = msg as Record<string, unknown>;
@@ -170,6 +176,7 @@ export class CodexParser {
     if (!item) return EMPTY;
 
     const itemType = item.type as string;
+    const itemId = item.id as string;
 
     switch (itemType) {
       case "command_execution":
@@ -179,6 +186,7 @@ export class CodexParser {
         };
 
       case "file_change":
+        this.captureFileSnapshots(itemId, item.changes);
         return {
           messages: [],
           deltas: [{ deltaType: "tool_start", toolName: "Edit" }],
@@ -236,6 +244,10 @@ export class CodexParser {
         return EMPTY;
       }
 
+      case "file_change":
+        this.captureFileSnapshots(itemId, item.changes);
+        return EMPTY;
+
       // Other item types: no meaningful streaming updates
       default:
         return EMPTY;
@@ -283,15 +295,14 @@ export class CodexParser {
 
       case "file_change": {
         const changes = (item.changes as Array<{ path?: string; kind?: string }>) ?? [];
+        const beforeByPath = this.fileSnapshotsByItemId.get(itemId);
         const messages: ParsedMessage[] = changes.map((change) => ({
           role: "tool" as const,
           content: `${change.kind ?? "update"}: ${change.path ?? "unknown"}`,
           toolName: "Edit",
-          toolInput: JSON.stringify({
-            file_path: change.path ?? "unknown",
-            changeKind: change.kind ?? "update",
-          }),
+          toolInput: JSON.stringify(this.buildFileChangePayload(change, beforeByPath)),
         }));
+        this.fileSnapshotsByItemId.delete(itemId);
         return {
           messages,
           deltas: [{ deltaType: "tool_end" }],
@@ -382,6 +393,47 @@ export class CodexParser {
     if (prev === fullText) return "";
     if (!fullText.startsWith(prev)) return fullText;
     return fullText.slice(prev.length);
+  }
+
+  private captureFileSnapshots(itemId: string, rawChanges: unknown): void {
+    if (this.fileSnapshotsByItemId.has(itemId)) return;
+    const changes = (rawChanges as Array<{ path?: string }> | undefined) ?? [];
+    if (changes.length === 0) return;
+
+    const snapshots = new Map<string, string>();
+    for (const change of changes) {
+      const path = change.path;
+      if (!path || snapshots.has(path)) continue;
+      snapshots.set(path, this.readFileText(path));
+    }
+    this.fileSnapshotsByItemId.set(itemId, snapshots);
+  }
+
+  private buildFileChangePayload(
+    change: { path?: string; kind?: string },
+    beforeByPath?: Map<string, string>,
+  ): Record<string, string> {
+    const filePath = change.path ?? "unknown";
+    const changeKind = change.kind ?? "update";
+    const oldString = beforeByPath?.get(filePath) ?? "";
+    const newString = changeKind === "delete" ? "" : this.readFileText(filePath);
+
+    return {
+      file_path: filePath,
+      old_string: oldString,
+      new_string: newString,
+      changeKind,
+    };
+  }
+
+  private readFileText(path: string): string {
+    const absPath = resolve(this.cwd, path);
+    if (!existsSync(absPath)) return "";
+    try {
+      return readFileSync(absPath, "utf-8");
+    } catch {
+      return "";
+    }
   }
 }
 

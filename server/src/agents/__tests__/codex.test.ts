@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { CodexAdapter, CodexParser } from "../codex";
 
-function createParser() {
-  return new CodexParser();
+function createParser(cwd?: string) {
+  return new CodexParser(cwd);
 }
 
 describe("CodexAdapter", () => {
@@ -246,6 +249,74 @@ describe("CodexParser", () => {
 
     const toolEnd = result.deltas.find((d) => d.deltaType === "tool_end");
     expect(toolEnd).toBeDefined();
+  });
+
+  test("file_change snapshots old and new file contents for diff rendering", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "codex-parser-"));
+    try {
+      mkdirSync(join(tempDir, "src"), { recursive: true });
+      writeFileSync(join(tempDir, "src/index.ts"), "export const count = 1;\n");
+      writeFileSync(join(tempDir, "src/delete.ts"), "export const doomed = true;\n");
+
+      const parser = createParser(tempDir);
+      parser.handleEvent({
+        type: "item.started",
+        item: {
+          id: "fc-2",
+          type: "file_change",
+          changes: [
+            { path: "src/index.ts", kind: "update" },
+            { path: "src/new.ts", kind: "add" },
+            { path: "src/delete.ts", kind: "delete" },
+          ],
+          status: "completed",
+        },
+      });
+
+      writeFileSync(join(tempDir, "src/index.ts"), "export const count = 2;\n");
+      writeFileSync(join(tempDir, "src/new.ts"), "export const created = true;\n");
+      unlinkSync(join(tempDir, "src/delete.ts"));
+
+      const result = parser.handleEvent({
+        type: "item.completed",
+        item: {
+          id: "fc-2",
+          type: "file_change",
+          changes: [
+            { path: "src/index.ts", kind: "update" },
+            { path: "src/new.ts", kind: "add" },
+            { path: "src/delete.ts", kind: "delete" },
+          ],
+          status: "completed",
+        },
+      });
+
+      const updatePayload = JSON.parse(result.messages[0].toolInput ?? "{}");
+      expect(updatePayload).toMatchObject({
+        file_path: "src/index.ts",
+        old_string: "export const count = 1;\n",
+        new_string: "export const count = 2;\n",
+        changeKind: "update",
+      });
+
+      const addPayload = JSON.parse(result.messages[1].toolInput ?? "{}");
+      expect(addPayload).toMatchObject({
+        file_path: "src/new.ts",
+        old_string: "",
+        new_string: "export const created = true;\n",
+        changeKind: "add",
+      });
+
+      const deletePayload = JSON.parse(result.messages[2].toolInput ?? "{}");
+      expect(deletePayload).toMatchObject({
+        file_path: "src/delete.ts",
+        old_string: "export const doomed = true;\n",
+        new_string: "",
+        changeKind: "delete",
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   // ── MCP tool call ──────────────────────────────────────
