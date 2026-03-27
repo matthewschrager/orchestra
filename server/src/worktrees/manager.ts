@@ -4,6 +4,7 @@ import type { DB, ThreadRow } from "../db";
 import { getThread, updateThread } from "../db";
 import { gitSpawn } from "../utils/git";
 import { extractPrNumber } from "./pr-status";
+import type { CleanupReason } from "shared";
 
 export const DEFAULT_WORKTREE_ROOT = join(
   process.env.HOME || "~",
@@ -223,8 +224,17 @@ export class WorktreeManager {
     });
   }
 
-  /** Check if a worktree thread's branch has been fully pushed to remote */
-  async isPushedToRemote(threadId: string): Promise<{ pushed: boolean; reason?: string }> {
+  /**
+   * Check whether a worktree thread can be safely cleaned up.
+   *
+   * "Pushed" historically meant "safe to delete because the remote branch has
+   * the latest work". Also allow merged PRs whose source branch was deleted,
+   * which is common after squash-merge on GitHub.
+   */
+  async isPushedToRemote(
+    threadId: string,
+    opts?: { mergedPrHeadOid?: string | null },
+  ): Promise<{ pushed: boolean; reason?: CleanupReason; requiresConfirmation?: boolean }> {
     const thread = getThread(this.db, threadId) as ThreadRow | null;
     if (!thread?.worktree || !thread.branch) {
       return { pushed: false, reason: "no_worktree" };
@@ -254,6 +264,30 @@ export class WorktreeManager {
     });
     await refProc.exited;
     if (refProc.exitCode !== 0) {
+      if (thread.pr_status === "merged") {
+        if (opts?.mergedPrHeadOid) {
+          const headProc = gitSpawn(["rev-parse", "HEAD"], {
+            cwd: thread.worktree, stdout: "pipe", stderr: "pipe",
+          });
+          const headText = await new Response(headProc.stdout).text();
+          await headProc.exited;
+          if (headProc.exitCode !== 0) {
+            return { pushed: false, reason: "git_error" };
+          }
+          if (headText.trim() !== opts.mergedPrHeadOid) {
+            return {
+              pushed: false,
+              reason: "post_merge_commits",
+              requiresConfirmation: true,
+            };
+          }
+        }
+        return {
+          pushed: true,
+          reason: "remote_branch_deleted",
+          requiresConfirmation: true,
+        };
+      }
       return { pushed: false, reason: "not_on_remote" };
     }
 
