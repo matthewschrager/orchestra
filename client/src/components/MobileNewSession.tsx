@@ -1,14 +1,25 @@
-import { useState } from "react";
-import type { ProjectWithStatus, SlashCommand } from "shared";
+import { useCallback, useRef, useState } from "react";
+import type { Attachment, ProjectWithStatus, SlashCommand } from "shared";
+import { api } from "../hooks/useApi";
+import { AttachmentPreview } from "./AttachmentPreview";
 import { SlashCommandInput } from "./SlashCommandInput";
 import { WorktreePathInput } from "./WorktreePathInput";
+
+const MAX_ATTACHMENTS = 10;
 
 interface MobileNewSessionProps {
   projects: ProjectWithStatus[];
   agents: Array<{ name: string; detected: boolean }>;
   commands: SlashCommand[];
   activeProjectId: string | null;
-  onNewThread: (agent: string, prompt: string, isolate: boolean, projectId: string, worktreeName?: string) => void;
+  onNewThread: (
+    agent: string,
+    prompt: string,
+    isolate: boolean,
+    projectId: string,
+    worktreeName?: string,
+    attachments?: Attachment[],
+  ) => void;
 }
 
 export function MobileNewSession({
@@ -26,11 +37,69 @@ export function MobileNewSession({
     const suffix = Math.random().toString(36).slice(2, 13);
     return `orchestra/${project?.name ?? "project"}-${suffix}`;
   });
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const detectedAgents = agents.filter((a) => a.detected);
-  const [selectedAgent, setSelectedAgent] = useState(
-    () => detectedAgents[0]?.name ?? "claude"
-  );
+  const [selectedAgent, setSelectedAgent] = useState(() => detectedAgents[0]?.name ?? "claude");
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
+
+  const uploadFiles = useCallback(async (files: File[]) => {
+    if (files.length === 0) return;
+    setUploading(true);
+    try {
+      const uploaded = await Promise.all(files.map((file) => api.uploadFile(file)));
+      setAttachments((prev) => {
+        const combined = [...prev, ...uploaded];
+        if (combined.length > MAX_ATTACHMENTS) {
+          setUploadError(`Max ${MAX_ATTACHMENTS} attachments per message`);
+          setTimeout(() => setUploadError(null), 4000);
+          return combined.slice(0, MAX_ATTACHMENTS);
+        }
+        return combined;
+      });
+    } catch (err) {
+      setUploadError((err as Error).message);
+      setTimeout(() => setUploadError(null), 4000);
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((attachment) => attachment.id !== id));
+  }, []);
+
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const files: File[] = [];
+      for (const item of items) {
+        if (item.kind !== "file") continue;
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+
+      if (files.length > 0) {
+        e.preventDefault();
+        uploadFiles(files);
+      }
+    },
+    [uploadFiles],
+  );
+
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files || []);
+      uploadFiles(files);
+      e.target.value = "";
+    },
+    [uploadFiles],
+  );
 
   if (projects.length === 0) {
     return (
@@ -44,10 +113,21 @@ export function MobileNewSession({
     );
   }
 
+  const hasContent = prompt.trim() || attachments.length > 0;
+
   const handleSubmit = () => {
-    if (!prompt.trim() || !selectedProjectId) return;
-    onNewThread(selectedAgent, prompt.trim(), isolate, selectedProjectId, isolate ? worktreeName : undefined);
+    if (uploading || !hasContent || !selectedProjectId) return;
+    const currentAttachments = attachments.length > 0 ? attachments : undefined;
+    onNewThread(
+      selectedAgent,
+      prompt.trim() || "(see attached files)",
+      isolate,
+      selectedProjectId,
+      isolate ? worktreeName : undefined,
+      currentAttachments,
+    );
     setPrompt("");
+    setAttachments([]);
   };
 
   return (
@@ -98,9 +178,9 @@ export function MobileNewSession({
               onChange={(e) => setSelectedAgent(e.target.value)}
               className="w-full text-sm bg-surface-1 border border-edge-1 rounded-lg px-3 py-2.5 text-content-2 mb-4 min-h-[44px]"
             >
-              {detectedAgents.map((a) => (
-                <option key={a.name} value={a.name}>
-                  {a.name}
+              {detectedAgents.map((agent) => (
+                <option key={agent.name} value={agent.name}>
+                  {agent.name}
                 </option>
               ))}
             </select>
@@ -114,20 +194,57 @@ export function MobileNewSession({
           <label className="text-xs font-medium text-content-3 uppercase tracking-wider mb-1.5 block">
             Prompt
           </label>
-          <div>
-            <SlashCommandInput
-              value={prompt}
-              onChange={setPrompt}
-              onSubmit={handleSubmit}
-              commands={commands}
-              placeholder={`What should the agent do in ${selectedProject.name}?`}
-              rows={4}
+
+          {uploadError && (
+            <div className="mb-2 rounded-lg border border-red-500/20 bg-red-950/30 px-3 py-1.5 text-xs text-red-400">
+              {uploadError}
+            </div>
+          )}
+
+          {attachments.length > 0 && (
+            <AttachmentPreview
+              attachments={attachments}
+              onRemove={removeAttachment}
+              uploading={uploading}
             />
+          )}
+
+          <div className="flex items-end gap-2">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center self-end rounded-lg p-2 text-content-3 hover:bg-surface-3 hover:text-accent"
+              title="Attach file (or paste)"
+              disabled={uploading}
+            >
+              <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M14 8.5l-5.5 5.5a3.5 3.5 0 01-5-5L9 3.5a2 2 0 013 3L6.5 12a.5.5 0 01-1-1L11 5.5" />
+              </svg>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleFileSelect}
+              accept="image/*,.pdf,.txt,.csv,.md,.json,.xml,.html,.css,.js,.ts"
+            />
+
+            <div className="flex-1">
+              <SlashCommandInput
+                value={prompt}
+                onChange={setPrompt}
+                onSubmit={handleSubmit}
+                onPaste={handlePaste}
+                commands={commands}
+                placeholder={`What should the agent do in ${selectedProject.name}?`}
+                rows={4}
+              />
+            </div>
           </div>
 
-          <div className="flex flex-col gap-2 mt-3">
+          <div className="mt-3 flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-sm text-content-2 cursor-pointer">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-content-2">
                 <input
                   type="checkbox"
                   checked={isolate}
@@ -144,8 +261,8 @@ export function MobileNewSession({
               </label>
               <button
                 onClick={handleSubmit}
-                disabled={!prompt.trim() || !selectedProjectId}
-                className="px-5 py-2.5 bg-accent hover:bg-accent/80 disabled:opacity-40 rounded-lg text-sm font-medium text-white min-h-[44px]"
+                disabled={uploading || !hasContent || !selectedProjectId}
+                className="min-h-[44px] rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-white hover:bg-accent/80 disabled:opacity-40"
               >
                 Start Session
               </button>
