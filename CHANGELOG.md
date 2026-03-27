@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.26.1] - 2026-03-26
+
+### Changed
+
+- **Color-coded agent badges** — Claude threads display amber-tinted badges, Codex threads display cyan-tinted badges in sidebar, mobile thread list, and chat header for quick visual identification
+
 ## [0.1.26.0] - 2026-03-26
 
 ### Added
