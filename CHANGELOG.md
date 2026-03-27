@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.30.1] - 2026-03-27
+
+### Changed
+
+- **Tailscale browser sessions now sign in with identity bootstrap** — the first HTML request behind `tailscale serve` mints a signed `HttpOnly` session cookie from Tailscale user headers, and REST plus WebSocket traffic reuse that session instead of relying on loopback trust
+- **Remote access copy now matches the actual auth model** — the Settings panel explains Tailscale identity sign-in and keeps tagged-device or fallback access on the bearer token path
+
+### Fixed
+
+- **Always-on DNS rebinding protection no longer breaks LAN or tunnel usage** — Host and Origin allowlists now include the machine's local interface addresses, configured remote hosts, and tunnel hosts so bearer-auth LAN, SSH tunnel, and Cloudflare flows keep working while spoofed hosts still fail closed
+- **Tagged Tailscale requests now fail closed** — when Tailscale Serve omits user identity headers, Orchestra requires the bearer token instead of implicitly trusting loopback traffic
+- **IPv6 Host parsing no longer corrupts auth decisions** — bracketed hosts like `[::1]:4850` are normalized correctly before Host validation and request classification
+- **Auth hardening is covered by targeted regressions** — added tests for first-request Tailscale bootstrap, tagged-device fallback, LAN origin allowlisting, and IPv6 Host parsing
+
+
 ## [0.1.30.0] - 2026-03-27
 
 ### Added
