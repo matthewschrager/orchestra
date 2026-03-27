@@ -1,10 +1,16 @@
 # Changelog
 
-## [0.1.28.4] - 2026-03-27
+## [0.1.29.0] - 2026-03-27
+
+### Changed
+
+- **Bash tool calls now read like terminal activity** — completed Bash steps render as inline `Bash(...)` cards with success/failure state, the first four output lines, and a working expand/collapse control instead of a generic collapsed `Ran ...` row
+- **Codex command executions now expose exit-code metadata** — `command_execution` tool messages include `exitCode` metadata so the client can render explicit success state without depending only on raw output parsing
 
 ### Fixed
 
 - **Codex inline diffs now show real edits for completed-only file changes** — the Codex adapter snapshots the worktree at `turn.started`, falls back to that baseline when the SDK only emits a completed `file_change`, and rolls the baseline forward after each edit so update diffs no longer collapse into whole-file additions; added regression coverage for completed-only and multi-edit turn sequences
+- **Bash preview parsing covers exit markers and truncation** — added regression coverage for metadata-backed exit codes and preview-line truncation so Claude-style tool output stays stable as adapters evolve
 
 ## [0.1.28.3] - 2026-03-27
 
