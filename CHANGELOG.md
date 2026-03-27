@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.31.0] - 2026-03-27
+
+### Changed
+
+- **Todo task views now share one renderer** — latest TodoWrite cards, inline task renderers, and the pinned task panel now use the same row component so active, pending, and completed states stay visually consistent
+
+### Fixed
+
+- **Codex todo progress now shows a real active task** — live Codex todo snapshots now synthesize an `in_progress` item from the first unfinished step, so Orchestra no longer renders every unfinished task as plain pending
+- **Todo activity coverage is locked in** — added regression coverage for Codex live-vs-terminal todo states and for the shared in-progress task marker in the UI
+
 ## [0.1.30.0] - 2026-03-27
 
 ### Added
