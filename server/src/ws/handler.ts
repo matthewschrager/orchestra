@@ -256,7 +256,8 @@ export function createWSHandler(
 
         case "send_message":
           try {
-            sessionManager.sendMessage(msg.threadId, msg.content, msg.attachments);
+            const shouldInterrupt = msg.interrupt === true;
+            sessionManager.sendMessage(msg.threadId, msg.content, msg.attachments, { interrupt: shouldInterrupt });
           } catch (err) {
             ws.send(
               JSON.stringify({

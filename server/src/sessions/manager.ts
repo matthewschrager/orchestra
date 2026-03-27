@@ -26,6 +26,9 @@ export type SessionState = "thinking" | "idle" | "waiting";
 /** Max auto-restart attempts before giving up (prevents infinite restart loops) */
 const MAX_AUTO_RESTARTS = 2;
 
+/** Max messages that can be queued during a single agent turn */
+const MAX_QUEUED_MESSAGES = 5;
+
 export interface ActiveSession {
   threadId: string;
   session: AgentSession;
@@ -42,6 +45,8 @@ export interface ActiveSession {
   state: SessionState;
   /** Number of auto-restarts attempted (circuit breaker for restart loops) */
   restartCount: number;
+  /** Number of messages queued during the current turn (reset on turn_end) */
+  queuedCount: number;
 }
 
 type MessageListener = (threadId: string, message: MessageRow) => void;
@@ -197,8 +202,8 @@ export class SessionManager {
     }
   }
 
-  sendMessage(threadId: string, content: string, attachments?: Attachment[], opts?: { internal?: boolean }): void {
-    if (DEBUG) console.log(`[session] sendMessage thread=${threadId} content=${content.slice(0, 60)}`);
+  sendMessage(threadId: string, content: string, attachments?: Attachment[], opts?: { internal?: boolean; interrupt?: boolean }): void {
+    if (DEBUG) console.log(`[session] sendMessage thread=${threadId} content=${content.slice(0, 60)} interrupt=${!!opts?.interrupt}`);
     const thread = getThread(this.db, threadId) as ThreadRow | null;
     if (!thread) throw new Error(`Thread ${threadId} not found`);
 
@@ -207,8 +212,8 @@ export class SessionManager {
 
     const existing = this.sessions.get(threadId);
 
-    // Guard: reject messages while persistent session is mid-turn (BEFORE persisting)
-    if (existing?.persistent && existing.state === "thinking") {
+    // Guard: non-persistent sessions still block during thinking (no queue support)
+    if (existing && !existing.persistent && existing.state === "thinking") {
       throw new Error("Agent is still processing — wait for it to finish");
     }
 
@@ -219,6 +224,61 @@ export class SessionManager {
     const orphaned = orphanAttentionItems(this.db, threadId);
     if (orphaned > 0 && DEBUG) {
       console.log(`[session] Orphaned ${orphaned} stale attention items for ${threadId} on sendMessage`);
+    }
+
+    // ── QUEUE PATH: persistent session mid-turn — queue message for next turn ──
+    if (existing?.persistent && existing.state === "thinking") {
+      // Content validation: reject empty/whitespace before consuming queue slot
+      if (!content.trim()) {
+        throw new Error("Cannot queue an empty message");
+      }
+      // Queue depth limit
+      if (existing.queuedCount >= MAX_QUEUED_MESSAGES) {
+        throw new Error("Queue full — wait for the agent to finish this turn");
+      }
+
+      // Persist user message immediately so it appears in chat
+      const validAttachments = this.validateAttachments(attachments);
+      this.persistMessage(threadId, {
+        role: "user",
+        content,
+        metadata: validAttachments?.length ? { attachments: validAttachments } : undefined,
+      });
+
+      const agentPrompt = this.buildPromptWithAttachments(content, validAttachments);
+
+      // Phase 1: interrupt param is accepted but ignored (always queue as 'next')
+      const priority = "next" as const;
+      if (opts?.interrupt && DEBUG) {
+        console.log(`[session] interrupt=true requested for ${threadId} but not yet implemented (Phase 2) — queuing as 'next'`);
+      }
+
+      const sessionId = existing.sessionId ?? this.getPersistedSessionId(threadId);
+      if (!sessionId) {
+        console.warn(`[session] No sessionId for queue inject on ${threadId} — message persisted but not injected`);
+        existing.queuedCount++;
+        this.notifyStreamDelta(threadId, { threadId, deltaType: "queued_message", queuedCount: existing.queuedCount });
+        return;
+      }
+
+      // Inject with priority — async errors handled via catch
+      try {
+        const injectPromise = (existing.session as PersistentSession).injectMessage(agentPrompt, sessionId, priority);
+        injectPromise.catch((err) => {
+          if (existing.aborted || !this.sessions.has(threadId)) return;
+          console.error(`[session] queued streamInput failed for ${threadId}:`, err);
+          // Message is persisted — user can resend if agent restarts
+        });
+      } catch (err) {
+        // Synchronous throw: don't count as queued (inject never reached CLI)
+        if (existing.aborted || !this.sessions.has(threadId)) return;
+        console.error(`[session] queued streamInput threw for ${threadId}:`, err);
+        return;
+      }
+
+      existing.queuedCount++;
+      this.notifyStreamDelta(threadId, { threadId, deltaType: "queued_message", queuedCount: existing.queuedCount });
+      return;
     }
 
     // Validate attachments and persist user message
@@ -240,12 +300,13 @@ export class SessionManager {
     // Get the cwd — use worktree if isolated, otherwise repo_path
     const cwd = thread.worktree || thread.repo_path;
 
-    // ── PERSISTENT PATH: inject into living subprocess ──
+    // ── PERSISTENT PATH: inject into living subprocess (idle/waiting state) ──
     if (existing?.persistent) {
 
       // Transition to thinking + refresh inactivity timestamp
       existing.state = "thinking";
       existing.lastMessageAt = Date.now();
+      existing.queuedCount = 0;
       updateThread(this.db, threadId, { status: "running", error_message: null });
       this.notifyThread(threadId);
 
@@ -449,6 +510,7 @@ export class SessionManager {
       persistent: false,
       state: "thinking",
       restartCount: 0,
+      queuedCount: 0,
     };
     this.sessions.set(threadId, active);
 
@@ -503,6 +565,7 @@ export class SessionManager {
       persistent: true,
       state: "thinking",
       restartCount,
+      queuedCount: 0,
     };
     this.sessions.set(threadId, active);
 
@@ -606,6 +669,7 @@ export class SessionManager {
           const hasPendingAttention = getPendingAttention(this.db, threadId).length > 0;
           const newState: SessionState = hasPendingAttention ? "waiting" : "idle";
           activeSession.state = newState;
+          activeSession.queuedCount = 0;
           turnMessageCount = 0;
 
           if (DEBUG) console.log(`[stream] Thread ${threadId} — persistent turn ended, state → ${newState}`);

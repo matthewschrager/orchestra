@@ -19,8 +19,9 @@ export interface AgentSession {
 
 /** Extended session that keeps the subprocess alive between turns */
 export interface PersistentSession extends AgentSession {
-  /** Inject a follow-up user message into the running subprocess */
-  injectMessage(text: string, sessionId: string): Promise<void>;
+  /** Inject a follow-up user message into the running subprocess.
+   *  @param priority - 'next' queues for after current turn (default), 'now' interrupts current turn */
+  injectMessage(text: string, sessionId: string, priority?: "now" | "next"): Promise<void>;
   /** Cleanly close the subprocess and all MCP connections */
   close(): void;
   /** Reset parser turn-level state (tool dedup sets, active blocks) between turns */
