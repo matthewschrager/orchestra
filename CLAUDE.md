@@ -87,6 +87,7 @@ cd server && bun run src/index.ts  # Production server
 
 - Agents use `@anthropic-ai/claude-agent-sdk` (pinned v0.2.81) — SDK manages subprocess lifecycle internally
 - **Persistent sessions**: Claude Code sessions use a long-lived `Query` object per thread — subprocess stays alive between turns, follow-ups injected via `streamInput()`. Eliminates MCP reconnection delay on follow-up messages. State machine: `thinking → idle/waiting → thinking`. Falls back to legacy `resume` path if subprocess crashes.
+- **Message queuing**: Users can send messages while the agent is working (state `"thinking"`). Messages are persisted immediately and injected into the CLI subprocess via `streamInput()` with `priority: 'next'` (SDK passthrough to CLI's internal queue). Queue depth limit: 5 messages per turn. `queuedCount` tracked on `ActiveSession`, reset on `turn_end`. `queued_message` stream delta emitted from `sendMessage()` (not parser). Non-persistent adapters (Codex) keep current blocking behavior. `interrupt` boolean accepted in WS/REST API but ignored in Phase 1 (no-op). InputBar always enabled — Send + Stop shown side-by-side during active runs. StickyRunBar shows "· N queued" when messages pending.
 - Legacy sessions (non-persistent adapters): `query()` with `resume` per turn
 - SDK options: `permissionMode: "bypassPermissions"`, `cwd` per-call for multi-project isolation
 - Multi-project: single server manages multiple registered git repos via `projects` table

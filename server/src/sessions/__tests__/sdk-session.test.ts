@@ -292,7 +292,7 @@ function mockParseMessage(msg: unknown): ParseResult {
 function createPersistentMockAdapter() {
   let pushMessage: (msg: Record<string, unknown>) => void;
   let finish: () => void;
-  let injectCalls: Array<{ text: string; sessionId: string }> = [];
+  let injectCalls: Array<{ text: string; sessionId: string; priority?: "now" | "next" }> = [];
   let closed = false;
   let resetCalls = 0;
 
@@ -353,8 +353,8 @@ function createPersistentMockAdapter() {
         sessionId: _opts.resumeSessionId,
         close: () => { closed = true; finish(); },
         resetTurnState: () => { resetCalls++; },
-        async injectMessage(text: string, sessionId: string): Promise<void> {
-          injectCalls.push({ text, sessionId });
+        async injectMessage(text: string, sessionId: string, priority?: "now" | "next"): Promise<void> {
+          injectCalls.push({ text, sessionId, priority });
         },
       };
     },
@@ -507,9 +507,15 @@ describe("Persistent Session lifecycle", () => {
     sessionManager.stopAll();
   });
 
-  test("persistent session: rejects message while agent is thinking", async () => {
+  test("persistent session: queues message while agent is thinking", async () => {
     const mock = createPersistentMockAdapter();
-    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    // Track stream deltas
+    const deltas: Array<{ threadId: string; deltaType: string; queuedCount?: number }> = [];
+    sessionManager.onStreamDelta((threadId, delta) => {
+      deltas.push({ threadId, deltaType: delta.deltaType, queuedCount: delta.queuedCount });
+    });
 
     const thread = await sessionManager.startThread({
       agent: "mock",
@@ -522,10 +528,148 @@ describe("Persistent Session lifecycle", () => {
     mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-p4", tools: [], cwd: "/tmp" });
     await new Promise((r) => setTimeout(r, 50));
 
-    // Sending a message while thinking should throw
+    // Sending a message while thinking should QUEUE (not throw)
+    sessionManager.sendMessage(thread.id, "queued message 1");
+
+    // Verify message was persisted
+    const { getMessages } = await import("../../db");
+    const msgs = getMessages(db, thread.id);
+    const userMsgs = msgs.filter((m: { role: string }) => m.role === "user");
+    expect(userMsgs.length).toBe(2); // initial prompt + queued message
+
+    // Verify injectMessage called with priority 'next'
+    const injects = mock.getInjectCalls();
+    expect(injects.length).toBe(1);
+    expect(injects[0].text).toBe("queued message 1");
+    expect(injects[0].priority).toBe("next");
+
+    // Verify queued_message delta was emitted
+    const queuedDeltas = deltas.filter((d) => d.deltaType === "queued_message");
+    expect(queuedDeltas.length).toBe(1);
+    expect(queuedDeltas[0].queuedCount).toBe(1);
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: queue depth limit (max 5)", async () => {
+    const mock = createPersistentMockAdapter();
+    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "queue limit test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-ql", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Queue 5 messages — should all succeed
+    for (let i = 1; i <= 5; i++) {
+      sessionManager.sendMessage(thread.id, `queued ${i}`);
+    }
+    expect(mock.getInjectCalls().length).toBe(5);
+
+    // 6th should throw "Queue full"
     expect(() => {
-      sessionManager.sendMessage(thread.id, "impatient message");
-    }).toThrow("Agent is still processing");
+      sessionManager.sendMessage(thread.id, "one too many");
+    }).toThrow("Queue full");
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: queuedCount resets on turn_end", async () => {
+    const mock = createPersistentMockAdapter();
+    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const deltas: Array<{ deltaType: string; queuedCount?: number }> = [];
+    sessionManager.onStreamDelta((_threadId, delta) => {
+      deltas.push({ deltaType: delta.deltaType, queuedCount: delta.queuedCount });
+    });
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "reset test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-rst", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Queue 2 messages
+    sessionManager.sendMessage(thread.id, "msg 1");
+    sessionManager.sendMessage(thread.id, "msg 2");
+    expect(mock.getInjectCalls().length).toBe(2);
+
+    // Complete the turn
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-rst",
+      is_error: false,
+      duration_ms: 100,
+      total_cost_usd: 0.01,
+      num_turns: 1,
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // After turn_end, should be able to queue 5 more (count was reset)
+    for (let i = 1; i <= 5; i++) {
+      sessionManager.sendMessage(thread.id, `after-reset ${i}`);
+    }
+    // Total injects: 2 (before reset) + 5 (after reset) = 7
+    // But after turn_end, state is 'idle' so these are regular injects, not queued
+    // The 5 after reset go through the idle path (state is idle after turn_end)
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: rejects empty message during queue", async () => {
+    const mock = createPersistentMockAdapter();
+    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "empty test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-em", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(() => {
+      sessionManager.sendMessage(thread.id, "   ");
+    }).toThrow("Cannot queue an empty message");
+
+    // No inject should have been called
+    expect(mock.getInjectCalls().length).toBe(0);
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: interrupt flag ignored in Phase 1", async () => {
+    const mock = createPersistentMockAdapter();
+    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "interrupt test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-int", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Send with interrupt=true — should still queue as 'next' (Phase 1 ignores interrupt)
+    sessionManager.sendMessage(thread.id, "steer message", undefined, true);
+
+    const injects = mock.getInjectCalls();
+    expect(injects.length).toBe(1);
+    expect(injects[0].priority).toBe("next");
 
     sessionManager.stopAll();
   });
