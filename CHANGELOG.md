@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.30.1] - 2026-03-27
+
+### Fixed
+
+- **Codex runs now keep their token-usage summary visible** — Orchestra now forwards Codex `turn.completed` token counts into the streaming metrics path, treats them as completed-turn metrics so the idle session summary survives, and falls back to a token-only run-bar display when the Codex SDK does not provide a context-window size; added regression coverage for both the server parser and the run-bar formatting logic
+
 ## [0.1.30.0] - 2026-03-27
 
 ### Added
