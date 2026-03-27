@@ -10,7 +10,7 @@
 ### Fixed
 
 - **Codex inline diffs now show real edits for completed-only file changes** — the Codex adapter snapshots the worktree at `turn.started`, falls back to that baseline when the SDK only emits a completed `file_change`, and rolls the baseline forward after each edit so update diffs no longer collapse into whole-file additions; added regression coverage for completed-only and multi-edit turn sequences
-- **Bash preview parsing covers exit markers and truncation** — added regression coverage for metadata-backed exit codes and preview-line truncation so Claude-style tool output stays stable as adapters evolve
+- **Bash previews stay stable as adapters evolve** — regression coverage now locks in metadata-backed exit codes and preview-line truncation, so the Claude-style preview keeps behaving the same release to release
 
 ## [0.1.28.3] - 2026-03-27
 

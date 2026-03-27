@@ -32,7 +32,7 @@ Existing tools were either tied to a single model, required per-token API billin
 
 ## Features
 
-- **Thread-based UX** — Manage agent conversations as threads with streaming output, collapsible tool blocks, and rich diffs
+- **Thread-based UX** — Manage agent conversations as threads with streaming output, inline Bash previews, collapsible tool blocks, and rich diffs
 - **Remote/mobile access** — Use from your phone while agents run on your laptop, with push notifications for attention events
 - **Git worktree isolation** — One-click isolation of a thread into its own worktree
 - **PR creation** — Create PRs directly from worktree threads via `gh`, with live status badges
