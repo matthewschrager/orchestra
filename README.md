@@ -76,7 +76,11 @@ By default, Orchestra binds to `127.0.0.1` (localhost only). To enable remote ac
 ORCHESTRA_HOST=0.0.0.0 bun run server/src/index.ts
 ```
 
-This generates a bearer token stored in `~/.orchestra/auth-token`. You'll need it to connect from other devices.
+This generates a bearer token stored in `~/.orchestra/auth-token`.
+
+- **LAN / Cloudflare Tunnel / SSH tunnel** — use the bearer token to sign in from other devices
+- **Tailscale Serve browser access** — Orchestra bootstraps a short-lived `HttpOnly` session from Tailscale identity headers
+- **Tagged-device or fallback Tailscale access** — still uses the bearer token
 
 **Recommended setup:**
 - **Tailscale** — zero-config VPN, works from anywhere

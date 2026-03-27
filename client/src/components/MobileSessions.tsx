@@ -1,4 +1,5 @@
 import type { ProjectWithStatus, Thread } from "shared";
+import { getEffectiveOutstandingPrCount } from "../lib/prCounts";
 import { MergeAllPrsButton } from "./MergeAllPrsButton";
 import { PrBadge } from "./PrBadge";
 
@@ -66,6 +67,7 @@ export function MobileSessions({
     <div className="overflow-y-auto">
       {projects.map((project) => {
         const projectThreads = threadsByProject(project.id);
+        const outstandingPrCount = getEffectiveOutstandingPrCount(project, projectThreads);
         return (
           <div key={project.id}>
             {/* Project header */}
@@ -84,10 +86,10 @@ export function MobileSessions({
                   </button>
                 </div>
               </div>
-              {project.outstandingPrCount > 0 && (
+              {outstandingPrCount > 0 && (
                 <div className="mt-2">
                   <MergeAllPrsButton
-                    count={project.outstandingPrCount}
+                    count={outstandingPrCount}
                     compact
                     busy={mergingProjectId === project.id}
                     onClick={() => onMergeAllPrs(project.id)}
