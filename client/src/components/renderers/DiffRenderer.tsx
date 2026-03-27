@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { computeDiff, type DiffLine } from "../../lib/diffCompute";
 import { getHighlighter, detectLanguage } from "../../lib/shiki";
 import type { ThemedToken } from "shiki";
+import { FilePathLink } from "../FilePathLink";
 
 // ── Parser (pure — no diff computation) ────────────────────
 
@@ -81,7 +82,7 @@ export function DiffRenderer({ input }: Props) {
     return (
       <div className="renderer-block">
         <div className="renderer-header">
-          <span className="font-mono text-xs truncate">{shortenPath(parsed.filePath)}</span>
+          <FilePathLink path={parsed.filePath} />
         </div>
         <div className="renderer-body text-xs text-content-3 italic">No changes</div>
       </div>
@@ -95,7 +96,7 @@ export function DiffRenderer({ input }: Props) {
   return (
     <div className="renderer-block">
       <div className="renderer-header">
-        <span className="font-mono text-xs truncate">{shortenPath(parsed.filePath)}</span>
+        <FilePathLink path={parsed.filePath} />
         <span className="flex items-center gap-2 text-[11px] shrink-0">
           {parsed.additions > 0 && <span className="text-diff-add">+{parsed.additions}</span>}
           {parsed.removals > 0 && <span className="text-diff-remove">−{parsed.removals}</span>}
@@ -210,13 +211,6 @@ function useShikiTokens(oldStr: string, newStr: string, language: string): Token
 }
 
 // ── Utilities ──────────────────────────────────────────────
-
-function shortenPath(p: string): string {
-  if (!p || !p.includes("/")) return p;
-  const parts = p.split("/").filter(Boolean);
-  if (parts.length <= 3) return p;
-  return "…/" + parts.slice(-3).join("/");
-}
 
 function formatJson(s: string): string {
   try {

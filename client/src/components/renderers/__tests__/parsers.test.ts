@@ -281,6 +281,45 @@ describe("parseRead", () => {
     expect(result).not.toBeNull();
     expect(result!.lineStart).toBe(42);
   });
+
+  test("detects image file by extension", () => {
+    const input = JSON.stringify({ file_path: "/tmp/screenshot.png" });
+    const result = parseRead(input, "");
+    expect(result).not.toBeNull();
+    expect(result!.isImage).toBe(true);
+    expect(result!.content).toBe("");
+  });
+
+  test("detects JPEG as image", () => {
+    const input = JSON.stringify({ file_path: "/tmp/photo.jpg" });
+    const result = parseRead(input, "binary content here");
+    expect(result).not.toBeNull();
+    expect(result!.isImage).toBe(true);
+  });
+
+  test("does not treat SVG as image (XSS risk)", () => {
+    const input = JSON.stringify({ file_path: "/tmp/icon.svg" });
+    const result = parseRead(input, "<svg>...</svg>");
+    expect(result).not.toBeNull();
+    expect(result!.isImage).toBe(false);
+  });
+
+  test("does not treat TypeScript as image", () => {
+    const input = JSON.stringify({ file_path: "/src/index.ts" });
+    const result = parseRead(input, "export const x = 1;");
+    expect(result).not.toBeNull();
+    expect(result!.isImage).toBe(false);
+    expect(result!.content).toBe("export const x = 1;");
+  });
+
+  test("non-image binary file has isImage false", () => {
+    const input = JSON.stringify({ file_path: "/tmp/data.bin" });
+    // Simulate binary content with null bytes
+    const result = parseRead(input, "\0\0\0binary");
+    expect(result).not.toBeNull();
+    expect(result!.isImage).toBe(false);
+    expect(result!.content).toBe("");
+  });
 });
 
 // ── SearchRenderer ───────────────────────────────────
