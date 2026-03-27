@@ -23,6 +23,7 @@
 - **Auth hardening is covered by targeted regressions** — added tests for first-request Tailscale bootstrap, tagged-device fallback, LAN origin allowlisting, and IPv6 Host parsing
 - **Long single-line bash previews no longer explode vertically** — bash tool previews now truncate pathological one-line output in collapsed mode, offer an expand affordance for truncated single lines, and keep expanded output on one visual row via horizontal scrolling instead of vertical wrapping
 - **Bash long-line truncation is now regression-tested** — renderer parser coverage now locks in single-line truncation and mixed hidden-line-plus-truncated-line preview behavior
+- **Send button vertical misalignment** — removed conflicting `text-base` class that overrode `text-sm` on the Send button, making it taller than the input textarea and visually misaligned
 
 ## [0.1.30.0] - 2026-03-27
 

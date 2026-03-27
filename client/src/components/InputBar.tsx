@@ -273,7 +273,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
         <button
           onClick={handleSubmit}
           disabled={uploading || (!input.trim() && attachments.length === 0)}
-          className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base shrink-0 border border-transparent"
+          className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium shrink-0 border border-transparent"
           title="Enter to send, Shift+Enter for newline"
         >
           {mode === "new" && thread ? "New" : "Send"}
