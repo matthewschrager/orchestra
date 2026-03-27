@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { TodoItem } from "shared";
+import { TodoItemList } from "./TodoItemList";
 
 interface Props {
   todos: TodoItem[] | null;
@@ -57,31 +58,8 @@ export function PinnedTodoPanel({ todos, isRunning, turnEnded }: Props) {
 
       {/* Task list — collapsible */}
       {!collapsed && (
-        <div className="px-3 pb-2" role="list">
-          {todos.map((item, i) => (
-            <div
-              key={i}
-              role="listitem"
-              className={`flex items-start gap-2 py-[3px] text-xs ${
-                item.status === "completed"
-                  ? "text-content-3"
-                  : item.status === "in_progress"
-                    ? "text-accent"
-                    : "text-content-2"
-              }`}
-            >
-              <span
-                className={`shrink-0 w-4 text-center ${
-                  item.status === "completed" ? "text-emerald-400" : ""
-                }`}
-              >
-                {item.status === "completed" ? "✓" : item.status === "in_progress" ? "▸" : "○"}
-              </span>
-              <span className={item.status === "completed" ? "line-through" : ""}>
-                {item.status === "in_progress" ? item.activeForm : item.content}
-              </span>
-            </div>
-          ))}
+        <div className="px-3 pb-2">
+          <TodoItemList items={todos} compact />
         </div>
       )}
     </div>

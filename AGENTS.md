@@ -56,6 +56,7 @@ orchestra/
 │       │   ├── ChatView.tsx      Chat messages + tool rendering
 │       │   ├── ContextPanel.tsx  Thread context/worktree panel
 │       │   ├── StickyRunBar.tsx  Real-time status + metrics strip
+│       │   ├── PinnedTodoPanel.tsx Pinned TODO list above input (visible while agent works)
 │       │   ├── InputBar.tsx      Message input with slash commands
 │       │   ├── MarkdownContent.tsx Markdown rendering with Shiki highlighting
 │       │   ├── ProjectSidebar.tsx Project/thread navigation
@@ -116,7 +117,8 @@ cd server && bun run src/index.ts  # Production server
 - Token auth enforced for non-localhost requests (and always when `--tunnel` is active)
 - Security hardening: CORS restricted to known origins via shared `getAllowedOrigins()` helper (`utils/origins.ts`); Origin header validation on mutations (CSRF); Host header validation with Tailscale support (DNS rebinding); WebSocket Origin check on upgrade (CORS doesn't protect WS); CSP + X-Frame-Options + nosniff + Referrer-Policy headers; filesystem browse restricted to `$HOME` with `realpathSync` + trailing-slash prefix collision fix; SQL column allowlists on `updateProject`/`updateThread`; per-client WS rate limiting (60/10s sliding window); attachment extension + MIME type control-char sanitization; SW targetUrl same-origin validation; DOMPurify on MarkdownContent Shiki output
 - Rich tool renderers parse stream-json tool data into visual components (diffs, inline Bash previews, search results); special tools (AskUser, Agent, TodoWrite) registered in declarative `TOOL_RENDERERS` map
-- TodoWrite rendering: latest TodoWrite renders as prominent card with all tasks, per-task status (✓ completed/▸ running/○ queued), progress bar, ARIA roles; prior TodoWrites collapse to expandable summary lines; `parseTodos()` normalizes both Claude SDK `{todos}` and Codex `{items}` shapes; `latestTodos` hydrated from REST history with streaming race guard
+- TodoWrite rendering: latest TodoWrite renders as prominent card with all tasks, per-task status (✓ completed/▸ running/○ queued), progress bar, ARIA roles; Codex now streams canonical `{todos}` snapshots with `in_progress` status during live updates, while `parseTodos()` still accepts legacy Codex `{items}` payloads; `TodoItemList` is shared across the latest card, inline renderer, and pinned panel; prior TodoWrites collapse to expandable summary lines; `latestTodos` hydrated from REST history with streaming race guard
+- Pinned TODO panel: `PinnedTodoPanel` component sits between StickyRunBar and InputBar; visible while agent is actively working (`isRunning && !turnEnded`) and `activeTodos` exist; collapsible via chevron toggle; header shows task icon + progress counter + inline progress bar; auto-hides when turn ends; CSS: `pinned-todo-panel` with subtle accent background + top border
 - Shiki syntax highlighting lazy-loaded via shared module-level singleton (`lib/shiki.ts`) with DOMPurify sanitization; ReadRenderer uses `codeToHtml`, DiffRenderer uses `codeToTokens` (per-line control for diff backgrounds)
 - DiffRenderer: Myers LCS diff algorithm (`lib/diffCompute.ts`) with line numbers, syntax highlighting, context lines; empty-string guards, trailing newline normalization, 500-line bail-out, 100-line outer truncation; mobile hides line numbers <640px; fallback semantic colors when Shiki unavailable
 - Streaming state managed via useReducer with turnEnded flag to prevent phantom "Thinking..." indicators
