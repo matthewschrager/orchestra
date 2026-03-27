@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.30.1] - 2026-03-27
+
+### Fixed
+
+- **Send button vertical misalignment** — removed conflicting `text-base` class that overrode `text-sm` on the Send button, making it taller than the input textarea and visually misaligned
+
 ## [0.1.30.0] - 2026-03-27
 
 ### Added
