@@ -23,7 +23,7 @@ export function createAttentionRoutes(db: DB, sessionManager: SessionManager) {
       return c.json({ error: "resolution with type field required" }, 400);
     }
 
-    const resolved = sessionManager.resolveAttention(id, resolution);
+    const resolved = await sessionManager.resolveAttention(id, resolution);
     if (!resolved) {
       return c.json({ error: "Attention item not found" }, 404);
     }

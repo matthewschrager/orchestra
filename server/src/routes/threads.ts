@@ -111,13 +111,14 @@ export function createThreadRoutes(
 
   // Send message to running thread
   app.post("/:id/messages", async (c) => {
-    const { content, attachments } = await c.req.json<{
+    const { content, attachments, interrupt } = await c.req.json<{
       content: string;
       attachments?: import("shared").Attachment[];
+      interrupt?: boolean;
     }>();
     if (!content) return c.json({ error: "content is required" }, 400);
     try {
-      sessionManager.sendMessage(c.req.param("id"), content, attachments);
+      sessionManager.sendMessage(c.req.param("id"), content, attachments, { interrupt: interrupt === true });
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 400);

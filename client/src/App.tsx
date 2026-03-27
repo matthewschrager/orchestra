@@ -57,6 +57,8 @@ interface StreamingState {
   metrics: Map<string, TurnMetrics>;
   /** Threads that received turn_end but thread status hasn't updated to done yet */
   turnEnded: Set<string>;
+  /** Number of messages queued during current agent turn (per thread) */
+  queuedCount: Map<string, number>;
 }
 
 const initialStreamingState: StreamingState = {
@@ -65,6 +67,7 @@ const initialStreamingState: StreamingState = {
   toolInput: new Map(),
   metrics: new Map(),
   turnEnded: new Set(),
+  queuedCount: new Map(),
 };
 
 const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0, modelName: null };
@@ -142,7 +145,15 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
           toolInput.delete(delta.threadId);
           const turnEnded = new Set(state.turnEnded);
           turnEnded.add(delta.threadId);
-          return { ...state, text, tool, toolInput, turnEnded };
+          // Reset queued count on turn end
+          const queuedCountTe = new Map(state.queuedCount);
+          queuedCountTe.delete(delta.threadId);
+          return { ...state, text, tool, toolInput, turnEnded, queuedCount: queuedCountTe };
+        }
+        case "queued_message": {
+          const queuedCountQm = new Map(state.queuedCount);
+          queuedCountQm.set(delta.threadId, delta.queuedCount ?? 0);
+          return { ...state, queuedCount: queuedCountQm };
         }
         default:
           return state;
@@ -480,12 +491,16 @@ function AppInner() {
     }
   };
 
-  const handleSendMessage = async (content: string, attachments?: Attachment[]) => {
+  const handleSendMessage = async (content: string, attachments?: Attachment[], interrupt?: boolean) => {
     if (!activeThreadId) return;
     try {
       setError(null);
-      turnStartRef.current = Date.now();
-      send({ type: "send_message", threadId: activeThreadId, content, attachments });
+      // Only reset turn timer when starting a new turn, not when queuing mid-turn
+      const thread = threads.find((t) => t.id === activeThreadId);
+      if (!thread || thread.status !== "running") {
+        turnStartRef.current = Date.now();
+      }
+      send({ type: "send_message", threadId: activeThreadId, content, attachments, interrupt: interrupt ?? false });
     } catch (err) {
       setError((err as Error).message);
     }
@@ -810,6 +825,7 @@ function AppInner() {
                 onInterrupt={handleStopThread}
                 onScrollToBottom={() => chatViewRef.current?.scrollToBottom()}
                 todos={activeTodos}
+                queuedCount={activeThreadId ? (streaming.queuedCount.get(activeThreadId) ?? 0) : 0}
               />
               <InputBar
                 agents={agents}

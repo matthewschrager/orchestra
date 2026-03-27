@@ -19,12 +19,16 @@ export interface AgentSession {
 
 /** Extended session that keeps the subprocess alive between turns */
 export interface PersistentSession extends AgentSession {
-  /** Inject a follow-up user message into the running subprocess */
-  injectMessage(text: string, sessionId: string): Promise<void>;
+  /** Inject a follow-up user message into the running subprocess.
+   *  @param priority - 'next' queues for after current turn (default), 'now' interrupts current turn */
+  injectMessage(text: string, sessionId: string, priority?: "now" | "next"): Promise<void>;
   /** Cleanly close the subprocess and all MCP connections */
   close(): void;
   /** Reset parser turn-level state (tool dedup sets, active blocks) between turns */
   resetTurnState(): void;
+  /** Change the CLI subprocess permission mode (e.g., exit plan mode after user approval).
+   *  Optional — only available on adapters backed by the Claude Agent SDK Query object. */
+  setPermissionMode?(mode: string): Promise<void>;
 }
 
 export interface ParsedMessage {
@@ -50,9 +54,6 @@ export interface ParseResult {
   sessionId?: string;
   /** Set when the SDK result indicates an error (e.g., error_during_execution) */
   error?: string;
-  /** Set when ExitPlanMode tool_use is detected — surfaces an attention item for user approval.
-   *  Works around SDK bug where requiresUserInteraction() short-circuits bypassPermissions. */
-  exitPlanMode?: boolean;
 }
 
 export interface AgentAdapter {

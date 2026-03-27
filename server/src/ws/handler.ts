@@ -5,8 +5,15 @@ import type { SessionManager } from "../sessions/manager";
 import type { TerminalManager } from "../terminal/manager";
 import type { AttentionItem, StreamDelta, WSClientMessage, WSServerMessage } from "shared";
 
+// Fix 10: Per-client rate limiting for state-changing WS messages
+const RATE_LIMIT_WINDOW_MS = 10_000; // 10 seconds
+const RATE_LIMIT_MAX = 60; // max messages per window
+const RATE_LIMITED_TYPES = new Set(["send_message", "stop_thread", "resolve_attention", "terminal_input", "terminal_create"]);
+
 interface WSData {
   subscriptions: Set<string>;
+  /** Timestamps of recent rate-limited messages (sliding window) */
+  msgTimestamps: number[];
 }
 
 export function createWSHandler(
@@ -166,7 +173,7 @@ export function createWSHandler(
 
   return {
     open(ws: ServerWebSocket<WSData>) {
-      ws.data = { subscriptions: new Set() };
+      ws.data = { subscriptions: new Set(), msgTimestamps: [] };
       clients.add(ws);
     },
 
@@ -181,6 +188,24 @@ export function createWSHandler(
       } catch {
         ws.send(JSON.stringify({ type: "error", error: "Invalid JSON" }));
         return;
+      }
+
+      // Rate limit state-changing messages (exempt: subscribe, unsubscribe, ping)
+      if (RATE_LIMITED_TYPES.has(msg.type)) {
+        const now = Date.now();
+        const timestamps = ws.data.msgTimestamps;
+        // Prune timestamps outside the window
+        while (timestamps.length > 0 && timestamps[0]! < now - RATE_LIMIT_WINDOW_MS) {
+          timestamps.shift();
+        }
+        if (timestamps.length >= RATE_LIMIT_MAX) {
+          ws.send(JSON.stringify({
+            type: "error",
+            error: "Rate limit exceeded — try again shortly",
+          } satisfies WSServerMessage));
+          return;
+        }
+        timestamps.push(now);
       }
 
       switch (msg.type) {
@@ -231,7 +256,8 @@ export function createWSHandler(
 
         case "send_message":
           try {
-            sessionManager.sendMessage(msg.threadId, msg.content, msg.attachments);
+            const shouldInterrupt = msg.interrupt === true;
+            sessionManager.sendMessage(msg.threadId, msg.content, msg.attachments, { interrupt: shouldInterrupt });
           } catch (err) {
             ws.send(
               JSON.stringify({
@@ -247,15 +273,19 @@ export function createWSHandler(
           break;
 
         case "resolve_attention": {
-          const resolved = sessionManager.resolveAttention(msg.attentionId, msg.resolution);
-          if (!resolved) {
-            ws.send(
-              JSON.stringify({
-                type: "error",
-                error: `Attention item ${msg.attentionId} not found`,
-              } satisfies WSServerMessage),
-            );
-          }
+          // resolveAttention is async (setPermissionMode for ExitPlanMode approval)
+          sessionManager.resolveAttention(msg.attentionId, msg.resolution).then((resolved) => {
+            if (!resolved) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  error: `Attention item ${msg.attentionId} not found`,
+                } satisfies WSServerMessage),
+              );
+            }
+          }).catch((err) => {
+            console.error(`[ws] Failed to resolve attention ${msg.attentionId}:`, err);
+          });
           break;
         }
 

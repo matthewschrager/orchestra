@@ -26,6 +26,9 @@ export type SessionState = "thinking" | "idle" | "waiting";
 /** Max auto-restart attempts before giving up (prevents infinite restart loops) */
 const MAX_AUTO_RESTARTS = 2;
 
+/** Max messages that can be queued during a single agent turn */
+const MAX_QUEUED_MESSAGES = 5;
+
 export interface ActiveSession {
   threadId: string;
   session: AgentSession;
@@ -42,6 +45,8 @@ export interface ActiveSession {
   state: SessionState;
   /** Number of auto-restarts attempted (circuit breaker for restart loops) */
   restartCount: number;
+  /** Number of messages queued during the current turn (reset on turn_end) */
+  queuedCount: number;
 }
 
 type MessageListener = (threadId: string, message: MessageRow) => void;
@@ -197,8 +202,8 @@ export class SessionManager {
     }
   }
 
-  sendMessage(threadId: string, content: string, attachments?: Attachment[], opts?: { internal?: boolean }): void {
-    if (DEBUG) console.log(`[session] sendMessage thread=${threadId} content=${content.slice(0, 60)}`);
+  sendMessage(threadId: string, content: string, attachments?: Attachment[], opts?: { internal?: boolean; interrupt?: boolean }): void {
+    if (DEBUG) console.log(`[session] sendMessage thread=${threadId} content=${content.slice(0, 60)} interrupt=${!!opts?.interrupt}`);
     const thread = getThread(this.db, threadId) as ThreadRow | null;
     if (!thread) throw new Error(`Thread ${threadId} not found`);
 
@@ -207,8 +212,8 @@ export class SessionManager {
 
     const existing = this.sessions.get(threadId);
 
-    // Guard: reject messages while persistent session is mid-turn (BEFORE persisting)
-    if (existing?.persistent && existing.state === "thinking") {
+    // Guard: non-persistent sessions still block during thinking (no queue support)
+    if (existing && !existing.persistent && existing.state === "thinking") {
       throw new Error("Agent is still processing — wait for it to finish");
     }
 
@@ -219,6 +224,61 @@ export class SessionManager {
     const orphaned = orphanAttentionItems(this.db, threadId);
     if (orphaned > 0 && DEBUG) {
       console.log(`[session] Orphaned ${orphaned} stale attention items for ${threadId} on sendMessage`);
+    }
+
+    // ── QUEUE PATH: persistent session mid-turn — queue message for next turn ──
+    if (existing?.persistent && existing.state === "thinking") {
+      // Content validation: reject empty/whitespace before consuming queue slot
+      if (!content.trim()) {
+        throw new Error("Cannot queue an empty message");
+      }
+      // Queue depth limit
+      if (existing.queuedCount >= MAX_QUEUED_MESSAGES) {
+        throw new Error("Queue full — wait for the agent to finish this turn");
+      }
+
+      // Persist user message immediately so it appears in chat
+      const validAttachments = this.validateAttachments(attachments);
+      this.persistMessage(threadId, {
+        role: "user",
+        content,
+        metadata: validAttachments?.length ? { attachments: validAttachments } : undefined,
+      });
+
+      const agentPrompt = this.buildPromptWithAttachments(content, validAttachments);
+
+      // Phase 1: interrupt param is accepted but ignored (always queue as 'next')
+      const priority = "next" as const;
+      if (opts?.interrupt && DEBUG) {
+        console.log(`[session] interrupt=true requested for ${threadId} but not yet implemented (Phase 2) — queuing as 'next'`);
+      }
+
+      const sessionId = existing.sessionId ?? this.getPersistedSessionId(threadId);
+      if (!sessionId) {
+        console.warn(`[session] No sessionId for queue inject on ${threadId} — message persisted but not injected`);
+        existing.queuedCount++;
+        this.notifyStreamDelta(threadId, { threadId, deltaType: "queued_message", queuedCount: existing.queuedCount });
+        return;
+      }
+
+      // Inject with priority — async errors handled via catch
+      try {
+        const injectPromise = (existing.session as PersistentSession).injectMessage(agentPrompt, sessionId, priority);
+        injectPromise.catch((err) => {
+          if (existing.aborted || !this.sessions.has(threadId)) return;
+          console.error(`[session] queued streamInput failed for ${threadId}:`, err);
+          // Message is persisted — user can resend if agent restarts
+        });
+      } catch (err) {
+        // Synchronous throw: don't count as queued (inject never reached CLI)
+        if (existing.aborted || !this.sessions.has(threadId)) return;
+        console.error(`[session] queued streamInput threw for ${threadId}:`, err);
+        return;
+      }
+
+      existing.queuedCount++;
+      this.notifyStreamDelta(threadId, { threadId, deltaType: "queued_message", queuedCount: existing.queuedCount });
+      return;
     }
 
     // Validate attachments and persist user message
@@ -240,12 +300,13 @@ export class SessionManager {
     // Get the cwd — use worktree if isolated, otherwise repo_path
     const cwd = thread.worktree || thread.repo_path;
 
-    // ── PERSISTENT PATH: inject into living subprocess ──
+    // ── PERSISTENT PATH: inject into living subprocess (idle/waiting state) ──
     if (existing?.persistent) {
 
       // Transition to thinking + refresh inactivity timestamp
       existing.state = "thinking";
       existing.lastMessageAt = Date.now();
+      existing.queuedCount = 0;
       updateThread(this.db, threadId, { status: "running", error_message: null });
       this.notifyThread(threadId);
 
@@ -343,7 +404,7 @@ export class SessionManager {
   }
 
   /** Resolve an attention item and resume the agent with the user's response. */
-  resolveAttention(attentionId: string, resolution: object): AttentionRow | null {
+  async resolveAttention(attentionId: string, resolution: object): Promise<AttentionRow | null> {
     // Check if already resolved BEFORE attempting — prevents double-resume race
     const existing = getAttentionItem(this.db, attentionId);
     if (!existing) return null;
@@ -358,6 +419,17 @@ export class SessionManager {
     if (res.type === "user") {
       const thread = getThread(this.db, threadId);
       if (thread && (thread.status === "waiting" || thread.status === "done")) {
+        // ── ExitPlanMode approval: programmatically exit plan mode ──
+        // ExitPlanMode is denied in canUseTool (Zod error workaround), so the CLI subprocess
+        // never actually exits plan mode. On approval, we call setPermissionMode to flip the
+        // CLI back to bypassPermissions before telling the agent to proceed.
+        const metadata = existing.metadata ? JSON.parse(existing.metadata) : {};
+        if (metadata.source === "exit_plan_mode") {
+          await this.handleExitPlanModeResolution(threadId, res);
+          this.notifyAttentionResolved(attentionId, threadId);
+          return resolved;
+        }
+
         let answer: string;
         if (res.action) {
           answer = `User ${res.action === "allow" ? "approved" : "denied"} the action.`;
@@ -412,9 +484,10 @@ export class SessionManager {
 
     const fileLines = resolved.map(({ attachment, absolutePath }) => {
       const isImage = attachment.mimeType.startsWith("image/");
-      // Sanitize filename to prevent prompt injection — strip control chars and limit length
-      const safeName = attachment.filename.replace(/[\n\r\t]/g, "_").slice(0, 100);
-      return `- ${absolutePath} (${safeName}, ${attachment.mimeType})${isImage ? " — use Read tool to view this image" : ""}`;
+      // Sanitize filename and mimeType to prevent prompt injection — strip control chars and limit length
+      const safeName = attachment.filename.replace(/[\n\r\t\x00-\x1f]/g, "_").slice(0, 100);
+      const safeMime = attachment.mimeType.replace(/[\n\r\t\x00-\x1f]/g, "_").slice(0, 100);
+      return `- ${absolutePath} (${safeName}, ${safeMime})${isImage ? " — use Read tool to view this image" : ""}`;
     });
 
     return `${prompt}\n\n[The user has attached the following file(s):]\n${fileLines.join("\n")}`;
@@ -448,6 +521,7 @@ export class SessionManager {
       persistent: false,
       state: "thinking",
       restartCount: 0,
+      queuedCount: 0,
     };
     this.sessions.set(threadId, active);
 
@@ -502,6 +576,7 @@ export class SessionManager {
       persistent: true,
       state: "thinking",
       restartCount,
+      queuedCount: 0,
     };
     this.sessions.set(threadId, active);
 
@@ -524,11 +599,6 @@ export class SessionManager {
     const { threadId } = activeSession;
     let messageCount = 0;
     let turnMessageCount = 0;
-    /** Tracks whether ExitPlanMode was called during the current turn.
-     *  SDK bug: requiresUserInteraction() short-circuits bypassPermissions, causing
-     *  ExitPlanMode to be denied in headless mode. We surface it as an attention item
-     *  so the user can review the plan and decide whether to approve. */
-    let sawExitPlanMode = false;
     const startTime = Date.now();
     if (DEBUG) console.log(`[stream] Thread ${threadId} — consumeStream started (persistent=${activeSession.persistent})`);
 
@@ -552,7 +622,7 @@ export class SessionManager {
 
         activeSession.lastMessageAt = Date.now();
 
-        const { messages, deltas, attention, sessionId, error: sdkError, exitPlanMode } =
+        const { messages, deltas, attention, sessionId, error: sdkError } =
           activeSession.session.parseMessage(msg);
 
         if (sessionId) {
@@ -593,9 +663,6 @@ export class SessionManager {
           this.handleAttentionEvent(activeSession, attention);
         }
 
-        // Track ExitPlanMode for attention item creation at turn end
-        if (exitPlanMode) sawExitPlanMode = true;
-
         // ── Turn boundary for persistent sessions ──
         // On turn_end, transition to idle (or waiting if attention pending).
         // The iterator stays alive — next message arrives when user sends follow-up.
@@ -605,6 +672,7 @@ export class SessionManager {
           const hasPendingAttention = getPendingAttention(this.db, threadId).length > 0;
           const newState: SessionState = hasPendingAttention ? "waiting" : "idle";
           activeSession.state = newState;
+          activeSession.queuedCount = 0;
           turnMessageCount = 0;
 
           if (DEBUG) console.log(`[stream] Thread ${threadId} — persistent turn ended, state → ${newState}`);
@@ -615,25 +683,11 @@ export class SessionManager {
             // if the user answered by typing directly instead of resolving the attention item.
             updateThread(this.db, threadId, { status: "waiting", pid: null });
             this.notifyThread(threadId);
-          } else if (sawExitPlanMode) {
-            // ── ExitPlanMode → surface to user for approval ──
-            // SDK bug: ExitPlanMode.requiresUserInteraction() returns true, which
-            // short-circuits bypassPermissions in the CLI permission flow. The tool
-            // gets denied with "Permission prompts are not available in this context".
-            // Instead of auto-approving, let the user review and approve the plan.
-            sawExitPlanMode = false;
-            if (DEBUG) console.log(`[stream] Thread ${threadId} — ExitPlanMode detected, creating attention item for user approval`);
-            this.createExitPlanModeAttention(activeSession);
-            // Sync in-memory state — handleAttentionEvent updates DB to "waiting"
-            // but doesn't touch activeSession.state (which was set to "idle" above)
-            activeSession.state = "waiting";
           } else {
             // Turn completed normally — mark done but keep session alive
             updateThread(this.db, threadId, { status: "done", pid: null });
             this.notifyThread(threadId);
           }
-          // Reset per-turn tracking
-          sawExitPlanMode = false;
           // Don't break — iterator stays alive for next turn
         }
       }
@@ -660,11 +714,14 @@ export class SessionManager {
           return;
         }
 
-        // ── ExitPlanMode: stream died before turn boundary could surface attention ──
-        // Create attention item so user can manually approve the plan
-        if (sawExitPlanMode) {
-          console.warn(`[stream] Thread ${threadId} — persistent session died with ExitPlanMode unresolved, creating attention item`);
-          this.createExitPlanModeAttention(activeSession);
+        // Check if attention items were created during the turn (e.g., ExitPlanMode)
+        // before treating as mid-turn death. The attention may have been created from the
+        // parser (like AskUserQuestion), setting DB to "waiting" without reaching a turn boundary.
+        const hasPendingOnDeath = getPendingAttention(this.db, threadId).length > 0;
+        if (hasPendingOnDeath) {
+          if (DEBUG) console.log(`[stream] Thread ${threadId} — persistent session died with pending attention, keeping "waiting"`);
+          updateThread(this.db, threadId, { status: "waiting", pid: null });
+          this.notifyThread(threadId);
           return;
         }
 
@@ -861,16 +918,35 @@ export class SessionManager {
     }
   }
 
-  /** Create a "confirmation" attention item for ExitPlanMode.
-   *  SDK bug prevents ExitPlanMode from working in headless mode, so we surface
-   *  it as an attention item for the user to review and approve the plan. */
-  private createExitPlanModeAttention(session: ActiveSession): void {
-    this.handleAttentionEvent(session, {
-      kind: "confirmation",
-      prompt: "Agent has a plan ready and wants to proceed with implementation.",
-      options: ["Approve plan", "Reject plan"],
-      metadata: { source: "exit_plan_mode" },
-    });
+  /** Handle user resolution of an ExitPlanMode attention item.
+   *  On approval: call setPermissionMode("bypassPermissions") to exit plan mode at the
+   *  CLI level, then message the agent to proceed. On rejection: message the agent to revise. */
+  private async handleExitPlanModeResolution(
+    threadId: string,
+    res: { optionIndex?: number; text?: string },
+  ): Promise<void> {
+    const isApproved = res.optionIndex === 0; // "Approve plan" is index 0
+    const activeSession = this.activeSessions.get(threadId);
+
+    if (isApproved && activeSession?.persistent) {
+      // Exit plan mode at the CLI level before telling the agent to proceed
+      const persistentSession = activeSession.session as PersistentSession;
+      if (persistentSession.setPermissionMode) {
+        try {
+          await persistentSession.setPermissionMode("bypassPermissions");
+          if (DEBUG) console.log(`[session] Thread ${threadId} — setPermissionMode("bypassPermissions") for ExitPlanMode approval`);
+        } catch (err) {
+          console.error(`[session] Thread ${threadId} — failed to setPermissionMode:`, err);
+          // Continue anyway — the message alone may be enough if plan mode is model-level only
+        }
+      }
+    }
+
+    const message = isApproved
+      ? "Plan approved by user. Plan mode has been exited. Proceed with implementation."
+      : "Plan rejected by user. Please revise your plan based on their feedback and try again.";
+
+    this.sendMessage(threadId, message);
   }
 
   private persistSessionId(threadId: string, sessionId: string): void {
