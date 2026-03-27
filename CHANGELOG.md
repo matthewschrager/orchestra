@@ -17,12 +17,27 @@
 - **Service worker targetUrl validation** — same-origin check prevents open redirect via push notifications
 - **Content-Disposition escaping** — double-quote escaping in upload filename headers
 
+### Fixed
+
+- **ExitPlanMode no longer triggers Zod validation errors** — ExitPlanMode is now denied in `canUseTool` with `interrupt: true` (same flow as AskUserQuestion), preventing the SDK's headless-mode Zod error from reaching the agent. The agent gets a clean denial message instead of a cryptic error.
+- **ExitPlanMode surfaces as attention item immediately** — the parser creates a "confirmation" attention event directly from the tool_use event, with "Approve plan" / "Reject plan" options. No more delayed detection at turn-end boundaries.
+- **Plan approval exits plan mode at CLI level** — on approval, `resolveAttention` calls `setPermissionMode("bypassPermissions")` to flip the CLI subprocess out of plan mode before messaging the agent to proceed.
+- **Stream death no longer orphans pending attention items** — if the subprocess dies after an attention item was created (e.g., ExitPlanMode), the thread stays in "waiting" status instead of being marked as "error". Fixes a race where mid-turn attention items were being orphaned.
+
 ### Changed
 
 - **DOMPurify in MarkdownContent** — Shiki HTML output now sanitized before `dangerouslySetInnerHTML`, matching existing `ReadRenderer` pattern
 - **Shared origins helper** — `server/src/utils/origins.ts` centralizes allowed-origins logic across CORS, Origin validation, Host validation, and WS Origin check (DRY)
 - **TunnelManager initialization** — moved before CORS middleware registration so `tunnelManager.url` getter is available for origin checks
 - **Tailscale hostname caching** — cached from `tailscaleDetector.detect()` for use in Origin/Host validation
+- **resolveAttention is now async** — supports the `setPermissionMode` call for ExitPlanMode approval; REST and WS callers updated accordingly
+- **ExitPlanMode tool results are filtered** — denial responses from `canUseTool` are skipped in the chat stream (same as AskUserQuestion), reducing noise
+
+### Removed
+
+- **Removed `exitPlanMode` flag from ParseResult** — no longer needed; ExitPlanMode uses the same attention event mechanism as AskUserQuestion
+- **Removed `sawExitPlanMode` turn-end tracking** — replaced by immediate parser-level attention event creation
+- **Removed `createExitPlanModeAttention` method** — attention creation moved to the parser's `makeExitPlanModeAttention`
 
 ## [0.1.26.0] - 2026-03-26
 

@@ -13,23 +13,40 @@ import type {
 /** Tool names that trigger attention events */
 const ASK_USER_TOOLS = new Set(["AskUserQuestion", "AskUserTool"]);
 
-const DEBUG = process.env.ORCHESTRA_DEBUG === "1";
-
-/** Tool names that require auto-approval on turn end.
- *  ExitPlanMode has requiresUserInteraction()=true in the CLI, which short-circuits
- *  the bypassPermissions check, causing the tool to be denied in headless SDK mode.
- *  We detect it in the stream and auto-approve by sending a follow-up message. */
+/** Tool names handled as plan-approval attention items.
+ *  ExitPlanMode has requiresUserInteraction()=true in the CLI, which causes a Zod
+ *  validation error in headless SDK mode. We deny it in canUseTool and surface it
+ *  as an attention item — same flow as AskUserQuestion. */
 const PLAN_APPROVAL_TOOLS = new Set(["ExitPlanMode"]);
 
+/** Combined set of tools denied in canUseTool (used for skipping denial tool_results) */
+const ORCHESTRA_HANDLED_TOOLS = new Set([...ASK_USER_TOOLS, ...PLAN_APPROVAL_TOOLS]);
+
+const DEBUG = process.env.ORCHESTRA_DEBUG === "1";
+
 /**
- * Custom permission handler: allows all tools except AskUserQuestion/AskUserTool,
- * which are denied with `interrupt: true` to stop the SDK from retrying.
- * This prevents duplicate AskUserQuestion events that occur with `bypassPermissions`.
+ * Custom permission handler: denies tools that Orchestra handles externally.
+ *
+ * - AskUserQuestion/AskUserTool: denied with interrupt — Orchestra surfaces them
+ *   as attention items for the user to answer.
+ * - ExitPlanMode: denied with interrupt — the SDK's requiresUserInteraction() check
+ *   causes a Zod validation error in headless mode when the tool is allowed to execute.
+ *   By denying here, the agent gets a clean message instead of a cryptic Zod error.
+ *   Orchestra surfaces a "plan approval" attention item, and on approval calls
+ *   setPermissionMode() to exit plan mode at the CLI level.
  */
 const orchestraCanUseTool: CanUseTool = async (toolName, _input, _options) => {
   if (ASK_USER_TOOLS.has(toolName)) {
     if (DEBUG) console.log(`[claude] canUseTool: denying ${toolName} with interrupt`);
     return { behavior: "deny", message: "Handled by Orchestra", interrupt: true };
+  }
+  if (PLAN_APPROVAL_TOOLS.has(toolName)) {
+    if (DEBUG) console.log(`[claude] canUseTool: denying ${toolName} — plan approval handled by Orchestra`);
+    return {
+      behavior: "deny",
+      message: "Plan submitted for user review via Orchestra. The user will approve or reject the plan. Do not retry ExitPlanMode — Orchestra will handle the transition.",
+      interrupt: true,
+    };
   }
   return { behavior: "allow" };
 };
@@ -124,6 +141,9 @@ export class ClaudeAdapter implements AgentAdapter {
             yield userMsg;
           })(),
         );
+      },
+      async setPermissionMode(mode: string): Promise<void> {
+        await q.setPermissionMode(mode as "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk");
       },
     };
   }
@@ -230,16 +250,16 @@ class ClaudeParser {
                 );
               }
             }
+            // ExitPlanMode → surface as plan-approval attention (same flow as AskUser)
+            if (!attention && PLAN_APPROVAL_TOOLS.has(block.name)) {
+              attention = this.makeExitPlanModeAttention(block.id);
+            }
           }
         }
 
         if (messages.length === 0) return { messages: [], deltas: [] };
         const result: ParseResult = { messages, deltas: [] };
         if (attention) result.attention = attention;
-        // Detect ExitPlanMode tool_use for auto-approval
-        if (messages.some((m) => m.toolName && PLAN_APPROVAL_TOOLS.has(m.toolName))) {
-          result.exitPlanMode = true;
-        }
         return result;
       }
 
@@ -259,9 +279,9 @@ class ClaudeParser {
             const toolName = block.tool_use_id
               ? this.toolUseNames.get(block.tool_use_id)
               : undefined;
-            // Skip tool_results for AskUser tools — the denial response from
+            // Skip tool_results for Orchestra-handled tools — the denial response from
             // canUseTool(interrupt:true) is noise, not useful content
-            if (toolName && ASK_USER_TOOLS.has(toolName)) continue;
+            if (toolName && ORCHESTRA_HANDLED_TOOLS.has(toolName)) continue;
 
             const outputContent = typeof block.content === "string"
               ? block.content
@@ -352,37 +372,43 @@ class ClaudeParser {
 
         const resultParse: ParseResult = { messages: [], deltas };
 
-        // Check permission_denials for AskUserQuestion (before error detection —
-        // an interrupted AskUser denial is expected, not an error)
+        // Check permission_denials for Orchestra-handled tools (before error detection —
+        // an interrupted denial from canUseTool is expected, not an error)
         const denials = event.permission_denials as Array<{
           tool_name: string;
           tool_use_id: string;
           tool_input: Record<string, unknown>;
         }> | undefined;
 
-        let hasAskUserDenial = false;
+        let hasOrchestraDenial = false;
         if (denials && Array.isArray(denials)) {
           for (const denial of denials) {
-            if (ASK_USER_TOOLS.has(denial.tool_name)) {
-              hasAskUserDenial = true;
+            if (ORCHESTRA_HANDLED_TOOLS.has(denial.tool_name)) {
+              hasOrchestraDenial = true;
             }
-            const attention = this.maybeExtractAskUserAttention(
-              denial.tool_name,
-              denial.tool_input,
-              denial.tool_use_id,
-            );
-            if (attention) {
-              resultParse.attention = attention;
-              break;
+            // Try AskUser attention extraction from denials
+            if (!resultParse.attention) {
+              const attention = this.maybeExtractAskUserAttention(
+                denial.tool_name,
+                denial.tool_input,
+                denial.tool_use_id,
+              );
+              if (attention) {
+                resultParse.attention = attention;
+              }
+            }
+            // Try ExitPlanMode attention extraction from denials
+            if (!resultParse.attention && PLAN_APPROVAL_TOOLS.has(denial.tool_name)) {
+              resultParse.attention = this.makeExitPlanModeAttention(denial.tool_use_id);
             }
           }
         }
 
         // Detect SDK error results or zero-turn successes (no model interaction).
-        // Skip error surfacing when the result is from an expected AskUser denial
+        // Skip error surfacing when the result is from an expected Orchestra denial
         // (canUseTool deny+interrupt produces an error-shaped result that isn't a real error).
         const numTurns = event.num_turns as number | undefined;
-        if (!hasAskUserDenial) {
+        if (!hasOrchestraDenial) {
           if (isError || (subtype && subtype.startsWith("error_"))) {
             const errorDetail = errors?.join("; ") || subtype || "unknown SDK error";
             resultParse.error = errorDetail;
@@ -482,6 +508,21 @@ class ClaudeParser {
     };
   }
 
+  /** Create a plan-approval attention event for ExitPlanMode.
+   *  Uses the same dedup mechanism as AskUserQuestion to prevent duplicate cards. */
+  private makeExitPlanModeAttention(toolUseId?: string): AttentionEvent | undefined {
+    const dedupeKey = toolUseId || "ExitPlanMode";
+    if (this.emittedAttentionKeys.has(dedupeKey)) return undefined;
+    this.emittedAttentionKeys.add(dedupeKey);
+
+    return {
+      kind: "confirmation",
+      prompt: "Agent has a plan ready and wants to proceed with implementation.",
+      options: ["Approve plan", "Reject plan"],
+      metadata: { source: "exit_plan_mode" },
+    };
+  }
+
   private handleStreamEvent(event: Record<string, unknown>): ParseResult {
     const inner = event.event as Record<string, unknown> | undefined;
     if (!inner || !inner.type) return { messages: [], deltas: [] };
@@ -568,17 +609,16 @@ class ClaudeParser {
               toolInput,
             );
           }
+          // ExitPlanMode → surface as plan-approval attention (same flow as AskUser)
+          if (!attention && PLAN_APPROVAL_TOOLS.has(toolBlock.name)) {
+            attention = this.makeExitPlanModeAttention(toolBlock.id);
+          }
 
-          const result: ParseResult = {
+          return {
             messages: [msg],
             deltas: [{ deltaType: "tool_end" }],
             attention,
           };
-          // Detect ExitPlanMode tool_use for auto-approval
-          if (PLAN_APPROVAL_TOOLS.has(toolBlock.name)) {
-            result.exitPlanMode = true;
-          }
-          return result;
         }
 
         // Handle completed text blocks — persist accumulated text

@@ -868,10 +868,11 @@ describe("Persistent Session lifecycle", () => {
     sessionManager.stopAll();
   });
 
-  test("ExitPlanMode at turn boundary creates attention item instead of auto-approving", async () => {
+  test("ExitPlanMode creates attention item immediately (same flow as AskUserQuestion)", async () => {
     const mock = createPersistentMockAdapter();
 
-    // Override parseMessage to return exitPlanMode: true on ExitPlanMode tool_use
+    // Override parseMessage to emit an attention event for ExitPlanMode tool_use
+    // (mirrors how the real ClaudeParser creates attention for ExitPlanMode)
     const origStartPersistent = mock.adapter.startPersistent!.bind(mock.adapter);
     mock.adapter.startPersistent = (opts: StartOpts) => {
       const session = origStartPersistent(opts);
@@ -879,11 +880,15 @@ describe("Persistent Session lifecycle", () => {
       session.parseMessage = (msg: unknown) => {
         const result = origParse(msg);
         const m = msg as Record<string, unknown>;
-        // Detect our synthetic ExitPlanMode marker
         if (m.type === "assistant") {
           const message = m.message as { content?: Array<{ type: string; name?: string }> };
           if (message?.content?.some(b => b.type === "tool_use" && b.name === "ExitPlanMode")) {
-            result.exitPlanMode = true;
+            result.attention = {
+              kind: "confirmation",
+              prompt: "Agent has a plan ready and wants to proceed with implementation.",
+              options: ["Approve plan", "Reject plan"],
+              metadata: { source: "exit_plan_mode" },
+            };
           }
         }
         return result;
@@ -902,7 +907,7 @@ describe("Persistent Session lifecycle", () => {
 
     // Emit init
     mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-plan", tools: [], cwd: "/tmp" });
-    // Emit assistant message with ExitPlanMode tool_use
+    // Emit assistant message with ExitPlanMode tool_use — attention created immediately
     mock.pushMessage({
       type: "assistant",
       message: {
@@ -922,7 +927,7 @@ describe("Persistent Session lifecycle", () => {
 
     await new Promise((r) => setTimeout(r, 150));
 
-    // Thread should be "waiting" (attention item created)
+    // Thread should be "waiting" (attention item created from parser attention event)
     const updated = getThread(db, thread.id);
     expect(updated?.status).toBe("waiting");
 
@@ -944,10 +949,10 @@ describe("Persistent Session lifecycle", () => {
     sessionManager.stopAll();
   });
 
-  test("ExitPlanMode: stream death creates attention item", async () => {
+  test("ExitPlanMode: stream death after attention created keeps waiting status", async () => {
     const mock = createPersistentMockAdapter();
 
-    // Override parseMessage to return exitPlanMode: true on ExitPlanMode tool_use
+    // Override parseMessage to emit attention for ExitPlanMode
     const origStartPersistent = mock.adapter.startPersistent!.bind(mock.adapter);
     mock.adapter.startPersistent = (opts: StartOpts) => {
       const session = origStartPersistent(opts);
@@ -958,7 +963,12 @@ describe("Persistent Session lifecycle", () => {
         if (m.type === "assistant") {
           const message = m.message as { content?: Array<{ type: string; name?: string }> };
           if (message?.content?.some(b => b.type === "tool_use" && b.name === "ExitPlanMode")) {
-            result.exitPlanMode = true;
+            result.attention = {
+              kind: "confirmation",
+              prompt: "Agent has a plan ready and wants to proceed with implementation.",
+              options: ["Approve plan", "Reject plan"],
+              metadata: { source: "exit_plan_mode" },
+            };
           }
         }
         return result;
@@ -975,7 +985,7 @@ describe("Persistent Session lifecycle", () => {
       projectId: "proj1",
     });
 
-    // Emit init + ExitPlanMode but NO turn_end — then kill the stream
+    // Emit init + ExitPlanMode (attention created immediately) but NO turn_end
     mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-plan2", tools: [], cwd: "/tmp" });
     mock.pushMessage({
       type: "assistant",
@@ -988,15 +998,19 @@ describe("Persistent Session lifecycle", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    // Kill stream without turn_end (simulates stream closed)
+    // Attention should already be created (before stream death)
+    const pendingBefore = getPendingAttention(db, thread.id);
+    expect(pendingBefore.length).toBe(1);
+
+    // Kill stream without turn_end
     mock.finish();
     await new Promise((r) => setTimeout(r, 150));
 
-    // Thread should be "waiting" — not "error"
+    // Thread should be "waiting" — attention was created before stream died
     const updated = getThread(db, thread.id);
     expect(updated?.status).toBe("waiting");
 
-    // Attention item should exist
+    // Attention item should still exist
     const attention = db.query(
       "SELECT * FROM attention_required WHERE thread_id = ? AND resolved_at IS NULL",
     ).all(thread.id) as any[];
