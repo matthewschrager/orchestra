@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.32.0] - 2026-03-27
+
+### Fixed
+
+- **Claude TodoWrite cards now survive more real SDK payload shapes** — the todo renderer now accepts nested stringified `todos/items` arrays, bare array payloads, and `title`-only items so Claude task lists do not disappear when the SDK sends alternate but recoverable shapes; parser coverage now locks in those cases
+
 ## [0.1.31.0] - 2026-03-27
 
 ### Changed
