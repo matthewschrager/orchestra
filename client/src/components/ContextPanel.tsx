@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Thread, WorktreeInfo } from "shared";
 import { api } from "../hooks/useApi";
+import { PrBadge } from "./PrBadge";
 
 interface Props {
   thread: Thread;
@@ -11,6 +12,7 @@ export function ContextPanel({ thread, onClose }: Props) {
   const [worktreeInfo, setWorktreeInfo] = useState<WorktreeInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [prLoading, setPrLoading] = useState(false);
+  const [prRefreshing, setPrRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -35,6 +37,25 @@ export function ContextPanel({ thread, onClose }: Props) {
       setPrLoading(false);
     }
   };
+
+  const handleRefreshPr = async () => {
+    setPrRefreshing(true);
+    setError(null);
+    try {
+      await api.refreshPrStatus(thread.id);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setPrRefreshing(false);
+    }
+  };
+
+  // Auto-refresh PR status on mount if stale (covers SPA users)
+  useEffect(() => {
+    if (thread.prUrl && (!thread.prStatus || thread.prStatus === "open" || thread.prStatus === "draft")) {
+      api.refreshPrStatus(thread.id).catch(() => {});
+    }
+  }, [thread.id, thread.prUrl, thread.prStatus]);
 
   const handleCleanup = async () => {
     if (!confirm("Remove worktree and archive thread?")) return;
@@ -118,6 +139,37 @@ export function ContextPanel({ thread, onClose }: Props) {
         {/* PR */}
         {thread.prUrl ? (
           <Section title="Pull Request">
+            <div className="flex items-center gap-2 mb-1.5">
+              <PrBadge
+                prUrl={thread.prUrl}
+                prStatus={thread.prStatus}
+                prNumber={thread.prNumber}
+              />
+              {/* Refresh button: only for open/draft/null states */}
+              {(!thread.prStatus || thread.prStatus === "open" || thread.prStatus === "draft") && (
+                <button
+                  onClick={handleRefreshPr}
+                  disabled={prRefreshing}
+                  className="text-content-3 hover:text-content-2 disabled:opacity-40"
+                  title="Refresh PR status"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={prRefreshing ? "animate-spin" : ""}
+                  >
+                    <path d="M1 4v5h5" />
+                    <path d="M3.51 10a6 6 0 1 0 .49-5.5L1 7.5" />
+                  </svg>
+                </button>
+              )}
+            </div>
             <a
               href={thread.prUrl}
               target="_blank"

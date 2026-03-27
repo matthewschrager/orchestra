@@ -23,6 +23,8 @@ export interface CreateProjectRequest {
 
 export type ThreadStatus = "running" | "pending" | "paused" | "waiting" | "done" | "error";
 
+export type PrStatus = "draft" | "open" | "merged" | "closed";
+
 export interface Thread {
   id: string;
   title: string;
@@ -32,6 +34,8 @@ export interface Thread {
   worktree: string | null;
   branch: string | null;
   prUrl: string | null;
+  prStatus: PrStatus | null;
+  prNumber: number | null;
   pid: number | null;
   status: ThreadStatus;
   errorMessage: string | null;
