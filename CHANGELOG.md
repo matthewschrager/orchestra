@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.31.0] - 2026-03-27
+
+### Fixed
+
+- **Long single-line bash previews no longer explode vertically** — bash tool previews now truncate pathological one-line output in collapsed mode, offer an expand affordance for truncated single lines, and keep expanded output on one visual row via horizontal scrolling instead of vertical wrapping
+- **Bash long-line truncation is now regression-tested** — renderer parser coverage now locks in single-line truncation and mixed hidden-line-plus-truncated-line preview behavior
+
 ## [0.1.30.0] - 2026-03-27
 
 ### Added
