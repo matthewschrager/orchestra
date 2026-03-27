@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.28.2] - 2026-03-26
+
+### Added
+
+- **Agent selector on mobile** — MobileNewSession now shows an agent dropdown (when multiple agents are detected) so mobile users can choose between Claude, Codex, etc. instead of always using the first detected agent
+
+### Changed
+
+- **Worktree isolation defaults to checked** — both desktop InputBar and mobile MobileNewSession now default the "Isolate to worktree" checkbox to true, encouraging safer isolated development by default
+
 ## [0.1.28.1] - 2026-03-26
 
 ### Fixed
