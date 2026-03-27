@@ -5,6 +5,7 @@
 ### Fixed
 
 - **Scroll-to-bottom button visible on mobile** — replaced fragile `left-full -ml-14` CSS positioning with flexbox `justify-end` wrapper so the FAB stays fully within the viewport on narrow screens
+- **Inbox items now clear when you reply from the thread** — replying directly in a thread now emits the same attention-resolution event that the inbox listens for, so stale pending items disappear immediately instead of lingering until a reload
 
 ## [0.1.28.0] - 2026-03-26
 
