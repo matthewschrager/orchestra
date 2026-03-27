@@ -187,4 +187,196 @@ describe("wrapAsciiArt", () => {
     // Inside a code fence (even indented), don't wrap
     expect(wrapAsciiArt(input)).toBe(input);
   });
+
+  // --- ASCII pipe and mixed diagram support ---
+
+  test("wraps mixed Unicode box-drawing + ASCII pipe diagrams as single block", () => {
+    const input = [
+      "Looking at this:",
+      "┌──────────────────────────────┐",
+      "| Left sidebar | Right pane |",
+      "| Feature 1 | Review |",
+      "| Feature 2 | Review |",
+      "└──────────────────────────────┘",
+      "Done.",
+    ].join("\n");
+    const result = wrapAsciiArt(input);
+    expect(result).toBe(
+      [
+        "Looking at this:",
+        "```text",
+        "┌──────────────────────────────┐",
+        "| Left sidebar | Right pane |",
+        "| Feature 1 | Review |",
+        "| Feature 2 | Review |",
+        "└──────────────────────────────┘",
+        "```",
+        "Done.",
+      ].join("\n"),
+    );
+  });
+
+  test("wraps pure ASCII pipe-column diagrams", () => {
+    const input = [
+      "Table:",
+      "| Name | Value | Status |",
+      "| Alice | 42 | OK |",
+      "| Bob | 99 | ERR |",
+      "After.",
+    ].join("\n");
+    const result = wrapAsciiArt(input);
+    expect(result).toBe(
+      [
+        "Table:",
+        "```text",
+        "| Name | Value | Status |",
+        "| Alice | 42 | OK |",
+        "| Bob | 99 | ERR |",
+        "```",
+        "After.",
+      ].join("\n"),
+    );
+  });
+
+  test("wraps ASCII border (+---+) diagrams", () => {
+    const input = [
+      "Grid:",
+      "+--------+--------+",
+      "| Cell 1 | Cell 2 |",
+      "+--------+--------+",
+      "| Cell 3 | Cell 4 |",
+      "+--------+--------+",
+      "End.",
+    ].join("\n");
+    const result = wrapAsciiArt(input);
+    expect(result).toBe(
+      [
+        "Grid:",
+        "```text",
+        "+--------+--------+",
+        "| Cell 1 | Cell 2 |",
+        "+--------+--------+",
+        "| Cell 3 | Cell 4 |",
+        "+--------+--------+",
+        "```",
+        "End.",
+      ].join("\n"),
+    );
+  });
+
+  test("continues art block through single-pipe-pair lines (| text |)", () => {
+    // A line with just outer pipes should not break a diagram mid-block
+    const input = [
+      "┌──────────────────┐",
+      "| [Yellow Q&A card] |",
+      "| Review | Status |",
+      "└──────────────────┘",
+    ].join("\n");
+    const result = wrapAsciiArt(input);
+    expect(result).toBe(
+      [
+        "```text",
+        "┌──────────────────┐",
+        "| [Yellow Q&A card] |",
+        "| Review | Status |",
+        "└──────────────────┘",
+        "```",
+      ].join("\n"),
+    );
+  });
+
+  test("does not wrap GFM tables (with separator row)", () => {
+    const input = [
+      "| Name | Age |",
+      "| --- | --- |",
+      "| Alice | 30 |",
+      "| Bob | 25 |",
+    ].join("\n");
+    // GFM tables should pass through unchanged for react-markdown to render
+    expect(wrapAsciiArt(input)).toBe(input);
+  });
+
+  test("does not wrap GFM table with alignment markers", () => {
+    const input = [
+      "| Left | Center | Right |",
+      "| :--- | :---: | ---: |",
+      "| a | b | c |",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(input);
+  });
+
+  test("wraps pipe-column block that has no GFM separator", () => {
+    // This is art, not a table — no separator row
+    const input = [
+      "| Header A | Header B |",
+      "| value 1 | value 2 |",
+      "| value 3 | value 4 |",
+    ].join("\n");
+    const result = wrapAsciiArt(input);
+    expect(result).toBe(
+      [
+        "```text",
+        "| Header A | Header B |",
+        "| value 1 | value 2 |",
+        "| value 3 | value 4 |",
+        "```",
+      ].join("\n"),
+    );
+  });
+
+  test("does not wrap ASCII pipe rows inside blockquotes", () => {
+    const input = [
+      "> | col1 | col2 |",
+      "> | a | b |",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(input);
+  });
+
+  test("does not wrap ASCII pipe rows inside list context", () => {
+    const input = [
+      "- item",
+      "  | col1 | col2 |",
+      "  | a | b |",
+      "- next",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(input);
+  });
+
+  // --- Adversarial review findings ---
+
+  test("does not swallow GFM table that immediately follows a box diagram", () => {
+    const input = [
+      "┌────┐",
+      "| box |",
+      "└────┘",
+      "| Name | Age |",
+      "| --- | --- |",
+      "| Alice | 30 |",
+    ].join("\n");
+    const result = wrapAsciiArt(input);
+    // Box should be wrapped, but the GFM table should pass through for markdown rendering
+    expect(result).toBe(
+      [
+        "```text",
+        "┌────┐",
+        "| box |",
+        "└────┘",
+        "```",
+        "| Name | Age |",
+        "| --- | --- |",
+        "| Alice | 30 |",
+      ].join("\n"),
+    );
+  });
+
+  test("does not wrap bare +++ or ++++ as border art", () => {
+    expect(wrapAsciiArt("Before\n+++\nAfter")).toBe("Before\n+++\nAfter");
+    expect(wrapAsciiArt("Before\n++++\nAfter")).toBe("Before\n++++\nAfter");
+  });
+
+  test("still wraps real +---+ borders", () => {
+    const input = "+---+---+\n| a | b |\n+---+---+";
+    const result = wrapAsciiArt(input);
+    expect(result).toBe("```text\n+---+---+\n| a | b |\n+---+---+\n```");
+  });
 });
