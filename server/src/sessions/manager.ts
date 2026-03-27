@@ -7,6 +7,7 @@ import {
   getSetting,
   insertMessage,
   updateThread,
+  touchThreadInteraction,
   createAttentionItem,
   resolveAttentionItem,
   orphanAttentionItems,
@@ -113,8 +114,8 @@ export class SessionManager {
     // Insert thread record
     this.db
       .query(
-        `INSERT INTO threads (id, title, agent, repo_path, project_id, worktree, branch, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'running')`,
+        `INSERT INTO threads (id, title, agent, repo_path, project_id, worktree, branch, status, last_interacted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'running', datetime('now'))`,
       )
       .run(threadId, title, opts.agent, opts.repoPath, opts.projectId, worktree, branch);
 
@@ -201,8 +202,8 @@ export class SessionManager {
     }
   }
 
-  sendMessage(threadId: string, content: string, attachments?: Attachment[], interrupt?: boolean): void {
-    if (DEBUG) console.log(`[session] sendMessage thread=${threadId} content=${content.slice(0, 60)} interrupt=${!!interrupt}`);
+  sendMessage(threadId: string, content: string, attachments?: Attachment[], opts?: { internal?: boolean; interrupt?: boolean }): void {
+    if (DEBUG) console.log(`[session] sendMessage thread=${threadId} content=${content.slice(0, 60)} interrupt=${!!opts?.interrupt}`);
     const thread = getThread(this.db, threadId) as ThreadRow | null;
     if (!thread) throw new Error(`Thread ${threadId} not found`);
 
@@ -214,6 +215,15 @@ export class SessionManager {
     // Guard: non-persistent sessions still block during thinking (no queue support)
     if (existing && !existing.persistent && existing.state === "thinking") {
       throw new Error("Agent is still processing — wait for it to finish");
+    }
+
+    // Orphan any pending attention items — user is moving on by sending a new message,
+    // so old AskUserQuestions are no longer relevant. Without this, stale attention items
+    // cause the turn_end handler to skip the status→"done" transition, leaving the thread
+    // stuck in "running" forever.
+    const orphaned = orphanAttentionItems(this.db, threadId);
+    if (orphaned > 0 && DEBUG) {
+      console.log(`[session] Orphaned ${orphaned} stale attention items for ${threadId} on sendMessage`);
     }
 
     // ── QUEUE PATH: persistent session mid-turn — queue message for next turn ──
@@ -239,7 +249,7 @@ export class SessionManager {
 
       // Phase 1: interrupt param is accepted but ignored (always queue as 'next')
       const priority = "next" as const;
-      if (interrupt && DEBUG) {
+      if (opts?.interrupt && DEBUG) {
         console.log(`[session] interrupt=true requested for ${threadId} but not yet implemented (Phase 2) — queuing as 'next'`);
       }
 
@@ -278,6 +288,11 @@ export class SessionManager {
       content,
       metadata: validAttachments?.length ? { attachments: validAttachments } : undefined,
     });
+
+    // Bump interaction timestamp for sidebar sort order (skip for internal/synthetic messages)
+    if (!opts?.internal) {
+      touchThreadInteraction(this.db, threadId);
+    }
 
     // Build prompt with attachment references
     const agentPrompt = this.buildPromptWithAttachments(content, validAttachments);
@@ -458,9 +473,10 @@ export class SessionManager {
 
     const fileLines = resolved.map(({ attachment, absolutePath }) => {
       const isImage = attachment.mimeType.startsWith("image/");
-      // Sanitize filename to prevent prompt injection — strip control chars and limit length
-      const safeName = attachment.filename.replace(/[\n\r\t]/g, "_").slice(0, 100);
-      return `- ${absolutePath} (${safeName}, ${attachment.mimeType})${isImage ? " — use Read tool to view this image" : ""}`;
+      // Sanitize filename and mimeType to prevent prompt injection — strip control chars and limit length
+      const safeName = attachment.filename.replace(/[\n\r\t\x00-\x1f]/g, "_").slice(0, 100);
+      const safeMime = attachment.mimeType.replace(/[\n\r\t\x00-\x1f]/g, "_").slice(0, 100);
+      return `- ${absolutePath} (${safeName}, ${safeMime})${isImage ? " — use Read tool to view this image" : ""}`;
     });
 
     return `${prompt}\n\n[The user has attached the following file(s):]\n${fileLines.join("\n")}`;
@@ -574,7 +590,8 @@ export class SessionManager {
     let turnMessageCount = 0;
     /** Tracks whether ExitPlanMode was called during the current turn.
      *  SDK bug: requiresUserInteraction() short-circuits bypassPermissions, causing
-     *  ExitPlanMode to be denied in headless mode. We auto-approve on turn end. */
+     *  ExitPlanMode to be denied in headless mode. We surface it as an attention item
+     *  so the user can review the plan and decide whether to approve. */
     let sawExitPlanMode = false;
     const startTime = Date.now();
     if (DEBUG) console.log(`[stream] Thread ${threadId} — consumeStream started (persistent=${activeSession.persistent})`);
@@ -640,7 +657,7 @@ export class SessionManager {
           this.handleAttentionEvent(activeSession, attention);
         }
 
-        // Track ExitPlanMode for auto-approval at turn end
+        // Track ExitPlanMode for attention item creation at turn end
         if (exitPlanMode) sawExitPlanMode = true;
 
         // ── Turn boundary for persistent sessions ──
@@ -658,22 +675,23 @@ export class SessionManager {
           if (DEBUG) console.log(`[stream] Thread ${threadId} — persistent turn ended, state → ${newState}`);
 
           if (hasPendingAttention) {
-            // Turn ended with attention event — status already set to "waiting"
+            // Turn ended with pending attention — ensure status is "waiting" and notify.
+            // Defensive: status may have been overwritten to "running" by sendMessage()
+            // if the user answered by typing directly instead of resolving the attention item.
+            updateThread(this.db, threadId, { status: "waiting", pid: null });
+            this.notifyThread(threadId);
           } else if (sawExitPlanMode) {
-            // ── ExitPlanMode auto-approval ──
+            // ── ExitPlanMode → surface to user for approval ──
             // SDK bug: ExitPlanMode.requiresUserInteraction() returns true, which
             // short-circuits bypassPermissions in the CLI permission flow. The tool
             // gets denied with "Permission prompts are not available in this context".
-            // We auto-approve by sending a follow-up that tells the agent to proceed.
+            // Instead of auto-approving, let the user review and approve the plan.
             sawExitPlanMode = false;
-            if (DEBUG) console.log(`[stream] Thread ${threadId} — auto-approving ExitPlanMode`);
-            try {
-              this.sendMessage(threadId, "Plan approved. Proceed with implementation.");
-            } catch (err) {
-              console.error(`[stream] Thread ${threadId} — failed to auto-approve ExitPlanMode:`, err);
-              updateThread(this.db, threadId, { status: "done", pid: null });
-              this.notifyThread(threadId);
-            }
+            if (DEBUG) console.log(`[stream] Thread ${threadId} — ExitPlanMode detected, creating attention item for user approval`);
+            this.createExitPlanModeAttention(activeSession);
+            // Sync in-memory state — handleAttentionEvent updates DB to "waiting"
+            // but doesn't touch activeSession.state (which was set to "idle" above)
+            activeSession.state = "waiting";
           } else {
             // Turn completed normally — mark done but keep session alive
             updateThread(this.db, threadId, { status: "done", pid: null });
@@ -704,6 +722,14 @@ export class SessionManager {
           // Subprocess exited while idle — could be normal (inactivity) or unexpected.
           // Don't overwrite status if already "done"/"waiting".
           if (DEBUG) console.log(`[stream] Thread ${threadId} — persistent session ended while ${activeSession.state}`);
+          return;
+        }
+
+        // ── ExitPlanMode: stream died before turn boundary could surface attention ──
+        // Create attention item so user can manually approve the plan
+        if (sawExitPlanMode) {
+          console.warn(`[stream] Thread ${threadId} — persistent session died with ExitPlanMode unresolved, creating attention item`);
+          this.createExitPlanModeAttention(activeSession);
           return;
         }
 
@@ -898,6 +924,18 @@ export class SessionManager {
       this.notifyThread(session.threadId);
       return false;
     }
+  }
+
+  /** Create a "confirmation" attention item for ExitPlanMode.
+   *  SDK bug prevents ExitPlanMode from working in headless mode, so we surface
+   *  it as an attention item for the user to review and approve the plan. */
+  private createExitPlanModeAttention(session: ActiveSession): void {
+    this.handleAttentionEvent(session, {
+      kind: "confirmation",
+      prompt: "Agent has a plan ready and wants to proceed with implementation.",
+      options: ["Approve plan", "Reject plan"],
+      metadata: { source: "exit_plan_mode" },
+    });
   }
 
   private persistSessionId(threadId: string, sessionId: string): void {

@@ -34,7 +34,9 @@ export function createUploadRoutes(uploadsDir: string) {
 
     const mimeType = file.type || "application/octet-stream";
     const id = nanoid(12);
-    const ext = extname(file.name) || mimeGuessExt(mimeType);
+    // Fix 6A: Strip control characters from extension to prevent prompt injection via newlines
+    const rawExt = extname(file.name) || mimeGuessExt(mimeType);
+    const ext = rawExt.replace(/[\n\r\t\x00-\x1f]/g, "");
     const storedName = `${id}${ext}`;
     const filePath = join(uploadsDir, storedName);
 
@@ -74,7 +76,8 @@ export function createUploadRoutes(uploadsDir: string) {
         "Content-Type": contentType,
         "Cache-Control": "public, max-age=31536000, immutable",
         "X-Content-Type-Options": "nosniff",
-        ...(isImage ? {} : { "Content-Disposition": `attachment; filename="${match}"` }),
+        // Fix 9: Escape quotes in filename to prevent Content-Disposition header injection
+        ...(isImage ? {} : { "Content-Disposition": `attachment; filename="${match.replace(/"/g, '\\"')}"` }),
       },
     });
   });

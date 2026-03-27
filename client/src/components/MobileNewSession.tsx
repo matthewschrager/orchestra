@@ -87,11 +87,11 @@ export function MobileNewSession({
 
       {/* Prompt area */}
       {selectedProject && (
-        <div className="flex-1 flex flex-col px-4 pb-4">
+        <div className="flex flex-col px-4 pb-4">
           <label className="text-xs font-medium text-content-3 uppercase tracking-wider mb-1.5 block">
             Prompt
           </label>
-          <div className="flex-1 min-h-0">
+          <div>
             <SlashCommandInput
               value={prompt}
               onChange={setPrompt}

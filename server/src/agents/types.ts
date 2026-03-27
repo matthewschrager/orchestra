@@ -51,7 +51,7 @@ export interface ParseResult {
   sessionId?: string;
   /** Set when the SDK result indicates an error (e.g., error_during_execution) */
   error?: string;
-  /** Set when ExitPlanMode tool_use is detected — triggers auto-approval on turn end.
+  /** Set when ExitPlanMode tool_use is detected — surfaces an attention item for user approval.
    *  Works around SDK bug where requiresUserInteraction() short-circuits bypassPermissions. */
   exitPlanMode?: boolean;
 }

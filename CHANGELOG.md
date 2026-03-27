@@ -1,5 +1,76 @@
 # Changelog
 
+## [0.1.27.0] - 2026-03-26
+
+### Added
+
+- **Security hardening for open-source release** — 10 fixes closing the cross-origin localhost attack chain, audited by 3 Claude security agents + OpenAI Codex (gpt-5.4) with 73% cross-model finding agreement
+- **CORS restriction** — replaced wildcard `Access-Control-Allow-Origin: *` with origin-restricted config via shared `getAllowedOrigins()` helper
+- **CSRF protection** — Origin header validation on state-changing API requests (POST/PATCH/PUT/DELETE)
+- **DNS rebinding protection** — Host header validation with Tailscale hostname support
+- **WebSocket Origin check** — rejects cross-origin WS upgrade requests (CORS does not protect WebSocket connections)
+- **Content Security Policy** — `script-src 'self' 'unsafe-inline'`, `style-src` with Google Fonts CDN, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`
+- **Filesystem browse boundary** — restricted to `$HOME` with `realpathSync` symlink resolution and trailing-slash prefix collision fix
+- **SQL column allowlists** — `PROJECT_COLUMNS` and `THREAD_COLUMNS` sets prevent future SQL injection via dynamic column names in `updateProject`/`updateThread`
+- **WebSocket rate limiting** — per-client sliding window (60 messages/10s) on state-changing message types
+- **Attachment sanitization** — control characters stripped from file extensions and MIME types to prevent prompt injection via newlines
+- **Service worker targetUrl validation** — same-origin check prevents open redirect via push notifications
+- **Content-Disposition escaping** — double-quote escaping in upload filename headers
+
+### Changed
+
+- **DOMPurify in MarkdownContent** — Shiki HTML output now sanitized before `dangerouslySetInnerHTML`, matching existing `ReadRenderer` pattern
+- **Shared origins helper** — `server/src/utils/origins.ts` centralizes allowed-origins logic across CORS, Origin validation, Host validation, and WS Origin check (DRY)
+- **TunnelManager initialization** — moved before CORS middleware registration so `tunnelManager.url` getter is available for origin checks
+- **Tailscale hostname caching** — cached from `tailscaleDetector.detect()` for use in Origin/Host validation
+
+## [0.1.26.0] - 2026-03-26
+
+### Added
+
+- **PR status indicators** — threads with PRs now show status-aware badges (draft/open/merged/closed) with Octicons-style SVG icons and color-coded backgrounds in both desktop sidebar and mobile thread list
+- **PR status fetching** — new `fetchPrStatus()` utility spawns `gh pr view` with 10s timeout and max-3 concurrency semaphore; dedicated `pr_status_checked_at` column prevents stale guard from being fooled by unrelated thread mutations
+- **Background status refresh** — `GET /threads` fire-and-forget refreshes open/draft PR statuses with 5-min stale guard; WS broadcast only when status actually changes
+- **Manual PR refresh** — `POST /threads/:id/refresh-pr` endpoint for ContextPanel, with stale guard to prevent rapid re-fetching
+- **ContextPanel PR section** — shows status badge, clickable PR URL, and refresh button (only for open/draft states)
+- **PrBadge shared component** — used in sidebar, mobile, and ContextPanel; null prStatus gracefully falls back to legacy green "PR" badge
+
+### Changed
+
+- **Thread data model** — added `pr_status`, `pr_number`, `pr_status_checked_at` columns to threads table via safe column migrations
+- **PR creation** — `WorktreeManager.createPR()` now sets `pr_status = 'open'` and extracts `pr_number` from URL on creation
+- **Silent thread updates** — new `updateThreadSilent()` DB helper that doesn't bump `updated_at`, used for background PR status refresh to avoid disrupting sidebar sort order
+
+## [0.1.25.1] - 2026-03-26
+
+### Fixed
+
+- **Stale attention items no longer prevent thread completion** — when a user answers an AskUserQuestion by typing directly in chat (instead of using the attention resolution UI), pending attention items are now orphaned on the next `sendMessage` call, allowing the turn_end handler to correctly transition thread status to "done"
+- **Defensive status update on turn end** — the `hasPendingAttention` branch now always sets thread status to "waiting" and broadcasts to clients, preventing threads from getting stuck in "running" if status was overwritten by a follow-up message
+
+## [0.1.25.0] - 2026-03-26
+
+### Changed
+
+- **ExitPlanMode user approval** — replaced silent auto-approval with a "confirmation" attention item so the user can review and approve/reject the agent's plan before it proceeds with implementation
+- **Stream death recovery** — when the SDK stream dies with ExitPlanMode unresolved, creates an attention item instead of showing a generic "session ended unexpectedly" error
+
+### Added
+
+- **Integration tests** — two new SessionManager tests covering ExitPlanMode attention item creation at turn boundary and on stream death
+
+### Fixed
+
+- **ASCII art rendering** — agent output containing box-drawing characters (diagrams with `┌─┐│└┘├┤┬┴┼`) now renders in monospace code blocks instead of proportional-font paragraphs; preprocesses markdown to wrap structural box-drawing lines in `text` code fences; excludes horizontal-only separator characters (`─═━`) that Claude uses as decorative dividers
+
+## [0.1.24.1] - 2026-03-26
+
+### Added
+
+- **Code Conductor logo** — new `OrchestraLogo` SVG component (terminal chevron + cursor + conductor sweep) integrated across the app: header nav, auth gate, and welcome empty state
+- **SVG favicon** — browser tab icon with logo on dark rounded-rect background
+- **PWA icon refresh** — regenerated 192px and 512px icons with the Code Conductor design; added SVG icon entry to web app manifest
+
 ## [0.1.24.0] - 2026-03-26
 
 ### Added

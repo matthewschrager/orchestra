@@ -2,8 +2,10 @@ import { memo, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
+import DOMPurify from "dompurify";
 import type { Components } from "react-markdown";
 import type { Highlighter } from "shiki";
+import { wrapAsciiArt } from "../lib/asciiArt";
 
 let highlighterPromise: Promise<Highlighter> | null = null;
 let cachedHighlighter: Highlighter | null = null;
@@ -42,7 +44,7 @@ function CodeBlock({ className, children }: { className?: string; children: stri
           lang: hl.getLoadedLanguages().includes(lang) ? lang : "text",
           theme: "vitesse-dark",
         });
-        setHtml(result);
+        setHtml(DOMPurify.sanitize(result));
       } catch {
         // Fallback — lang not supported
       }
@@ -82,10 +84,11 @@ const components: Components = {
 };
 
 export const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
+  const processed = wrapAsciiArt(content);
   return (
     <div className="md-content">
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
-        {content}
+        {processed}
       </ReactMarkdown>
     </div>
   );
