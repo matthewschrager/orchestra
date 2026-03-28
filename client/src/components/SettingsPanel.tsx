@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Settings } from "shared";
+import { ALL_EFFORT_OPTIONS, type EffortLevel, type Settings } from "shared";
 import { api } from "../hooks/useApi";
 import { RemoteAccessSettings } from "./RemoteAccessSettings";
 
 interface Props {
   onClose: () => void;
+  onDefaultEffortChange?: (level: EffortLevel | "") => void;
+  onDefaultAgentChange?: (agent: string) => void;
 }
 
-export function SettingsPanel({ onClose }: Props) {
+export function SettingsPanel({ onClose, onDefaultEffortChange, onDefaultAgentChange }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [worktreeRoot, setWorktreeRoot] = useState("");
   const [inactivityTimeout, setInactivityTimeout] = useState("30");
+  const [defaultEffortLevel, setDefaultEffortLevel] = useState<EffortLevel | "">("");
+  const [defaultAgent, setDefaultAgent] = useState("");
+  const [detectedAgents, setDetectedAgents] = useState<Array<{ name: string; detected: boolean }>>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -20,7 +25,10 @@ export function SettingsPanel({ onClose }: Props) {
       setSettings(s);
       setWorktreeRoot(s.worktreeRoot);
       setInactivityTimeout(String(s.inactivityTimeoutMinutes));
+      setDefaultEffortLevel(s.defaultEffortLevel);
+      setDefaultAgent(s.defaultAgent);
     }).catch((err) => setError((err as Error).message));
+    api.listAgents().then((a) => setDetectedAgents(a.filter((ag) => ag.detected))).catch(console.error);
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -37,10 +45,20 @@ export function SettingsPanel({ onClose }: Props) {
       if (Number.isFinite(timeoutNum) && timeoutNum >= 1 && timeoutNum !== settings?.inactivityTimeoutMinutes) {
         patch.inactivityTimeoutMinutes = timeoutNum;
       }
+      if (defaultEffortLevel !== settings?.defaultEffortLevel) {
+        patch.defaultEffortLevel = defaultEffortLevel;
+      }
+      if (defaultAgent !== settings?.defaultAgent) {
+        patch.defaultAgent = defaultAgent;
+      }
       const updated = await api.updateSettings(patch);
       setSettings(updated);
       setWorktreeRoot(updated.worktreeRoot);
       setInactivityTimeout(String(updated.inactivityTimeoutMinutes));
+      setDefaultEffortLevel(updated.defaultEffortLevel);
+      setDefaultAgent(updated.defaultAgent);
+      onDefaultEffortChange?.(updated.defaultEffortLevel);
+      onDefaultAgentChange?.(updated.defaultAgent);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -48,11 +66,13 @@ export function SettingsPanel({ onClose }: Props) {
     } finally {
       setSaving(false);
     }
-  }, [worktreeRoot, inactivityTimeout, settings]);
+  }, [worktreeRoot, inactivityTimeout, defaultEffortLevel, defaultAgent, settings, onDefaultEffortChange, onDefaultAgentChange]);
 
   const isDirty = settings !== null && (
     worktreeRoot.trim() !== settings.worktreeRoot ||
-    (Number.isFinite(Number(inactivityTimeout)) && Number(inactivityTimeout) >= 1 && Number(inactivityTimeout) !== settings.inactivityTimeoutMinutes)
+    (Number.isFinite(Number(inactivityTimeout)) && Number(inactivityTimeout) >= 1 && Number(inactivityTimeout) !== settings.inactivityTimeoutMinutes) ||
+    defaultEffortLevel !== settings.defaultEffortLevel ||
+    defaultAgent !== settings.defaultAgent
   );
 
   return (
@@ -83,6 +103,8 @@ export function SettingsPanel({ onClose }: Props) {
                   setSettings(s);
                   setWorktreeRoot(s.worktreeRoot);
                   setInactivityTimeout(String(s.inactivityTimeoutMinutes));
+                  setDefaultEffortLevel(s.defaultEffortLevel);
+                  setDefaultAgent(s.defaultAgent);
                 }).catch((err) => setError((err as Error).message));
               }}
               className="text-sm text-accent hover:text-accent-light"
@@ -136,6 +158,52 @@ export function SettingsPanel({ onClose }: Props) {
                   if (e.key === "Enter" && isDirty) handleSave();
                 }}
               />
+            </div>
+
+            {/* Default Agent */}
+            {detectedAgents.length > 1 && (
+              <div>
+                <label className="block text-sm font-medium text-content-2 mb-1.5">
+                  Default agent
+                </label>
+                <p className="text-xs text-content-3 mb-2">
+                  Pre-selects the agent when creating new threads.
+                </p>
+                <select
+                  value={defaultAgent}
+                  onChange={(e) => setDefaultAgent(e.target.value)}
+                  className="w-48 bg-surface-1 border border-edge-2 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                >
+                  <option value="">Auto (first detected)</option>
+                  {detectedAgents.map((a) => (
+                    <option key={a.name} value={a.name}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Default Effort Level */}
+            <div>
+              <label className="block text-sm font-medium text-content-2 mb-1.5">
+                Default effort level
+              </label>
+              <p className="text-xs text-content-3 mb-2">
+                Pre-selects the effort level when creating new threads. Ignored if unsupported by the chosen agent.
+              </p>
+              <select
+                value={defaultEffortLevel}
+                onChange={(e) => setDefaultEffortLevel(e.target.value as EffortLevel | "")}
+                className="w-48 bg-surface-1 border border-edge-2 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+              >
+                <option value="">None (agent default)</option>
+                {ALL_EFFORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {error && (

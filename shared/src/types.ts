@@ -233,6 +233,10 @@ export interface Settings {
   inactivityTimeoutMinutes: number;
   /** Display-only remote URL (Tailscale HTTPS, VPN, tunnel, etc.) — shown in Settings panel */
   remoteUrl: string;
+  /** Default effort level for new threads — applied when supported by the selected agent */
+  defaultEffortLevel: EffortLevel | "";
+  /** Default agent for new threads — must be a detected agent name, or empty for auto-detect */
+  defaultAgent: string;
 }
 
 // ── Tailscale Detection ─────────────────────────────────

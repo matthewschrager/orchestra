@@ -13,6 +13,8 @@ interface Props {
   commands: SlashCommand[];
   history?: string[];
   pendingQuestion?: boolean | null;
+  defaultEffortLevel?: EffortLevel | "";
+  defaultAgent?: string;
   onSend: (content: string, attachments?: Attachment[], interrupt?: boolean) => void;
   onNewThread: (agent: string, effortLevel: EffortLevel | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => void;
   onStop: () => void;
@@ -26,11 +28,12 @@ function generateDefaultWorktreeName(projectName: string | null): string {
   return `orchestra/${base}-${suffix}`;
 }
 
-export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, history, pendingQuestion, onSend, onNewThread, onStop }: Props) {
+export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, history, pendingQuestion, defaultEffortLevel, defaultAgent, onSend, onNewThread, onStop }: Props) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
-  const [agent, setAgent] = useState(agents.find((a) => a.detected)?.name ?? "claude");
-  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">("");
+  const resolvedDefaultAgent = (defaultAgent && agents.some((a) => a.detected && a.name === defaultAgent)) ? defaultAgent : (agents.find((a) => a.detected)?.name ?? "claude");
+  const [agent, setAgent] = useState(resolvedDefaultAgent);
+  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">(defaultEffortLevel ?? "");
   const [isolate, setIsolate] = useState(true);
   const [worktreeName, setWorktreeName] = useState(() => generateDefaultWorktreeName(activeProjectName));
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -39,15 +42,32 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const dragCounterRef = useRef(0);
+  const userChangedEffortRef = useRef(false);
+  const userChangedAgentRef = useRef(false);
 
   const isRunning = thread?.status === "running";
   const effortOptions = getEffortOptions(agent);
 
+  // Sync default agent from settings (only if user hasn't manually changed it)
+  useEffect(() => {
+    if (!userChangedAgentRef.current && defaultAgent) {
+      const valid = agents.some((a) => a.detected && a.name === defaultAgent);
+      if (valid) setAgent(defaultAgent);
+    }
+  }, [defaultAgent, agents]);
+
+  // Sync default effort level from settings (only if user hasn't manually changed it)
+  useEffect(() => {
+    if (!userChangedEffortRef.current && defaultEffortLevel !== undefined) {
+      setEffortLevel(defaultEffortLevel);
+    }
+  }, [defaultEffortLevel]);
+
   useEffect(() => {
     if (effortLevel && !effortOptions.some((option) => option.value === effortLevel)) {
-      setEffortLevel("");
+      setEffortLevel(defaultEffortLevel && effortOptions.some((o) => o.value === defaultEffortLevel) ? defaultEffortLevel : "");
     }
-  }, [effortLevel, effortOptions]);
+  }, [effortLevel, effortOptions, defaultEffortLevel]);
 
   const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -182,6 +202,10 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
     setInput("");
     setAttachments([]);
     setMode("reply");
+    userChangedEffortRef.current = false;
+    userChangedAgentRef.current = false;
+    setEffortLevel(defaultEffortLevel ?? "");
+    setAgent(resolvedDefaultAgent);
     if (isolate) setWorktreeName(generateDefaultWorktreeName(activeProjectName));
   };
 
@@ -312,7 +336,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
             <span className="text-content-3">Agent</span>
             <select
               value={agent}
-              onChange={(e) => setAgent(e.target.value)}
+              onChange={(e) => { userChangedAgentRef.current = true; setAgent(e.target.value); }}
               className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
               aria-label="Agent"
             >
@@ -329,7 +353,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
             <span className="text-content-3">Effort</span>
             <select
               value={effortLevel}
-              onChange={(e) => setEffortLevel(e.target.value as EffortLevel | "")}
+              onChange={(e) => { userChangedEffortRef.current = true; setEffortLevel(e.target.value as EffortLevel | ""); }}
               className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
               aria-label="Effort level"
             >

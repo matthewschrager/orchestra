@@ -247,6 +247,8 @@ function AppInner() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [lastTerminalMsg, setLastTerminalMsg] = useState<WSServerMessage | null>(null);
   const [latestTodos, setLatestTodos] = useState<Map<string, TodoItem[]>>(new Map());
+  const [defaultEffortLevel, setDefaultEffortLevel] = useState<EffortLevel | "">("");
+  const [defaultAgent, setDefaultAgent] = useState("");
   const [pushBannerDismissed, setPushBannerDismissed] = useState(
     () => localStorage.getItem("orchestra_push_dismissed") === "1",
   );
@@ -447,6 +449,7 @@ function AppInner() {
     api.listProjects().then(setProjects).catch(console.error);
     api.listThreads().then(setThreads).catch(console.error);
     api.listAgents().then(setAgents).catch(console.error);
+    api.getSettings().then((s) => { setDefaultEffortLevel(s.defaultEffortLevel); setDefaultAgent(s.defaultAgent); }).catch(console.error);
   }, []);
 
   // Fetch commands scoped to active project; refetch when project changes.
@@ -950,6 +953,8 @@ function AppInner() {
                 commands={commands}
                 history={activeInputHistory}
                 pendingQuestion={pendingQuestion}
+                defaultEffortLevel={defaultEffortLevel}
+                defaultAgent={defaultAgent}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
@@ -986,6 +991,8 @@ function AppInner() {
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject.name}
                 commands={commands}
+                defaultEffortLevel={defaultEffortLevel}
+                defaultAgent={defaultAgent}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
@@ -1057,6 +1064,8 @@ function AppInner() {
               agents={agents}
               commands={commands}
               activeProjectId={activeProjectId}
+              defaultEffortLevel={defaultEffortLevel}
+              defaultAgent={defaultAgent}
               onNewThread={(agent, effortLevel, prompt, isolate, projectId, worktreeName, attachments) => {
                 handleNewThread(agent, effortLevel, prompt, isolate, projectId, worktreeName, attachments);
                 setMobileTab("sessions");
@@ -1098,7 +1107,7 @@ function AppInner() {
 
       {/* Settings Panel */}
       {showSettings && (
-        <SettingsPanel onClose={() => setShowSettings(false)} />
+        <SettingsPanel onClose={() => setShowSettings(false)} onDefaultEffortChange={setDefaultEffortLevel} onDefaultAgentChange={setDefaultAgent} />
       )}
     </div>
   );
