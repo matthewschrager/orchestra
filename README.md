@@ -1,6 +1,6 @@
 # Orchestra
 
-I wanted an agent dashboard that combined five things no existing tool offered together:
+I wanted an agent dashboard that combined five things I couldn't find together:
 
 - **Project-organized agent sessions** — threads grouped by repo, not scattered across terminal tabs
 - **Model agnostic** — bring your own CLI agent, not locked to one provider
@@ -8,7 +8,9 @@ I wanted an agent dashboard that combined five things no existing tool offered t
 - **Seamless worktree isolation** — one click to isolate a thread into its own git worktree, with PR creation built in
 - **Use your existing subscriptions** — runs local CLI agents so you can use flat-rate plans (like Claude Pro/Max) instead of paying per token via API
 
-Existing tools were either tied to a single model, required per-token API billing, lacked mobile access, or didn't understand git workflows. Orchestra fills that gap.
+Existing tools were either tied to a single model (Claude/Codex apps), required per-token API billing (Cursor etc.), or lacked first-class mobile access. 
+
+Orchestra fills that gap.
 
 <p>
   <img src="docs/screenshots/desktop-thread.png" alt="Desktop — thread view with code diffs, bash output, and sidebar" width="800" />
