@@ -35,8 +35,10 @@ export function ContextPanel({ thread, onClose }: Props) {
     setPrLoading(true);
     setError(null);
     try {
-      const { prUrl } = await api.createPR(thread.id);
-      window.open(prUrl, "_blank");
+      const updatedThread = await api.createPR(thread.id);
+      if (updatedThread.prUrl) {
+        window.open(updatedThread.prUrl, "_blank");
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -58,10 +60,13 @@ export function ContextPanel({ thread, onClose }: Props) {
 
   // Auto-refresh PR status on mount if stale (covers SPA users)
   useEffect(() => {
-    if (thread.prUrl && (!thread.prStatus || thread.prStatus === "open" || thread.prStatus === "draft")) {
+    const shouldRefreshKnownPr =
+      !!thread.prUrl && (!thread.prStatus || thread.prStatus === "open" || thread.prStatus === "draft");
+    const shouldDiscoverBranchPr = !!thread.worktree && !thread.prUrl;
+    if (shouldRefreshKnownPr || shouldDiscoverBranchPr) {
       api.refreshPrStatus(thread.id).catch(() => {});
     }
-  }, [thread.id, thread.prUrl, thread.prStatus]);
+  }, [thread.id, thread.prUrl, thread.prStatus, thread.worktree]);
 
   const handleCleanup = async () => {
     if (!confirm("Remove worktree and archive thread?")) return;
@@ -111,16 +116,29 @@ export function ContextPanel({ thread, onClose }: Props) {
           </Section>
         )}
 
-        {/* Ahead/Behind */}
+        {/* Ahead/Behind + Diff Stats */}
         {worktreeInfo && (
           <Section title="Status">
-            <div className="flex gap-3 text-sm font-mono">
-              <span className="text-emerald-400">
-                +{worktreeInfo.aheadBehind.ahead} ahead
-              </span>
-              <span className="text-red-400">
-                -{worktreeInfo.aheadBehind.behind} behind
-              </span>
+            <div className="space-y-1.5">
+              <div className="flex gap-3 text-sm font-mono">
+                <span className="text-emerald-400">
+                  +{worktreeInfo.aheadBehind.ahead} ahead
+                </span>
+                <span className="text-red-400">
+                  -{worktreeInfo.aheadBehind.behind} behind
+                </span>
+              </div>
+              {worktreeInfo.diffStats && (
+                <div className="flex gap-3 text-sm font-mono">
+                  <span className="text-emerald-400">
+                    +{worktreeInfo.diffStats.insertions.toLocaleString()}
+                  </span>
+                  <span className="text-red-400">
+                    -{worktreeInfo.diffStats.deletions.toLocaleString()}
+                  </span>
+                  <span className="text-content-3">lines</span>
+                </div>
+              )}
             </div>
           </Section>
         )}
@@ -188,13 +206,23 @@ export function ContextPanel({ thread, onClose }: Props) {
           </Section>
         ) : (
           thread.worktree && (
-            <button
-              onClick={handleCreatePR}
-              disabled={prLoading}
-              className="w-full py-2 bg-surface-3 hover:bg-surface-4 border border-edge-2 disabled:opacity-40 rounded-lg text-sm font-medium text-content-1"
-            >
-              {prLoading ? "Creating PR..." : "Create PR"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCreatePR}
+                disabled={prLoading}
+                className="flex-1 py-2 bg-surface-3 hover:bg-surface-4 border border-edge-2 disabled:opacity-40 rounded-lg text-sm font-medium text-content-1"
+              >
+                {prLoading ? "Creating PR..." : "Create PR"}
+              </button>
+              <button
+                onClick={handleRefreshPr}
+                disabled={prRefreshing}
+                className="shrink-0 px-3 py-2 bg-surface-2 hover:bg-surface-3 border border-edge-1 disabled:opacity-40 rounded-lg text-sm text-content-2"
+                title="Check for existing PR"
+              >
+                {prRefreshing ? "Checking..." : "Check existing PR"}
+              </button>
+            </div>
           )
         )}
 

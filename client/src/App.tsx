@@ -41,6 +41,7 @@ import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
 import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal";
 import { buildInputHistory } from "./lib/inputHistory";
 import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
+import { usePrAutoRefresh } from "./hooks/usePrAutoRefresh";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -490,6 +491,12 @@ function AppInner() {
     wasConnectedRef.current = connected;
   }, [connected]);
 
+  usePrAutoRefresh({
+    connected,
+    onThreads: setThreads,
+    threads,
+  });
+
   // Load messages for active thread
   useEffect(() => {
     if (!activeThreadId) return;
@@ -518,6 +525,14 @@ function AppInner() {
       }
     });
   }, [activeThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update browser tab title when there are unseen completed threads
+  useEffect(() => {
+    const unseenDoneCount = threads.filter(
+      (t) => unreadThreadIds.has(t.id) && (t.status === "done" || t.status === "error"),
+    ).length;
+    document.title = unseenDoneCount > 0 ? `(${unseenDoneCount}) Orchestra` : "Orchestra";
+  }, [unreadThreadIds, threads]);
 
   // ── Actions ───────────────────────────────────────────
 

@@ -100,7 +100,7 @@ export const api = {
     request<import("shared").WorktreeInfo>(`/threads/${id}/worktree`),
 
   createPR: (id: string, opts?: { title?: string; body?: string; commitMessage?: string }) =>
-    request<{ prUrl: string }>(`/threads/${id}/pr`, {
+    request<import("shared").Thread>(`/threads/${id}/pr`, {
       method: "POST",
       body: JSON.stringify(opts ?? {}),
     }),

@@ -74,7 +74,10 @@ describe("thread PR discovery routes", () => {
     notifiedThreadIds = [];
   });
 
-  function createApp(deps: Parameters<typeof createThreadRoutes>[4] = {}) {
+  function createApp(
+    deps: Parameters<typeof createThreadRoutes>[4] = {},
+    worktreeOverrides: Partial<WorktreeManager> = {},
+  ) {
     const app = new Hono();
     const sessionManager = {
       stopThread: () => {},
@@ -84,6 +87,10 @@ describe("thread PR discovery routes", () => {
     } as unknown as SessionManager;
     const worktreeManager = {
       cleanup: async () => {},
+      createPR: async () => {
+        throw new Error("not implemented");
+      },
+      ...worktreeOverrides,
     } as unknown as WorktreeManager;
 
     app.route(
@@ -186,6 +193,51 @@ describe("thread PR discovery routes", () => {
     expect(body.prStatus).toBe("open");
     expect(body.prNumber).toBe(77);
     expect(notifiedThreadIds).toContain("t-branch-only");
+  });
+
+  test("POST /threads/:id/pr returns the updated thread and notifies listeners", async () => {
+    insertThread(db, "t-create-pr", {
+      branch: "orchestra/create-pr",
+      worktree: "/tmp/wt-create-pr",
+      pr_url: null,
+      pr_status: null,
+      pr_number: null,
+    });
+
+    const app = createApp({}, {
+      createPR: async (threadId: string) => {
+        db.query(
+          "UPDATE threads SET pr_url = ?, pr_status = ?, pr_number = ?, pr_status_checked_at = datetime('now') WHERE id = ?",
+        ).run(
+          "https://github.com/acme/orchestra/pull/99",
+          "open",
+          99,
+          threadId,
+        );
+        return "https://github.com/acme/orchestra/pull/99";
+      },
+    });
+
+    const res = await app.request("/threads/t-create-pr/pr", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(200);
+
+    const body = await res.json() as {
+      id: string;
+      prUrl: string | null;
+      prStatus: string | null;
+      prNumber: number | null;
+    };
+    expect(body).toMatchObject({
+      id: "t-create-pr",
+      prUrl: "https://github.com/acme/orchestra/pull/99",
+      prStatus: "open",
+      prNumber: 99,
+    });
+    expect(notifiedThreadIds).toContain("t-create-pr");
   });
 
   test("POST /threads/:id/refresh-pr clears stale cached PR metadata when no PR exists", async () => {

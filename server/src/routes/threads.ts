@@ -193,6 +193,7 @@ export function createThreadRoutes(
 
   // Create PR
   app.post("/:id/pr", async (c) => {
+    const threadId = c.req.param("id");
     const body = await c.req.json<{
       title?: string;
       body?: string;
@@ -200,8 +201,11 @@ export function createThreadRoutes(
     }>().catch(() => ({}));
 
     try {
-      const prUrl = await worktreeManager.createPR(c.req.param("id"), body);
-      return c.json({ prUrl });
+      await worktreeManager.createPR(threadId, body);
+      const updated = getThread(db, threadId);
+      if (!updated) return c.json({ error: "Not found" }, 404);
+      sessionManager.notifyThread(threadId);
+      return c.json(threadRowToApi(updated));
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }

@@ -1,6 +1,6 @@
 # Orchestra
 
-The missing conductor for your local agent CLIs. Orchestra gives your existing agents (Claude Code, Codex, etc.) a web/mobile interface with thread management, git worktree isolation, and one-click PR creation.
+The missing conductor for your local agent CLIs. Orchestra gives your existing agents (Claude Code, Codex, etc.) a web/mobile interface with thread management, git worktree isolation, and one-click PR creation with auto-refreshing PR status.
 
 <p>
   <img src="docs/screenshots/desktop-thread.png" alt="Desktop — thread view with code diffs, bash output, and sidebar" width="800" />
@@ -48,7 +48,7 @@ Existing tools were either tied to a single model, required per-token API billin
 - **Thread-based UX** — Manage agent conversations as threads with streaming output, inline Bash previews, collapsible tool blocks, and rich diffs
 - **Remote/mobile access** — Use from your phone while agents run on your laptop, with push notifications for attention events
 - **Git worktree isolation** — One-click isolation of a thread into its own worktree
-- **PR creation** — Create PRs directly from worktree threads via `gh`, with live status badges
+- **PR creation** — Create PRs directly from worktree threads via `gh`, with auto-refreshing status badges
 - **Multi-agent** — Bring your own CLIs; Claude Code and Codex adapters included, easy to add more
 - **Integrated terminal** — xterm.js terminal per thread, backed by a real PTY on the server
 - **Token auth** — Secure remote access with bearer token auth

@@ -274,4 +274,5 @@ export interface WorktreeInfo {
   branch: string;
   aheadBehind: { ahead: number; behind: number };
   changedFiles: string[];
+  diffStats?: { insertions: number; deletions: number };
 }
