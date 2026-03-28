@@ -276,7 +276,7 @@ function groupMessages(msgs: Message[]): GroupedItem[] {
 
 // ── Tool pairing ────────────────────────────────────────
 
-interface ToolPair {
+export interface ToolPair {
   id: string;
   name: string;
   input: string | null;
@@ -372,6 +372,9 @@ function ToolGroupRow({ pairs, forceExpand, latestTodoId }: { pairs: ToolPair[];
   const [expanded, setExpanded] = useState(false);
   const isOpen = expanded || forceExpand;
 
+  // Surface image-bearing tools even when the group is collapsed
+  const imagePairs = useMemo(() => pairs.filter(pairHasImages), [pairs]);
+
   return (
     <div>
       <button
@@ -386,13 +389,19 @@ function ToolGroupRow({ pairs, forceExpand, latestTodoId }: { pairs: ToolPair[];
           &#9656;
         </span>
       </button>
-      {isOpen && (
+      {isOpen ? (
         <div className="ml-5 space-y-0.5">
           {pairs.map((pair) => (
             <ToolLine key={pair.id} pair={pair} isAnswered={false} forceExpand={false} latestTodoId={latestTodoId} />
           ))}
         </div>
-      )}
+      ) : imagePairs.length > 0 ? (
+        <div className="ml-5 space-y-0.5">
+          {imagePairs.map((pair) => (
+            <ToolLine key={pair.id} pair={pair} isAnswered={false} forceExpand={false} latestTodoId={latestTodoId} />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -420,6 +429,19 @@ function groupConsecutiveTools(pairs: ToolPair[]): ToolPair[][] {
   return groups;
 }
 
+/** Check if a tool pair contains images (metadata images or Read image file) */
+export function pairHasImages(pair: ToolPair): boolean {
+  if (hasToolImages(pair.metadata)) return true;
+  if (pair.name === "Read") {
+    try {
+      const parsed = JSON.parse(pair.input || "{}");
+      const filePath = parsed.file_path || parsed.filePath || "";
+      return isImageFile(filePath);
+    } catch { return false; }
+  }
+  return false;
+}
+
 /** Declarative registry of tools that get special (non-ToolLine) rendering.
  *  Each entry maps a tool name to a render function.
  *  Context object provides props needed by different renderers. */
@@ -436,10 +458,10 @@ const TOOL_RENDERERS: Record<string, (ctx: ToolRenderContext) => React.ReactNode
 };
 
 function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false, latestTodoId = null }: { pair: ToolPair; isAnswered: boolean; onSubmitAnswers?: (text: string) => void; forceExpand?: boolean; latestTodoId?: string | null }) {
-  // Auto-expand Edit tools so diffs are visible by default (like Claude CLI)
-  // Auto-expand Read tools when reading image files so images are always visible
+  // Auto-expand tools that contain visual content so it's always visible
   const [expanded, setExpanded] = useState(() => {
     if (pair.name === "Edit") return true;
+    if (hasToolImages(pair.metadata)) return true;
     if (pair.name === "Read") {
       try {
         const parsed = JSON.parse(pair.input || "{}");

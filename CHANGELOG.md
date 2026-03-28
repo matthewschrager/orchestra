@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.36.1] - 2026-03-28
+
+### Changed
+
+- **Images always visible in collapsed tool groups** — when multiple tool calls are grouped (e.g., "Read 3 files ▸"), image-bearing tools now surface below the group header even when the group is collapsed, so screenshots and images are always discoverable without clicking through
+- **Auto-expand for metadata images** — tool results with `metadata.images` (screenshots from browse tools, MCP tools, etc.) now auto-expand in the chat view, matching the existing auto-expand behavior for Edit diffs and Read image files
+
+### Added
+
+- **`pairHasImages` helper with tests** — new exported utility detects images from both metadata and Read-of-image-file paths; 10 unit tests covering all branches
+
 ## [0.1.36.0] - 2026-03-28
 
 ### Fixed
