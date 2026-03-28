@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.36.0] - 2026-03-28
+
+### Added
+
+- **Merge-all-PRs confirmation modal** — clicking "Merge all PRs" now shows a confirmation dialog explaining what the autonomous agent will do (inspect PRs, resolve conflicts, merge via GitHub, close unmergeable PRs) before launching the thread; modal stays visible with a loading spinner during the API request
+
+### Fixed
+
+- **Modal keyboard accessibility** — the confirmation overlay auto-focuses on mount so the Escape key works immediately without requiring a click into the dialog
+
 ## [0.1.35.6] - 2026-03-28
 
 ### Added
