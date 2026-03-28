@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.35.1] - 2026-03-28
+
+### Changed
+
+- **README overhaul for new-user onboarding** — un-collapsed mobile screenshots so they're visible by default, moved architecture diagram to the bottom, replaced multi-step quick start with single `./start.sh` command, inlined prerequisites, simplified Development section to `bun run dev`, added desktop-context screenshot to Architecture section, trimmed redundant CLI entries
+
 ## [0.1.35.0] - 2026-03-28
 
 ### Changed
