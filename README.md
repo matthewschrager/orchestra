@@ -6,30 +6,11 @@ The missing conductor for your local agent CLIs. Orchestra gives your existing a
   <img src="docs/screenshots/desktop-thread.png" alt="Desktop — thread view with code diffs, bash output, and sidebar" width="800" />
 </p>
 
-<details>
-<summary>Mobile UI</summary>
 <p>
   <img src="docs/screenshots/mobile-sessions.png" alt="Mobile — session list" width="300" />
   &nbsp;&nbsp;
   <img src="docs/screenshots/mobile-chat.png" alt="Mobile — chat view" width="300" />
 </p>
-</details>
-
-```
-┌─────────────────────────────────────┐
-│  Web / Mobile UI                    │
-│  Thread sidebar ← Chat → Context   │
-└──────────────┬──────────────────────┘
-               │ WebSocket + REST
-┌──────────────┴──────────────────────┐
-│  Bun + Hono Server                  │
-│  Sessions │ Worktrees │ Agents      │
-└──────────────┬──────────────────────┘
-               │ stdin/stdout
-┌──────────────┴──────────────────────┐
-│  claude  │  codex  │  (any CLI)     │
-└─────────────────────────────────────┘
-```
 
 ## Why Orchestra?
 
@@ -54,82 +35,68 @@ Existing tools were either tied to a single model, required per-token API billin
 - **Token auth** — Secure remote access with bearer token auth
 - **PWA** — Installable on mobile for a native-app feel
 
-## Prerequisites
-
-- [Bun](https://bun.sh/) (runtime and package manager)
-- [Git](https://git-scm.com/)
-- At least one agent CLI installed:
-  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) — requires a Claude Pro/Max subscription or API key
-  - [Codex](https://github.com/openai/codex) (`codex`) — requires an OpenAI API key
-- Optional:
-  - [`gh`](https://cli.github.com/) — for PR creation from worktree threads
-  - [`tailscale`](https://tailscale.com/) — for zero-config remote access
-  - [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) — for Cloudflare Tunnel access
-
 ## Quick start
 
-```bash
-# Install dependencies
-bun install
-
-# Build the frontend
-cd client && bun run build && cd ..
-
-# Start the server
-bun run start
-```
-
-Open [http://localhost:3847](http://localhost:3847).
-
-Register a project (point it at any git repo):
+**Prerequisites:** [Bun](https://bun.sh/) and [Git](https://git-scm.com/), plus at least one agent CLI — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) or [Codex](https://github.com/openai/codex) (`codex`).
 
 ```bash
-bun run server/src/cli.ts add ~/projects/my-repo
+git clone <repo-url> && cd orchestra
+./start.sh
 ```
 
-Or use the "Add a project" button in the UI.
+That's it — `start.sh` installs dependencies, builds the frontend, and starts the server. Open [http://localhost:3847](http://localhost:3847) and click **"Add a project"** to register a git repo.
+
+**Options:**
+
+```bash
+./start.sh --port 4000        # Custom port
+./start.sh --tunnel            # Enable Cloudflare Tunnel for remote/phone access
+./start.sh --help              # All options
+```
+
+<details>
+<summary>Optional tools</summary>
+
+- [`gh`](https://cli.github.com/) — PR creation from worktree threads
+- [`tailscale`](https://tailscale.com/) — zero-config remote access
+- [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) — Cloudflare Tunnel access
+</details>
+
+## Remote access
+
+By default, Orchestra binds to `127.0.0.1` (localhost only). For remote/mobile access:
+
+```bash
+# Easiest: Cloudflare Tunnel (public URL, works from anywhere)
+./start.sh --tunnel
+
+# Or: bind to all interfaces on your LAN
+ORCHESTRA_HOST=0.0.0.0 ./start.sh
+```
+
+Both generate a bearer token stored in `~/.orchestra/auth-token` — use it to sign in from other devices.
+
+**Other options:**
+- **Tailscale** — zero-config VPN; Orchestra auto-detects Tailscale identity headers for browser sessions
+- **SSH tunnel** — `ssh -L 3847:localhost:3847 <host>`
 
 ## Development
 
 ```bash
-# Terminal 1: backend with hot reload
-bun run dev:server
-
-# Terminal 2: frontend with HMR
-bun run dev:client
+bun run dev   # Starts backend (hot reload) + frontend (HMR) concurrently
 ```
 
-The Vite dev server proxies API and WebSocket requests to the backend.
-
-## Remote access
-
-By default, Orchestra binds to `127.0.0.1` (localhost only). To enable remote access:
-
-```bash
-ORCHESTRA_HOST=0.0.0.0 bun run start
-```
-
-This generates a bearer token stored in `~/.orchestra/auth-token`.
-
-- **LAN / Cloudflare Tunnel / SSH tunnel** — use the bearer token to sign in from other devices
-- **Tailscale Serve browser access** — Orchestra bootstraps a short-lived `HttpOnly` session from Tailscale identity headers
-- **Tagged-device or fallback Tailscale access** — still uses the bearer token
-
-**Recommended setup:**
-- **Tailscale** — zero-config VPN, works from anywhere
-- **LAN** — accessible on local WiFi
-- **Cloudflare Tunnel** — `bun run start -- --tunnel` (or manually: `cloudflared tunnel --url http://localhost:3847`)
-- **SSH tunnel** — `ssh -L 3847:localhost:3847 <host>`
+Or run them separately: `bun run dev:server` and `bun run dev:client` in two terminals. The Vite dev server proxies API and WebSocket requests to the backend.
 
 ## CLI
 
+You can also manage Orchestra via the CLI:
+
 ```bash
-bun run server/src/cli.ts serve              # Start the server (default)
-bun run server/src/cli.ts serve --tunnel     # Start with Cloudflare Tunnel
 bun run server/src/cli.ts add <path>         # Register a project (git repo)
 bun run server/src/cli.ts auth show          # Show auth token
 bun run server/src/cli.ts auth regenerate    # Generate new token
-bun run server/src/cli.ts help               # Show help
+bun run server/src/cli.ts help               # Show all commands
 ```
 
 ## Environment variables
@@ -140,7 +107,27 @@ bun run server/src/cli.ts help               # Show help
 | `ORCHESTRA_PORT` | `3847` | Server port |
 | `ORCHESTRA_DATA_DIR` | `~/.orchestra` | Data directory (SQLite DB, auth token, uploads) |
 
-## Tech stack
+## Architecture
+
+<p>
+  <img src="docs/screenshots/desktop-context.png" alt="Desktop — context panel with worktree status and PR creation" width="800" />
+</p>
+
+```
+┌─────────────────────────────────────┐
+│  Web / Mobile UI                    │
+│  Thread sidebar ← Chat → Context   │
+└──────────────┬──────────────────────┘
+               │ WebSocket + REST
+┌──────────────┴──────────────────────┐
+│  Bun + Hono Server                  │
+│  Sessions │ Worktrees │ Agents      │
+└──────────────┬──────────────────────┘
+               │ stdin/stdout
+┌──────────────┴──────────────────────┐
+│  claude  │  codex  │  (any CLI)     │
+└─────────────────────────────────────┘
+```
 
 | Layer | Choice |
 |-------|--------|
@@ -148,9 +135,6 @@ bun run server/src/cli.ts help               # Show help
 | Backend | Hono |
 | Frontend | React + Vite + Tailwind CSS |
 | Database | SQLite (via Bun) |
-| Package manager | Bun |
-
-## Architecture
 
 - **Server** (`server/`) — Hono API server with WebSocket support, SQLite persistence, agent process management, and worktree lifecycle
 - **Client** (`client/`) — React SPA with streaming chat, thread sidebar, context panel, mobile-responsive layout
