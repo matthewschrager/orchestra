@@ -78,6 +78,8 @@ interface StreamingState {
   turnEnded: Set<string>;
   /** Number of messages queued during current agent turn (per thread) */
   queuedCount: Map<string, number>;
+  /** Seq numbers of user messages that were queued, keyed by threadId */
+  queuedSeqs: Map<string, Set<number>>;
 }
 
 const initialStreamingState: StreamingState = {
@@ -87,6 +89,7 @@ const initialStreamingState: StreamingState = {
   metrics: new Map(),
   turnEnded: new Set(),
   queuedCount: new Map(),
+  queuedSeqs: new Map(),
 };
 
 const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0, modelName: null };
@@ -95,7 +98,8 @@ type StreamingAction =
   | { type: "delta"; delta: StreamDelta }
   | { type: "clear_text"; threadId: string }
   | { type: "clear_tool"; threadId: string }
-  | { type: "clear_all"; threadId: string };
+  | { type: "clear_all"; threadId: string }
+  | { type: "mark_queued"; threadId: string; seq: number };
 
 function streamingReducer(state: StreamingState, action: StreamingAction): StreamingState {
   switch (action.type) {
@@ -166,10 +170,20 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
           toolInput.delete(delta.threadId);
           const turnEnded = new Set(state.turnEnded);
           turnEnded.add(delta.threadId);
-          // Reset queued count on turn end
+          // Reset queued count and queued message indicators on turn end
           const queuedCountTe = new Map(state.queuedCount);
           queuedCountTe.delete(delta.threadId);
-          return { ...state, text, tool, toolInput, turnEnded, queuedCount: queuedCountTe };
+          // Clear one queued seq for this thread (the oldest) — agent is processing it
+          const queuedSeqs = new Map(state.queuedSeqs);
+          const threadSeqs = queuedSeqs.get(delta.threadId);
+          if (threadSeqs && threadSeqs.size > 0) {
+            const nextSeqs = new Set(threadSeqs);
+            const oldest = [...nextSeqs].sort((a, b) => a - b)[0]!;
+            nextSeqs.delete(oldest);
+            if (nextSeqs.size > 0) queuedSeqs.set(delta.threadId, nextSeqs);
+            else queuedSeqs.delete(delta.threadId);
+          }
+          return { ...state, text, tool, toolInput, turnEnded, queuedCount: queuedCountTe, queuedSeqs };
         }
         case "queued_message": {
           const queuedCountQm = new Map(state.queuedCount);
@@ -200,6 +214,14 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
       const toolInput = new Map(state.toolInput);
       toolInput.delete(action.threadId);
       return { ...state, text, tool, toolInput };
+    }
+    case "mark_queued": {
+      const queuedSeqs = new Map(state.queuedSeqs);
+      const existing = queuedSeqs.get(action.threadId) ?? new Set<number>();
+      const next = new Set(existing);
+      next.add(action.seq);
+      queuedSeqs.set(action.threadId, next);
+      return { ...state, queuedSeqs };
     }
   }
 }
@@ -335,6 +357,11 @@ function AppInner() {
         next.set(msg.threadId, [...existing, msg]);
         return next;
       });
+      // Tag user messages as queued if they were sent while agent was running
+      if (msg.role === "user" && pendingQueuedCountRef.current > 0) {
+        pendingQueuedCountRef.current--;
+        dispatchStreaming({ type: "mark_queued", threadId: msg.threadId, seq: msg.seq });
+      }
       // Clear streaming state when a persisted message arrives
       if (msg.role === "assistant") {
         dispatchStreaming({ type: "clear_text", threadId: msg.threadId });
@@ -559,6 +586,9 @@ function AppInner() {
     }
   };
 
+  // Track how many of the next incoming user messages should be marked as "queued"
+  const pendingQueuedCountRef = useRef(0);
+
   const handleSendMessage = async (content: string, attachments?: Attachment[], interrupt?: boolean) => {
     if (!activeThreadId) return;
     try {
@@ -567,6 +597,9 @@ function AppInner() {
       const thread = threads.find((t) => t.id === activeThreadId);
       if (!thread || thread.status !== "running") {
         turnStartRef.current = Date.now();
+      } else {
+        // Sending while running — flag next incoming user message as queued
+        pendingQueuedCountRef.current++;
       }
       send({ type: "send_message", threadId: activeThreadId, content, attachments, interrupt: interrupt ?? false });
     } catch (err) {
@@ -959,6 +992,7 @@ function AppInner() {
                 streamingTool={activeStreamingTool}
                 streamingToolInput={activeStreamingToolInput}
                 turnEnded={activeTurnEnded}
+                queuedSeqs={activeThreadId ? streaming.queuedSeqs.get(activeThreadId) : undefined}
                 onSubmitAnswers={handleSendMessage}
                 onSaveTitle={handleSaveTitle}
               />
