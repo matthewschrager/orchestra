@@ -40,6 +40,7 @@ import { OrchestraLogo } from "./components/OrchestraLogo";
 import { MergeAllPrsButton } from "./components/MergeAllPrsButton";
 import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
 import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal";
+import { MergeAllPrsConfirmationModal } from "./components/MergeAllPrsConfirmationModal";
 import { buildCleanupAlert } from "./lib/cleanup";
 import { buildInputHistory } from "./lib/inputHistory";
 import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
@@ -247,6 +248,7 @@ function AppInner() {
   const [cleanupConfirming, setCleanupConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mergingProjectId, setMergingProjectId] = useState<string | null>(null);
+  const [mergeConfirmProjectId, setMergeConfirmProjectId] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [lastTerminalMsg, setLastTerminalMsg] = useState<WSServerMessage | null>(null);
@@ -773,7 +775,14 @@ function AppInner() {
     setActiveThreadId(null); // Show empty state for this project
   };
 
-  const handleMergeAllPrs = async (projectId: string) => {
+  const handleMergeAllPrsClick = (projectId: string) => {
+    setMergeConfirmProjectId(projectId);
+  };
+
+  const handleMergeAllPrsConfirm = async () => {
+    const projectId = mergeConfirmProjectId;
+    if (!projectId) return;
+    setMergeConfirmProjectId(null);
     try {
       setError(null);
       setMergingProjectId(projectId);
@@ -918,7 +927,7 @@ function AppInner() {
           onSelectProject={setActiveProjectId}
           onSelectThread={handleSelectThread}
           onNewThread={handleNewThreadFromSidebar}
-          onMergeAllPrs={handleMergeAllPrs}
+          onMergeAllPrs={handleMergeAllPrsClick}
           onArchiveThread={handleArchiveThread}
           onRemoveProject={handleRemoveProject}
           onCleanupPushed={handleCleanupPushed}
@@ -1005,7 +1014,7 @@ function AppInner() {
                 outstandingPrCount={activeProjectOutstandingPrCount}
                 recentThreads={recentProjectThreads}
                 onSelectThread={handleSelectThread}
-                onMergeAllPrs={handleMergeAllPrs}
+                onMergeAllPrs={handleMergeAllPrsClick}
                 mergeAllLoading={mergingProjectId === activeProject.id}
               />
               <InputBar
@@ -1071,7 +1080,7 @@ function AppInner() {
                 setMobileTab("new");
               }}
               onArchiveThread={handleArchiveThread}
-              onMergeAllPrs={handleMergeAllPrs}
+              onMergeAllPrs={handleMergeAllPrsClick}
               mergingProjectId={mergingProjectId}
             />
           </div>
@@ -1123,6 +1132,22 @@ function AppInner() {
           onConfirm={handleCleanupConfirmationSubmit}
         />
       )}
+
+      {mergeConfirmProjectId && (() => {
+        const proj = projects.find((p) => p.id === mergeConfirmProjectId);
+        if (!proj) return null;
+        const projThreads = threads.filter((t) => t.projectId === proj.id && !t.archivedAt);
+        const prCount = getEffectiveOutstandingPrCount(proj, projThreads);
+        return (
+          <MergeAllPrsConfirmationModal
+            projectName={proj.name}
+            prCount={prCount}
+            loading={mergingProjectId === mergeConfirmProjectId}
+            onClose={() => setMergeConfirmProjectId(null)}
+            onConfirm={handleMergeAllPrsConfirm}
+          />
+        );
+      })()}
 
       {/* Settings Panel */}
       {showSettings && (
