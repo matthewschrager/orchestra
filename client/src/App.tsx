@@ -80,8 +80,8 @@ interface StreamingState {
   turnEnded: Set<string>;
   /** Number of messages queued during current agent turn (per thread) */
   queuedCount: Map<string, number>;
-  /** Seq numbers of user messages that were queued (sent while agent was running) */
-  queuedSeqs: Set<number>;
+  /** Seq numbers of user messages that were queued, keyed by threadId */
+  queuedSeqs: Map<string, Set<number>>;
 }
 
 const initialStreamingState: StreamingState = {
@@ -91,7 +91,7 @@ const initialStreamingState: StreamingState = {
   metrics: new Map(),
   turnEnded: new Set(),
   queuedCount: new Map(),
-  queuedSeqs: new Set(),
+  queuedSeqs: new Map(),
 };
 
 const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0, modelName: null };
@@ -101,7 +101,7 @@ type StreamingAction =
   | { type: "clear_text"; threadId: string }
   | { type: "clear_tool"; threadId: string }
   | { type: "clear_all"; threadId: string }
-  | { type: "mark_queued"; seq: number };
+  | { type: "mark_queued"; threadId: string; seq: number };
 
 function streamingReducer(state: StreamingState, action: StreamingAction): StreamingState {
   switch (action.type) {
@@ -175,10 +175,16 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
           // Reset queued count and queued message indicators on turn end
           const queuedCountTe = new Map(state.queuedCount);
           queuedCountTe.delete(delta.threadId);
-          // Clear one queued seq (the oldest) — the agent is now processing it
-          const queuedSeqs = new Set(state.queuedSeqs);
-          const sorted = [...queuedSeqs].sort((a, b) => a - b);
-          if (sorted.length > 0) queuedSeqs.delete(sorted[0]!);
+          // Clear one queued seq for this thread (the oldest) — agent is processing it
+          const queuedSeqs = new Map(state.queuedSeqs);
+          const threadSeqs = queuedSeqs.get(delta.threadId);
+          if (threadSeqs && threadSeqs.size > 0) {
+            const nextSeqs = new Set(threadSeqs);
+            const oldest = [...nextSeqs].sort((a, b) => a - b)[0]!;
+            nextSeqs.delete(oldest);
+            if (nextSeqs.size > 0) queuedSeqs.set(delta.threadId, nextSeqs);
+            else queuedSeqs.delete(delta.threadId);
+          }
           return { ...state, text, tool, toolInput, turnEnded, queuedCount: queuedCountTe, queuedSeqs };
         }
         case "queued_message": {
@@ -212,8 +218,11 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
       return { ...state, text, tool, toolInput };
     }
     case "mark_queued": {
-      const queuedSeqs = new Set(state.queuedSeqs);
-      queuedSeqs.add(action.seq);
+      const queuedSeqs = new Map(state.queuedSeqs);
+      const existing = queuedSeqs.get(action.threadId) ?? new Set<number>();
+      const next = new Set(existing);
+      next.add(action.seq);
+      queuedSeqs.set(action.threadId, next);
       return { ...state, queuedSeqs };
     }
   }
@@ -344,7 +353,7 @@ function AppInner() {
       // Tag user messages as queued if they were sent while agent was running
       if (msg.role === "user" && pendingQueuedCountRef.current > 0) {
         pendingQueuedCountRef.current--;
-        dispatchStreaming({ type: "mark_queued", seq: msg.seq });
+        dispatchStreaming({ type: "mark_queued", threadId: msg.threadId, seq: msg.seq });
       }
       // Clear streaming state when a persisted message arrives
       if (msg.role === "assistant") {
@@ -973,7 +982,7 @@ function AppInner() {
                 streamingTool={activeStreamingTool}
                 streamingToolInput={activeStreamingToolInput}
                 turnEnded={activeTurnEnded}
-                queuedSeqs={streaming.queuedSeqs}
+                queuedSeqs={activeThreadId ? streaming.queuedSeqs.get(activeThreadId) : undefined}
                 onSubmitAnswers={handleSendMessage}
                 onSaveTitle={handleSaveTitle}
               />

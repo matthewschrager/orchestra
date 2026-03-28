@@ -742,7 +742,8 @@ export class SessionManager {
               // sendMessage with internal flag (skip touchThreadInteraction)
               // This transitions state back to "thinking" and injects the message.
               try {
-                this.sendMessage(threadId, nextQueued.content, undefined, { internal: true });
+                const drainAttachments = nextQueued.attachments ? JSON.parse(nextQueued.attachments) : undefined;
+                this.sendMessage(threadId, nextQueued.content, drainAttachments, { internal: true });
               } catch (drainErr) {
                 console.error(`[stream] Thread ${threadId} — queue drain failed:`, drainErr);
                 updateThread(this.db, threadId, { status: "done", pid: null });
