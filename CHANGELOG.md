@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.35.3] - 2026-03-28
+
+### Fixed
+
+- **Send button vertical alignment** — fixed 6px misalignment between the Send button and the chat input textarea caused by the textarea's default `inline-block` display leaving a baseline descender gap; added `display: block` to eliminate it
+
 ## [0.1.35.2] - 2026-03-28
 
 ### Removed
