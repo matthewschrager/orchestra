@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.34.0] - 2026-03-28
+
+### Added
+
+- **Git diff stats in context panel** — the context side panel now shows lines added and removed (`+N / -N lines`) for the branch vs main, similar to Codex. `git diff --shortstat` runs in parallel with the existing ahead/behind check, sharing a single `detectMainBranch` call. New `diffStats` field on `WorktreeInfo` type. Four integration tests cover insertions-only, both directions, no-diff, and no-branch scenarios.
+
 ## [0.1.33.2] - 2026-03-28
 
 ### Fixed
