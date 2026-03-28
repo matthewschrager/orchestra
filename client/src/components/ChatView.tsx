@@ -9,6 +9,7 @@ import { SubAgentCard } from "./renderers/SubAgentCard";
 import { TodoCard } from "./renderers/TodoCard";
 import { ToolMediaRenderer, hasToolImages } from "./renderers/ToolMediaRenderer";
 import { extractQuestionPreview, formatAnswers, isAskUserTool, parseQuestions, type ParsedQuestion } from "../lib/askUser";
+import { isImageFile } from "../lib/fileUtils";
 import { MessageAttachments } from "./AttachmentPreview";
 import { EditableTitle } from "./EditableTitle";
 import type { Attachment } from "shared";
@@ -25,12 +26,14 @@ interface Props {
   streamingTool?: string;
   streamingToolInput?: string;
   turnEnded?: boolean;
+  /** Seq numbers of user messages that are queued (sent while agent was running) */
+  queuedSeqs?: Set<number>;
   onSubmitAnswers?: (text: string) => void;
   onSaveTitle?: (newTitle: string) => void;
 }
 
 export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
-  { messages, thread, streamingText, streamingTool, streamingToolInput, turnEnded, onSubmitAnswers, onSaveTitle },
+  { messages, thread, streamingText, streamingTool, streamingToolInput, turnEnded, queuedSeqs, onSubmitAnswers, onSaveTitle },
   ref,
 ) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -174,7 +177,7 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
         Array.isArray(item) ? (
           <ToolGroup key={`tg-${item[0].id}`} messages={item} answeredIds={answeredQuestionIds} onSubmitAnswers={onSubmitAnswers} latestTodoId={latestTodoId} />
         ) : (
-          <MessageBubble key={item.id} message={item} />
+          <MessageBubble key={item.id} message={item} isQueued={queuedSeqs?.has(item.seq) ?? false} />
         ),
       )}
 
@@ -434,7 +437,18 @@ const TOOL_RENDERERS: Record<string, (ctx: ToolRenderContext) => React.ReactNode
 
 function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false, latestTodoId = null }: { pair: ToolPair; isAnswered: boolean; onSubmitAnswers?: (text: string) => void; forceExpand?: boolean; latestTodoId?: string | null }) {
   // Auto-expand Edit tools so diffs are visible by default (like Claude CLI)
-  const [expanded, setExpanded] = useState(pair.name === "Edit");
+  // Auto-expand Read tools when reading image files so images are always visible
+  const [expanded, setExpanded] = useState(() => {
+    if (pair.name === "Edit") return true;
+    if (pair.name === "Read") {
+      try {
+        const parsed = JSON.parse(pair.input || "{}");
+        const filePath = parsed.file_path || parsed.filePath || "";
+        if (isImageFile(filePath)) return true;
+      } catch { /* not parseable, stay collapsed */ }
+    }
+    return false;
+  });
   if (pair.name === "Bash") {
     return <BashRenderer input={pair.input} output={pair.output} metadata={pair.metadata} forceExpand={forceExpand} />;
   }
@@ -735,7 +749,7 @@ function ThreadStatusBadge({ status, errorMessage }: { status: string; errorMess
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message, isQueued }: { message: Message; isQueued?: boolean }) {
   // Skip empty or artifact-only messages (e.g. '""' from JSON.stringify(""))
   const trimmed = message.content.trim();
   const attachments = (message.metadata?.attachments as Attachment[] | undefined) ?? [];
@@ -747,11 +761,20 @@ function MessageBubble({ message }: { message: Message }) {
 
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
+      <div className="flex flex-col items-end gap-1">
         <div className="max-w-[80%] bg-accent-dim/80 border-r-2 border-r-accent/40 rounded-lg px-4 py-3 text-sm text-content-1">
           {trimmed && <div className="whitespace-pre-wrap">{message.content}</div>}
           {hasAttachments && <MessageAttachments attachments={attachments} />}
         </div>
+        {isQueued && (
+          <div className="flex items-center gap-1.5 text-[11px] text-accent/60 mr-1 animate-pulse">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="8" cy="8" r="6" />
+              <path d="M8 4.5V8l2.5 1.5" />
+            </svg>
+            <span>Queued</span>
+          </div>
+        )}
       </div>
     );
   }

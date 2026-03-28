@@ -137,7 +137,7 @@ cd server && bun run src/index.ts  # Production server
 - **QA testing from worktrees**: Each worktree gets its own port (via hash). Build client (`bun run --filter client build`), start server with `ORCHESTRA_ALLOW_NESTED=1`, set `ORCHESTRA_DATA_DIR` to worktree-local path. Do not test against the main-branch instance.
 - Inactivity timeout (default 30 min, configurable via Settings) replaces PID-based health check for hung SDK iterators
 - Integrated terminal: xterm.js v6 (client) + Bun native PTY via `Bun.spawn({ terminal })` (server); PTY persists per-thread; desktop only
-- Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings`; gear icon in sidebar
+- Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings`; gear icon in sidebar; `defaultEffortLevel` pre-selects effort in new-thread forms (validated against agent support, falls back to agent default if unsupported); `defaultAgent` pre-selects agent in new-thread forms (validated against detected agents, hidden when only one agent available)
 
 ## Testing
 
@@ -145,4 +145,4 @@ cd server && bun run src/index.ts  # Production server
 bun test                        # Run all tests
 ```
 
-Tests cover renderer parsing functions (including Todo payload variants, Bash preview truncation, diff precision on large files, and sticky run-bar token summaries), server-side Claude and Codex message parsing, Tailscale auth/origin hardening flows, filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, settings CRUD (worktreeRoot validation, inactivityTimeoutMinutes bounds, remoteUrl HTTPS enforcement), PR status utilities (URL number extraction, stale guard timing), and worktree status (diff stats parsing, branch/no-branch scenarios).
+Tests cover renderer parsing functions (including Todo payload variants, Bash preview truncation, diff precision on large files, and sticky run-bar token summaries), server-side Claude and Codex message parsing, Tailscale auth/origin hardening flows, filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, settings CRUD (worktreeRoot validation, inactivityTimeoutMinutes bounds, remoteUrl HTTPS enforcement, defaultEffortLevel validation, defaultAgent validation), PR status utilities (URL number extraction, stale guard timing), and worktree status (diff stats parsing, branch/no-branch scenarios).

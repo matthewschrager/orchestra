@@ -57,7 +57,7 @@ export function replaceSlashToken(
 interface Props {
   value: string;
   onChange: (value: string) => void;
-  onSubmit: () => void;
+  onSubmit: (interrupt?: boolean) => void;
   onPaste?: (e: React.ClipboardEvent) => void;
   commands: SlashCommand[];
   history?: string[];
@@ -223,9 +223,11 @@ export function SlashCommandInput({
     }
 
     // Enter sends, Shift+Enter inserts newline (skip during IME composition)
+    // Cmd/Ctrl+Enter sends with interrupt (steers the agent mid-turn)
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      onSubmit();
+      const interrupt = e.metaKey || e.ctrlKey;
+      onSubmit(interrupt);
     }
   };
 
@@ -306,7 +308,7 @@ export function SlashCommandInput({
           placeholder={placeholder}
           rows={rows}
           className={[
-            "w-full border border-edge-2 rounded-lg px-3 py-2 text-sm",
+            "block w-full border border-edge-2 rounded-lg px-3 py-2 text-sm",
             "relative resize-none focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent",
             "placeholder:text-content-3",
             hasHighlights

@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.1.35.6] - 2026-03-28
+
+### Added
+
+- **Default effort level setting** — new "Default effort level" dropdown in Settings pre-selects the effort level when creating new threads; supports all levels across Claude (Low/Medium/High) and Codex (Minimal/Low/Medium/High/Max); silently falls back when a level isn't supported by the chosen agent
+- **Default agent setting** — new "Default agent" dropdown in Settings pre-selects Claude or Codex when creating new threads; only shown when multiple agents are detected; includes "Auto (first detected)" option
+- **Auto-expand image reads** — Read tool results that read image files now auto-expand in the chat view so screenshots and images are always visible without clicking to expand
+
+## [0.1.35.5] - 2026-03-28
+
+### Fixed
+
+- **Context panel changed files now open directly from the sidebar** — worktree diff entries resolve to absolute paths and render through the shared file-link component, so the same filenames shown in Context can now open in VS Code locally or copy the path remotely
+
+### For contributors
+
+- **PR status stale-threshold test no longer flakes on the 5-minute boundary** — the exact-threshold assertion now freezes `Date.now()` and matches the intended `>` staleness rule instead of racing real clock drift during the test run
+
+## [0.1.35.4] - 2026-03-28
+
+### Fixed
+
+- **Claude ASCII diagrams now render correctly inside markdown lists** — `wrapAsciiArt()` no longer skips numbered and bulleted list items, instead emitting indented fenced code blocks so box-drawing mockups keep their spacing and alignment when Claude nests them under list headings; added regression coverage for bulleted, pipe-based, and numbered-list diagrams
+
+## [0.1.35.3] - 2026-03-28
+
+### Fixed
+
+- **Send button vertical alignment** — fixed 6px misalignment between the Send button and the chat input textarea caused by the textarea's default `inline-block` display leaving a baseline descender gap; added `display: block` to eliminate it
+
+## [0.1.35.2] - 2026-03-28
+
+### Removed
+
+- **Removed planning artifacts** — deleted `PLAN.md` and `AUTH-HARDENING-AUTOPLAN.md` from repo root (generated during development, not meant to be committed)
+
+## [0.1.35.1] - 2026-03-28
+
+### Changed
+
+- **README overhaul for new-user onboarding** — un-collapsed mobile screenshots so they're visible by default, moved architecture diagram to the bottom, replaced multi-step quick start with single `./start.sh` command, inlined prerequisites, simplified Development section to `bun run dev`, added desktop-context screenshot to Architecture section, trimmed redundant CLI entries
+
+## [0.1.35.0] - 2026-03-28
+
+### Changed
+
+- **Cleanup modal redesigned with dry-run preview** — "Clean up merged/pushed" now opens a single modal that scans all threads first (with a loading spinner), shows a full preview of what will be deleted, what needs review, and what won't be touched, then executes only after user confirmation. No more surprise deletions or native `alert()` dialogs. Server-side `dryRun` flag added to the cleanup-pushed endpoint so the initial scan has no side effects.
+
+### Removed
+
+- **Removed native `alert()` from cleanup flow** — all three `alert()` calls replaced by inline modal states (preview and completion summary)
+
+## [0.1.34.1] - 2026-03-28
+
+### Changed
+
+- **Updated README screenshots** — refreshed all three screenshots (desktop thread view, mobile session list, mobile chat view) to reflect the current UI design
+
 ## [0.1.34.0] - 2026-03-28
 
 ### Fixed

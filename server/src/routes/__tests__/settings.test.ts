@@ -301,6 +301,140 @@ describe("PATCH /settings", () => {
     expect(body.remoteUrl).toBe("");
   });
 
+  test("GET returns default defaultEffortLevel (empty string)", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings");
+    const body = await res.json();
+    expect(body.defaultEffortLevel).toBe("");
+  });
+
+  test("PATCH defaultEffortLevel accepts valid effort level", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultEffortLevel: "high" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.defaultEffortLevel).toBe("high");
+  });
+
+  test("PATCH defaultEffortLevel accepts all valid levels", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    for (const level of ["minimal", "low", "medium", "high", "xhigh"]) {
+      const res = await app.request("/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ defaultEffortLevel: level }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.defaultEffortLevel).toBe(level);
+    }
+  });
+
+  test("PATCH defaultEffortLevel accepts empty string (to clear)", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    // Set a value first
+    await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultEffortLevel: "high" }),
+    });
+    // Clear it
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultEffortLevel: "" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.defaultEffortLevel).toBe("");
+  });
+
+  test("PATCH defaultEffortLevel rejects invalid level", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultEffortLevel: "super" }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("defaultEffortLevel");
+  });
+
+  test("PATCH defaultEffortLevel rejects non-string", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultEffortLevel: 42 }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("must be a string");
+  });
+
+  test("GET returns default defaultAgent (empty string)", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings");
+    const body = await res.json();
+    expect(body.defaultAgent).toBe("");
+  });
+
+  test("PATCH defaultAgent accepts valid agent name", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultAgent: "codex" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.defaultAgent).toBe("codex");
+  });
+
+  test("PATCH defaultAgent accepts empty string (to clear)", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultAgent: "claude" }),
+    });
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultAgent: "" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.defaultAgent).toBe("");
+  });
+
+  test("PATCH defaultAgent rejects non-string", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultAgent: 42 }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("must be a string");
+  });
+
   test("persists across requests", async () => {
     const db = createTestDb();
     const { app } = createApp(db);

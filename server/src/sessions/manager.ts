@@ -12,6 +12,10 @@ import {
   resolveAttentionItem,
   orphanAttentionItems,
   attentionRowToApi,
+  enqueueMessage,
+  dequeueNextMessage,
+  countPendingQueue,
+  cleanDeliveredQueue,
 } from "../db";
 import type { AgentRegistry } from "../agents/registry";
 import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage, PersistentSession } from "../agents/types";
@@ -51,8 +55,8 @@ export interface ActiveSession {
   state: SessionState;
   /** Number of auto-restarts attempted (circuit breaker for restart loops) */
   restartCount: number;
-  /** Number of messages queued during the current turn (reset on turn_end) */
-  queuedCount: number;
+  /** Number of messages injected during the current turn (persistent sessions only, reset on turn_end) */
+  queuedThisTurn: number;
 }
 
 type MessageListener = (threadId: string, message: MessageRow) => void;
@@ -224,29 +228,18 @@ export class SessionManager {
 
     const existing = this.sessions.get(threadId);
 
-    // Guard: non-persistent sessions still block during thinking (no queue support)
-    if (existing && !existing.persistent && existing.state === "thinking") {
-      throw new Error("Agent is still processing — wait for it to finish");
-    }
-
-    // Orphan any pending attention items — user is moving on by sending a new message,
-    // so old AskUserQuestions are no longer relevant. Without this, stale attention items
-    // cause the turn_end handler to skip the status→"done" transition, leaving the thread
-    // stuck in "running" forever.
-    const orphaned = this.orphanPendingAttention(threadId, { type: "orphaned", reason: "superseded_by_user_message" });
-    if (orphaned > 0 && DEBUG) {
-      console.log(`[session] Orphaned ${orphaned} stale attention items for ${threadId} on sendMessage`);
-    }
-
-    // ── QUEUE PATH: persistent session mid-turn — queue message for next turn ──
-    if (existing?.persistent && existing.state === "thinking") {
-      // Content validation: reject empty/whitespace before consuming queue slot
+    // ── QUEUE PATH: any session mid-turn — queue for delivery ──
+    if (existing && existing.state === "thinking") {
       if (!content.trim()) {
         throw new Error("Cannot queue an empty message");
       }
-      // Queue depth limit
-      if (existing.queuedCount >= MAX_QUEUED_MESSAGES) {
-        throw new Error("Queue full — wait for the agent to finish this turn");
+      // Queue depth limit: persistent uses per-turn counter (messages are injected immediately),
+      // non-persistent uses total pending in SQLite (messages wait for turn to complete)
+      const queueCount = existing.persistent
+        ? existing.queuedThisTurn
+        : countPendingQueue(this.db, threadId);
+      if (queueCount >= MAX_QUEUED_MESSAGES) {
+        throw new Error("Queue full — wait for the agent to finish");
       }
 
       // Persist user message immediately so it appears in chat
@@ -258,39 +251,67 @@ export class SessionManager {
       });
 
       const agentPrompt = this.buildPromptWithAttachments(content, validAttachments);
+      const isInterrupt = !!opts?.interrupt;
 
-      // Phase 1: interrupt param is accepted but ignored (always queue as 'next')
-      const priority = "next" as const;
-      if (opts?.interrupt && DEBUG) {
-        console.log(`[session] interrupt=true requested for ${threadId} but not yet implemented (Phase 2) — queuing as 'next'`);
+      // Persist to message_queue for crash recovery + delivery tracking
+      const serializedAttachments = validAttachments?.length ? JSON.stringify(validAttachments) : null;
+      const queueRow = enqueueMessage(this.db, threadId, agentPrompt, serializedAttachments, isInterrupt);
+
+      // For interrupt messages, orphan pending attention immediately (user is overriding)
+      if (isInterrupt) {
+        this.orphanPendingAttention(threadId, { type: "orphaned", reason: "superseded_by_interrupt" });
       }
 
-      const sessionId = existing.sessionId ?? this.getPersistedSessionId(threadId);
-      if (!sessionId) {
-        console.warn(`[session] No sessionId for queue inject on ${threadId} — message persisted but not injected`);
-        existing.queuedCount++;
-        this.notifyStreamDelta(threadId, { threadId, deltaType: "queued_message", queuedCount: existing.queuedCount });
-        return;
+      // For persistent sessions, also inject into the living subprocess.
+      // On successful inject, mark the queue entry as delivered immediately
+      // (the CLI subprocess has it — queue entry is only for crash recovery).
+      if (existing.persistent) {
+        const priority = isInterrupt ? "now" as const : "next" as const;
+        const sessionId = existing.sessionId ?? this.getPersistedSessionId(threadId);
+        if (sessionId) {
+          let injected = false;
+          try {
+            const injectPromise = (existing.session as PersistentSession).injectMessage(agentPrompt, sessionId, priority);
+            injected = true; // streamInput accepted the message synchronously
+            // Mark as delivered — CLI has it now
+            this.markQueueDelivered(queueRow.id);
+            injectPromise.catch((err) => {
+              if (existing.aborted || !this.sessions.has(threadId)) return;
+              console.error(`[session] queued streamInput failed for ${threadId}:`, err);
+              // Message was marked delivered but CLI may not have it — user can resend
+            });
+          } catch (err) {
+            if (!injected) {
+              // Synchronous throw — message stays pending in queue for drain
+              if (existing.aborted || !this.sessions.has(threadId)) return;
+              console.error(`[session] queued streamInput threw for ${threadId}:`, err);
+            }
+          }
+        } else {
+          if (DEBUG) console.log(`[session] No sessionId for queue inject on ${threadId} — persisted to queue, will drain on turn_end`);
+        }
       }
+      // Non-persistent sessions: message stays in SQLite queue, drained after iterator completes
 
-      // Inject with priority — async errors handled via catch
-      try {
-        const injectPromise = (existing.session as PersistentSession).injectMessage(agentPrompt, sessionId, priority);
-        injectPromise.catch((err) => {
-          if (existing.aborted || !this.sessions.has(threadId)) return;
-          console.error(`[session] queued streamInput failed for ${threadId}:`, err);
-          // Message is persisted — user can resend if agent restarts
-        });
-      } catch (err) {
-        // Synchronous throw: don't count as queued (inject never reached CLI)
-        if (existing.aborted || !this.sessions.has(threadId)) return;
-        console.error(`[session] queued streamInput threw for ${threadId}:`, err);
-        return;
+      if (existing.persistent) {
+        existing.queuedThisTurn++;
       }
-
-      existing.queuedCount++;
-      this.notifyStreamDelta(threadId, { threadId, deltaType: "queued_message", queuedCount: existing.queuedCount });
+      const newCount = existing.persistent
+        ? existing.queuedThisTurn
+        : countPendingQueue(this.db, threadId);
+      this.notifyStreamDelta(threadId, { threadId, deltaType: "queued_message", queuedCount: newCount });
       return;
+    }
+
+    // ── IMMEDIATE DELIVERY PATH (not mid-turn) ──
+
+    // Orphan any pending attention items — user is moving on by sending a new message,
+    // so old AskUserQuestions are no longer relevant. Without this, stale attention items
+    // cause the turn_end handler to skip the status→"done" transition, leaving the thread
+    // stuck in "running" forever.
+    const orphaned = this.orphanPendingAttention(threadId, { type: "orphaned", reason: "superseded_by_user_message" });
+    if (orphaned > 0 && DEBUG) {
+      console.log(`[session] Orphaned ${orphaned} stale attention items for ${threadId} on sendMessage`);
     }
 
     // Validate attachments and persist user message
@@ -318,7 +339,7 @@ export class SessionManager {
       // Transition to thinking + refresh inactivity timestamp
       existing.state = "thinking";
       existing.lastMessageAt = Date.now();
-      existing.queuedCount = 0;
+      existing.queuedThisTurn = 0;
       updateThread(this.db, threadId, { status: "running", error_message: null });
       this.notifyThread(threadId);
 
@@ -469,6 +490,11 @@ export class SessionManager {
   private static readonly NANOID_RE = /^[a-zA-Z0-9_-]{8,24}$/;
 
   /** Filter out attachments with invalid/suspicious IDs */
+  /** Mark a queue entry as delivered (CLI subprocess accepted it via streamInput) */
+  private markQueueDelivered(queueId: string): void {
+    this.db.query("UPDATE message_queue SET delivered_at = datetime('now') WHERE id = ?").run(queueId);
+  }
+
   private validateAttachments(attachments?: Attachment[]): Attachment[] | undefined {
     if (!attachments?.length) return attachments;
     return attachments.filter((a) => SessionManager.NANOID_RE.test(a.id));
@@ -541,7 +567,7 @@ export class SessionManager {
       persistent: false,
       state: "thinking",
       restartCount: 0,
-      queuedCount: 0,
+      queuedThisTurn: 0,
     };
     this.sessions.set(threadId, active);
 
@@ -598,7 +624,7 @@ export class SessionManager {
       persistent: true,
       state: "thinking",
       restartCount,
-      queuedCount: 0,
+      queuedThisTurn: 0,
     };
     this.sessions.set(threadId, active);
 
@@ -694,7 +720,7 @@ export class SessionManager {
           const hasPendingAttention = getPendingAttention(this.db, threadId).length > 0;
           const newState: SessionState = hasPendingAttention ? "waiting" : "idle";
           activeSession.state = newState;
-          activeSession.queuedCount = 0;
+          activeSession.queuedThisTurn = 0;
           turnMessageCount = 0;
 
           if (DEBUG) console.log(`[stream] Thread ${threadId} — persistent turn ended, state → ${newState}`);
@@ -703,12 +729,31 @@ export class SessionManager {
             // Turn ended with pending attention — ensure status is "waiting" and notify.
             // Defensive: status may have been overwritten to "running" by sendMessage()
             // if the user answered by typing directly instead of resolving the attention item.
+            // Queue drain pauses while waiting — queued messages will drain after attention resolves.
             updateThread(this.db, threadId, { status: "waiting", pid: null });
             this.notifyThread(threadId);
           } else {
-            // Turn completed normally — mark done but keep session alive
-            updateThread(this.db, threadId, { status: "done", pid: null });
-            this.notifyThread(threadId);
+            // ── Queue drain for persistent sessions ──
+            // Check SQLite queue for pending messages. If found, route through sendMessage()
+            // which handles state transitions, resetTurnState(), and inject.
+            const nextQueued = dequeueNextMessage(this.db, threadId);
+            if (nextQueued) {
+              if (DEBUG) console.log(`[stream] Thread ${threadId} — draining queued message from SQLite`);
+              // sendMessage with internal flag (skip touchThreadInteraction)
+              // This transitions state back to "thinking" and injects the message.
+              try {
+                const drainAttachments = nextQueued.attachments ? JSON.parse(nextQueued.attachments) : undefined;
+                this.sendMessage(threadId, nextQueued.content, drainAttachments, { internal: true });
+              } catch (drainErr) {
+                console.error(`[stream] Thread ${threadId} — queue drain failed:`, drainErr);
+                updateThread(this.db, threadId, { status: "done", pid: null });
+                this.notifyThread(threadId);
+              }
+            } else {
+              // Turn completed normally — mark done but keep session alive
+              updateThread(this.db, threadId, { status: "done", pid: null });
+              this.notifyThread(threadId);
+            }
           }
           // Don't break — iterator stays alive for next turn
         }
@@ -748,11 +793,15 @@ export class SessionManager {
         }
 
         // Subprocess died mid-turn — surface error, enable resume on next message
-        console.warn(`[stream] Thread ${threadId} — persistent session died mid-turn after ${turnMessageCount} msgs`);
+        const pendingQueueCount = countPendingQueue(this.db, threadId);
+        console.warn(`[stream] Thread ${threadId} — persistent session died mid-turn after ${turnMessageCount} msgs (${pendingQueueCount} queued)`);
         this.orphanPendingAttention(threadId, { type: "orphaned", reason: "session_ended_unexpectedly" });
+        const queueNote = pendingQueueCount > 0
+          ? ` ${pendingQueueCount} queued message${pendingQueueCount !== 1 ? "s" : ""} will be delivered when you send a follow-up.`
+          : "";
         this.persistMessage(threadId, {
           role: "assistant",
-          content: "**Session ended unexpectedly.** Send a follow-up message to resume.",
+          content: `**Session ended unexpectedly.** Send a follow-up message to resume.${queueNote}`,
         });
         updateThread(this.db, threadId, {
           status: "error",
@@ -786,11 +835,41 @@ export class SessionManager {
 
       const thread = getThread(this.db, threadId);
       if (thread?.status === "waiting") {
+        // Agent asked a question — don't drain queue while waiting for user answer
         updateThread(this.db, threadId, { pid: null });
       } else {
-        const orphaned = this.orphanPendingAttention(threadId, { type: "orphaned", reason: "session_completed_without_resolution" });
-        if (orphaned > 0) {
-          console.log(`Orphaned ${orphaned} attention items for thread ${threadId}`);
+        // ── Queue drain for non-persistent sessions ──
+        // Check SQLite queue before marking done. If messages are pending, start a new turn.
+        const nextQueued = dequeueNextMessage(this.db, threadId);
+        if (nextQueued) {
+          if (DEBUG) console.log(`[stream] Thread ${threadId} — draining queued message (non-persistent), starting new turn`);
+          const freshThread = getThread(this.db, threadId) as ThreadRow | null;
+          const drainAdapter = freshThread ? this.registry.get(freshThread.agent) : adapter;
+          const drainCwd = freshThread ? (freshThread.worktree || freshThread.repo_path) : activeSession.cwd;
+          const drainEffort = freshThread && isEffortLevelSupported(freshThread.agent, freshThread.effort_level)
+            ? freshThread.effort_level : null;
+          const drainSessionId = activeSession.sessionId ?? this.getPersistedSessionId(threadId) ?? null;
+
+          if (drainAdapter) {
+            updateThread(this.db, threadId, { status: "running", error_message: null });
+            this.notifyThread(threadId);
+            if (drainAdapter.supportsPersistent?.()) {
+              this.startPersistentSession(threadId, drainAdapter, drainCwd, nextQueued.content, drainSessionId, drainEffort);
+            } else {
+              this.startTurn(threadId, drainAdapter, drainCwd, nextQueued.content, drainSessionId, drainEffort);
+            }
+          } else {
+            // Adapter disappeared? Shouldn't happen, but handle gracefully
+            console.error(`[stream] Thread ${threadId} — queue drain failed: adapter not found`);
+            updateThread(this.db, threadId, { status: "done", pid: null });
+            this.notifyThread(threadId);
+          }
+          return; // Skip normal completion — new turn handles lifecycle
+        }
+
+        const orphanedCount = this.orphanPendingAttention(threadId, { type: "orphaned", reason: "session_completed_without_resolution" });
+        if (orphanedCount > 0) {
+          console.log(`Orphaned ${orphanedCount} attention items for thread ${threadId}`);
         }
         updateThread(this.db, threadId, { status: "done", pid: null });
       }
@@ -1112,6 +1191,8 @@ export class SessionManager {
           this.timeoutThread(threadId, elapsedSec);
         }
       }
+      // Housekeeping: clean up delivered queue entries older than 1 hour
+      cleanDeliveredQueue(this.db);
     }, INACTIVITY_CHECK_INTERVAL_MS);
   }
 

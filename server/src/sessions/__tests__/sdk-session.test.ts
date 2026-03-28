@@ -810,10 +810,62 @@ describe("Persistent Session lifecycle", () => {
     // Wait for init to be consumed but not the result (delayMs=200 between messages)
     await new Promise((r) => setTimeout(r, 100));
 
-    // Sending while thinking on a non-persistent adapter should throw (not silently abort)
+    // Sending while thinking on a non-persistent adapter should queue (not throw)
     expect(() => {
       sessionManager.sendMessage(thread.id, "impatient message");
-    }).toThrow("Agent is still processing");
+    }).not.toThrow();
+
+    sessionManager.stopAll();
+  });
+
+  test("non-persistent session: queued messages are persisted to SQLite", async () => {
+    const adapter = createMockAdapter([
+      { type: "system", subtype: "init", session_id: "sess-npq", tools: [], cwd: "/tmp" },
+      { type: "assistant", message: { content: [{ type: "text", text: "Working..." }] }, session_id: "sess-npq" },
+      { type: "result", subtype: "success", session_id: "sess-npq", total_cost_usd: 0.01, duration_ms: 100 },
+    ], { delayMs: 200 });
+    const { db, repoDir, sessionManager } = setupSessionManager(adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "queue persist test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Queue a message while thinking
+    sessionManager.sendMessage(thread.id, "queued follow-up");
+
+    // Check it's in the message_queue table
+    const { countPendingQueue } = await import("../../db");
+    const pendingCount = countPendingQueue(db, thread.id);
+    expect(pendingCount).toBeGreaterThanOrEqual(1);
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: interrupt sends with priority 'now'", async () => {
+    const mock = createPersistentMockAdapter();
+    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "interrupt test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-int", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Send with interrupt flag
+    sessionManager.sendMessage(thread.id, "interrupt now!", undefined, { interrupt: true });
+
+    // Verify injectMessage was called with priority "now"
+    const calls = mock.getInjectCalls();
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.priority).toBe("now");
 
     sessionManager.stopAll();
   });
