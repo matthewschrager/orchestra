@@ -5,6 +5,9 @@
 ### Fixed
 
 - **Context panel changed files now open directly from the sidebar** — worktree diff entries resolve to absolute paths and render through the shared file-link component, so the same filenames shown in Context can now open in VS Code locally or copy the path remotely
+
+### For contributors
+
 - **PR status stale-threshold test no longer flakes on the 5-minute boundary** — the exact-threshold assertion now freezes `Date.now()` and matches the intended `>` staleness rule instead of racing real clock drift during the test run
 
 ## [0.1.35.1] - 2026-03-28
