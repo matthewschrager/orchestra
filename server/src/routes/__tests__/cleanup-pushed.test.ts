@@ -245,6 +245,49 @@ describe("POST /projects/:id/cleanup-pushed", () => {
     expect(stopped).toHaveLength(0);
   });
 
+  test("scopeToThreadIds limits which threads are processed", async () => {
+    insertProject(db, "proj-1");
+    insertThread(db, "t-in-scope", "proj-1", {
+      title: "In scope",
+      status: "done",
+      worktree: "/tmp/wt-1",
+      branch: "orchestra/in-scope",
+    });
+    insertThread(db, "t-out-scope", "proj-1", {
+      title: "Out of scope",
+      status: "done",
+      worktree: "/tmp/wt-2",
+      branch: "orchestra/out-scope",
+    });
+
+    const app = createApp(
+      db,
+      createMockSessionManager(),
+      createMockWorktreeManager({ isPushed: { "t-in-scope": true, "t-out-scope": true } }),
+    );
+
+    const res = await app.request("/projects/proj-1/cleanup-pushed", {
+      method: "POST",
+      body: JSON.stringify({ scopeToThreadIds: ["t-in-scope"] }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const body = (await res.json()) as CleanupResult;
+
+    // Only the scoped thread should be cleaned
+    expect(body.cleaned).toHaveLength(1);
+    expect(body.cleaned[0].id).toBe("t-in-scope");
+
+    // Out-of-scope thread should not appear in results at all
+    expect(body.skipped).toHaveLength(0);
+    expect(body.needsConfirmation).toHaveLength(0);
+
+    // Out-of-scope thread should NOT be archived
+    const row = db.query("SELECT archived_at FROM threads WHERE id = ?").get("t-out-scope") as {
+      archived_at: string | null;
+    };
+    expect(row.archived_at).toBeNull();
+  });
+
   test("skips active (running) threads", async () => {
     insertProject(db, "proj-1");
     insertThread(db, "t-running", "proj-1", {

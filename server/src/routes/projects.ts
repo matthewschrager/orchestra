@@ -164,9 +164,11 @@ export function createProjectRoutes(
       return c.json({ error: "Managers not available" }, 500);
     }
 
-    const body = await c.req.json<{ confirmedThreadIds?: string[]; dryRun?: boolean }>().catch(() => ({}));
+    const body = await c.req.json<{ confirmedThreadIds?: string[]; dryRun?: boolean; scopeToThreadIds?: string[] }>().catch(() => ({}));
     const confirmedThreadIds = new Set(body.confirmedThreadIds ?? []);
     const dryRun = body.dryRun === true;
+    // When provided, only process these thread IDs (prevents TOCTOU between preview and execute)
+    const scopeToThreadIds = body.scopeToThreadIds ? new Set(body.scopeToThreadIds) : null;
 
     const projectId = c.req.param("id");
     const project = getProject(db, projectId);
@@ -192,6 +194,9 @@ export function createProjectRoutes(
     const needsConfirmation: CleanupPushedResponse["needsConfirmation"] = [];
 
     for (const thread of threads) {
+      // When scoped, skip threads not in the preview set
+      if (scopeToThreadIds && !scopeToThreadIds.has(thread.id)) continue;
+
       // Skip active threads
       if (["running", "pending", "waiting"].includes(thread.status)) {
         skipped.push({

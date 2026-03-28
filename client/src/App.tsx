@@ -706,31 +706,42 @@ function AppInner() {
       setError(null);
       const dryResult = await api.cleanupPushedThreads(projectId, { dryRun: true });
 
-      // Nothing to do at all
-      if (dryResult.cleaned.length === 0 && dryResult.needsConfirmation.length === 0 && dryResult.skipped.length === 0) {
-        setCleanupModal(null);
-        setError("No threads to clean up.");
-        return;
-      }
+      // Guard: if user dismissed the modal while the dry-run was in flight, don't reopen
+      setCleanupModal((prev) => {
+        if (!prev || prev.phase !== "loading") return prev;
 
-      setCleanupModal({
-        projectId,
-        phase: "preview",
-        preview: {
-          willClean: dryResult.cleaned,
-          needsReview: dryResult.needsConfirmation,
-          skipped: dryResult.skipped,
-        },
-        result: null,
+        // Nothing to do at all
+        if (dryResult.cleaned.length === 0 && dryResult.needsConfirmation.length === 0 && dryResult.skipped.length === 0) {
+          setError("No threads to clean up.");
+          return null;
+        }
+
+        return {
+          projectId,
+          phase: "preview",
+          preview: {
+            willClean: dryResult.cleaned,
+            needsReview: dryResult.needsConfirmation,
+            skipped: dryResult.skipped,
+          },
+          result: null,
+        };
       });
     } catch (err) {
-      setCleanupModal(null);
+      setCleanupModal((prev) => prev?.phase === "loading" ? null : prev);
       setError((err as Error).message);
     }
   };
 
   const handleCleanupConfirm = async (confirmedThreadIds: string[]) => {
-    if (!cleanupModal) return;
+    if (!cleanupModal?.preview) return;
+
+    // Capture the preview's thread IDs so the server only processes what the user saw
+    const scopeToThreadIds = [
+      ...cleanupModal.preview.willClean.map((t) => t.id),
+      ...cleanupModal.preview.needsReview.map((t) => t.id),
+      ...cleanupModal.preview.skipped.map((t) => t.id),
+    ];
 
     setCleanupModal((prev) => prev ? { ...prev, phase: "executing" } : null);
 
@@ -738,6 +749,7 @@ function AppInner() {
       setError(null);
       const result = await api.cleanupPushedThreads(cleanupModal.projectId, {
         confirmedThreadIds,
+        scopeToThreadIds,
       });
 
       const cleanedIds = new Set(result.cleaned.map((c) => c.id));
