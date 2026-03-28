@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Thread, WorktreeInfo } from "shared";
 import { api } from "../hooks/useApi";
+import { FilePathLink } from "./FilePathLink";
 import { PrBadge } from "./PrBadge";
 
 interface Props {
@@ -12,6 +13,31 @@ interface Props {
 function formatPrUrl(url: string): string {
   const m = url.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
   return m ? `${m[1]}#${m[2]}` : url;
+}
+
+export function resolveChangedFilePath(worktreePath: string, changedFile: string): string {
+  if (changedFile.startsWith("/")) return changedFile;
+
+  const normalizedRoot = worktreePath.replace(/\/+$/, "") || "/";
+  const normalizedFile = changedFile.replace(/^\/+/, "");
+  return normalizedRoot === "/" ? `/${normalizedFile}` : `${normalizedRoot}/${normalizedFile}`;
+}
+
+interface ChangedFilesListProps {
+  worktreePath: string;
+  changedFiles: string[];
+}
+
+export function ChangedFilesList({ worktreePath, changedFiles }: ChangedFilesListProps) {
+  return (
+    <ul className="space-y-0.5 text-xs max-h-48 overflow-y-auto">
+      {changedFiles.map((file) => (
+        <li key={file} className="truncate">
+          <FilePathLink path={resolveChangedFilePath(worktreePath, file)} />
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function ContextPanel({ thread, onClose }: Props) {
@@ -144,15 +170,12 @@ export function ContextPanel({ thread, onClose }: Props) {
         )}
 
         {/* Changed files */}
-        {worktreeInfo && worktreeInfo.changedFiles.length > 0 && (
+        {thread.worktree && worktreeInfo && worktreeInfo.changedFiles.length > 0 && (
           <Section title={`Changed files (${worktreeInfo.changedFiles.length})`}>
-            <ul className="space-y-0.5 text-xs font-mono text-content-2 max-h-48 overflow-y-auto">
-              {worktreeInfo.changedFiles.map((f) => (
-                <li key={f} className="truncate">
-                  {f}
-                </li>
-              ))}
-            </ul>
+            <ChangedFilesList
+              worktreePath={thread.worktree}
+              changedFiles={worktreeInfo.changedFiles}
+            />
           </Section>
         )}
 
