@@ -108,7 +108,7 @@ export function CleanupConfirmationModal({
   );
 
   const totalToDelete = (preview?.willClean.length ?? 0) + selectedReviewIds.size;
-  const busy = phase === "loading" || phase === "executing";
+  const busy = phase === "executing";
 
   const toggleReview = (threadId: string) => {
     setSelectedReviewIds((prev) => {
@@ -130,6 +130,12 @@ export function CleanupConfirmationModal({
           <div className="flex flex-col items-center justify-center py-12 gap-4">
             <Spinner />
             <p className="text-sm text-content-3">Scanning threads…</p>
+            <button
+              onClick={onClose}
+              className="mt-2 px-4 py-2 text-sm text-content-3 hover:text-content-1 rounded-lg hover:bg-surface-3"
+            >
+              Cancel
+            </button>
           </div>
         )}
 
