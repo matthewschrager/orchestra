@@ -196,6 +196,55 @@ describe("POST /projects/:id/cleanup-pushed", () => {
     expect(row.archived_at).toBeTruthy();
   });
 
+  test("dryRun returns what would be cleaned without side effects", async () => {
+    insertProject(db, "proj-1");
+    insertThread(db, "t-pushed", "proj-1", {
+      title: "Will be cleaned",
+      status: "done",
+      worktree: "/tmp/wt-1",
+      branch: "orchestra/test",
+    });
+    insertThread(db, "t-unpushed", "proj-1", {
+      title: "Not pushed",
+      status: "done",
+      worktree: "/tmp/wt-2",
+      branch: "orchestra/unpushed",
+    });
+
+    const stopped: string[] = [];
+    const sessionManager = {
+      stopThread: (id: string) => stopped.push(id),
+      notifyThread: () => {},
+    } as unknown as SessionManager;
+
+    const app = createApp(
+      db,
+      sessionManager,
+      createMockWorktreeManager({ isPushed: { "t-pushed": true } }),
+    );
+
+    const res = await app.request("/projects/proj-1/cleanup-pushed", {
+      method: "POST",
+      body: JSON.stringify({ dryRun: true }),
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CleanupResult;
+
+    // Should report what would be cleaned
+    expect(body.cleaned).toHaveLength(1);
+    expect(body.cleaned[0].id).toBe("t-pushed");
+    expect(body.skipped).toHaveLength(1);
+    expect(body.skipped[0].id).toBe("t-unpushed");
+
+    // But NOT actually archive or stop anything
+    const row = db.query("SELECT archived_at FROM threads WHERE id = ?").get("t-pushed") as {
+      archived_at: string | null;
+    };
+    expect(row.archived_at).toBeNull();
+    expect(stopped).toHaveLength(0);
+  });
+
   test("skips active (running) threads", async () => {
     insertProject(db, "proj-1");
     insertThread(db, "t-running", "proj-1", {

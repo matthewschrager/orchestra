@@ -58,7 +58,7 @@ export const api = {
   deleteProject: (id: string) =>
     request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
 
-  cleanupPushedThreads: (projectId: string, body?: { confirmedThreadIds?: string[] }) =>
+  cleanupPushedThreads: (projectId: string, body?: { confirmedThreadIds?: string[]; dryRun?: boolean }) =>
     request<import("shared").CleanupPushedResponse>(`/projects/${projectId}/cleanup-pushed`, {
       method: "POST",
       body: JSON.stringify(body ?? {}),

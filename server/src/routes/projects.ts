@@ -164,8 +164,9 @@ export function createProjectRoutes(
       return c.json({ error: "Managers not available" }, 500);
     }
 
-    const body = await c.req.json<{ confirmedThreadIds?: string[] }>().catch(() => ({}));
+    const body = await c.req.json<{ confirmedThreadIds?: string[]; dryRun?: boolean }>().catch(() => ({}));
     const confirmedThreadIds = new Set(body.confirmedThreadIds ?? []);
+    const dryRun = body.dryRun === true;
 
     const projectId = c.req.param("id");
     const project = getProject(db, projectId);
@@ -258,6 +259,11 @@ export function createProjectRoutes(
       }
 
       // Safe to clean up
+      if (dryRun) {
+        cleaned.push({ id: thread.id, title: thread.title });
+        continue;
+      }
+
       sessionManager.stopThread(thread.id);
       terminalManager?.closeForThread(thread.id);
 
