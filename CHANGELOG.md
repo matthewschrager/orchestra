@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.33.1] - 2026-03-28
+
+### Changed
+
+- **CLAUDE.md / AGENTS.md audit and trim** — updated file tree to add 15 files that existed in code but weren't documented (toolResultMedia, terminal/manager, merge-all-prs, thread-pr-metadata, TodoItemList, ToolMediaRenderer, shiki.ts, diffCompute.ts, etc.); cut 39 implementation-detail bullets from "Key design decisions" that agents can discover from code, keeping 16 essential architectural constraints; fixed renderers/ tree formatting; both files remain identical per sync comment
+
 ## [0.1.33.0] - 2026-03-27
 
 ### Fixed
