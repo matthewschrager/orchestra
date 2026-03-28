@@ -1,10 +1,44 @@
 # Changelog
 
-## [0.1.34.1] - 2026-03-28
+## [0.1.35.4] - 2026-03-28
 
 ### Fixed
 
 - **Claude ASCII diagrams now render correctly inside markdown lists** — `wrapAsciiArt()` no longer skips numbered and bulleted list items, instead emitting indented fenced code blocks so box-drawing mockups keep their spacing and alignment when Claude nests them under list headings; added regression coverage for bulleted, pipe-based, and numbered-list diagrams
+
+## [0.1.35.3] - 2026-03-28
+
+### Fixed
+
+- **Send button vertical alignment** — fixed 6px misalignment between the Send button and the chat input textarea caused by the textarea's default `inline-block` display leaving a baseline descender gap; added `display: block` to eliminate it
+
+## [0.1.35.2] - 2026-03-28
+
+### Removed
+
+- **Removed planning artifacts** — deleted `PLAN.md` and `AUTH-HARDENING-AUTOPLAN.md` from repo root (generated during development, not meant to be committed)
+
+## [0.1.35.1] - 2026-03-28
+
+### Changed
+
+- **README overhaul for new-user onboarding** — un-collapsed mobile screenshots so they're visible by default, moved architecture diagram to the bottom, replaced multi-step quick start with single `./start.sh` command, inlined prerequisites, simplified Development section to `bun run dev`, added desktop-context screenshot to Architecture section, trimmed redundant CLI entries
+
+## [0.1.35.0] - 2026-03-28
+
+### Changed
+
+- **Cleanup modal redesigned with dry-run preview** — "Clean up merged/pushed" now opens a single modal that scans all threads first (with a loading spinner), shows a full preview of what will be deleted, what needs review, and what won't be touched, then executes only after user confirmation. No more surprise deletions or native `alert()` dialogs. Server-side `dryRun` flag added to the cleanup-pushed endpoint so the initial scan has no side effects.
+
+### Removed
+
+- **Removed native `alert()` from cleanup flow** — all three `alert()` calls replaced by inline modal states (preview and completion summary)
+
+## [0.1.34.1] - 2026-03-28
+
+### Changed
+
+- **Updated README screenshots** — refreshed all three screenshots (desktop thread view, mobile session list, mobile chat view) to reflect the current UI design
 
 ## [0.1.34.0] - 2026-03-28
 

@@ -143,7 +143,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
     [uploadFiles],
   );
 
-  const handleSubmit = () => {
+  const handleSubmit = (interrupt?: boolean) => {
     if (uploading) return;
     const text = input.trim();
     const hasAttachments = attachments.length > 0;
@@ -177,7 +177,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
     if (mode === "new" || !thread) {
       onNewThread(agent, effortLevel || null, text || "(see attached files)", isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, currentAttachments);
     } else {
-      onSend(text || "(see attached files)", currentAttachments);
+      onSend(text || "(see attached files)", currentAttachments, interrupt);
     }
     setInput("");
     setAttachments([]);
@@ -271,10 +271,12 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
 
         {/* Send button — always visible */}
         <button
-          onClick={handleSubmit}
+          onClick={() => handleSubmit()}
           disabled={uploading || (!input.trim() && attachments.length === 0)}
           className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium shrink-0 border border-transparent"
-          title="Enter to send, Shift+Enter for newline"
+          title={isRunning
+            ? "Enter to queue message · ⌘Enter to interrupt agent"
+            : "Enter to send, Shift+Enter for newline"}
         >
           {mode === "new" && thread ? "New" : "Send"}
         </button>

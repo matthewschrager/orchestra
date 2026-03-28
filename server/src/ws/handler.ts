@@ -1,6 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import type { DB, MessageRow, ThreadRow } from "../db";
-import { getMessages, getPendingAttention, getThread, attentionRowToApi, messageRowToApi, threadRowToApi } from "../db";
+import { getMessages, getPendingAttention, getThread, attentionRowToApi, messageRowToApi, threadRowToApi, countPendingQueue } from "../db";
 import type { SessionManager } from "../sessions/manager";
 import type { TerminalManager } from "../terminal/manager";
 import type { AttentionItem, StreamDelta, WSClientMessage, WSServerMessage } from "shared";
@@ -237,6 +237,17 @@ export function createWSHandler(
               JSON.stringify({
                 type: "attention_required",
                 attention: attentionRowToApi(a),
+              } satisfies WSServerMessage),
+            );
+          }
+
+          // Replay pending queue count so client shows correct "N queued" indicator
+          const pendingQueueCount = countPendingQueue(db, msg.threadId);
+          if (pendingQueueCount > 0) {
+            ws.send(
+              JSON.stringify({
+                type: "stream_delta",
+                delta: { threadId: msg.threadId, deltaType: "queued_message", queuedCount: pendingQueueCount },
               } satisfies WSServerMessage),
             );
           }
