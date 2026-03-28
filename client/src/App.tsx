@@ -828,11 +828,11 @@ function AppInner() {
   const handleMergeAllPrsConfirm = async () => {
     const projectId = mergeConfirmProjectId;
     if (!projectId) return;
-    setMergeConfirmProjectId(null);
     try {
       setError(null);
       setMergingProjectId(projectId);
       const thread = await api.mergeAllPrs(projectId, defaultDetectedAgent);
+      setMergeConfirmProjectId(null);
       setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
       setActiveThreadId(thread.id);
       clearUnread(thread.id);
@@ -841,6 +841,7 @@ function AppInner() {
       turnStartRef.current = Date.now();
       api.listProjects().then(setProjects).catch(console.error);
     } catch (err) {
+      setMergeConfirmProjectId(null);
       setError((err as Error).message);
     } finally {
       setMergingProjectId((current) => (current === projectId ? null : current));

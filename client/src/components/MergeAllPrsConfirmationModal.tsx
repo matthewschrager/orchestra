@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 
 interface Props {
   projectName: string;
@@ -52,13 +52,21 @@ export function MergeAllPrsConfirmationModal({
   onClose,
   onConfirm,
 }: Props) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    overlayRef.current?.focus();
+  }, []);
+
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape" && !loading) onClose();
   };
 
   return (
     <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      ref={overlayRef}
+      tabIndex={-1}
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 outline-none"
       onKeyDown={handleKeyDown}
       onClick={(e) => { if (e.target === e.currentTarget && !loading) onClose(); }}
     >
