@@ -512,6 +512,14 @@ function AppInner() {
     });
   }, [activeThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Update browser tab title when there are unseen completed threads
+  useEffect(() => {
+    const unseenDoneCount = threads.filter(
+      (t) => unreadThreadIds.has(t.id) && (t.status === "done" || t.status === "error"),
+    ).length;
+    document.title = unseenDoneCount > 0 ? `(${unseenDoneCount}) Orchestra` : "Orchestra";
+  }, [unreadThreadIds, threads]);
+
   // ── Actions ───────────────────────────────────────────
 
   const handleNewThread = async (agent: string, effortLevel: EffortLevel | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => {
