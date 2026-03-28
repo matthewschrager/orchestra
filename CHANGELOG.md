@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.35.6] - 2026-03-28
+
+### Added
+
+- **Default effort level setting** — new "Default effort level" dropdown in Settings pre-selects the effort level when creating new threads; supports all levels across Claude (Low/Medium/High) and Codex (Minimal/Low/Medium/High/Max); silently falls back when a level isn't supported by the chosen agent
+- **Default agent setting** — new "Default agent" dropdown in Settings pre-selects Claude or Codex when creating new threads; only shown when multiple agents are detected; includes "Auto (first detected)" option
+- **Auto-expand image reads** — Read tool results that read image files now auto-expand in the chat view so screenshots and images are always visible without clicking to expand
+
 ## [0.1.35.5] - 2026-03-28
 
 ### Fixed

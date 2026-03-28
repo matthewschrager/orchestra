@@ -9,6 +9,7 @@ import { SubAgentCard } from "./renderers/SubAgentCard";
 import { TodoCard } from "./renderers/TodoCard";
 import { ToolMediaRenderer, hasToolImages } from "./renderers/ToolMediaRenderer";
 import { extractQuestionPreview, formatAnswers, isAskUserTool, parseQuestions, type ParsedQuestion } from "../lib/askUser";
+import { isImageFile } from "../lib/fileUtils";
 import { MessageAttachments } from "./AttachmentPreview";
 import { EditableTitle } from "./EditableTitle";
 import type { Attachment } from "shared";
@@ -436,7 +437,18 @@ const TOOL_RENDERERS: Record<string, (ctx: ToolRenderContext) => React.ReactNode
 
 function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false, latestTodoId = null }: { pair: ToolPair; isAnswered: boolean; onSubmitAnswers?: (text: string) => void; forceExpand?: boolean; latestTodoId?: string | null }) {
   // Auto-expand Edit tools so diffs are visible by default (like Claude CLI)
-  const [expanded, setExpanded] = useState(pair.name === "Edit");
+  // Auto-expand Read tools when reading image files so images are always visible
+  const [expanded, setExpanded] = useState(() => {
+    if (pair.name === "Edit") return true;
+    if (pair.name === "Read") {
+      try {
+        const parsed = JSON.parse(pair.input || "{}");
+        const filePath = parsed.file_path || parsed.filePath || "";
+        if (isImageFile(filePath)) return true;
+      } catch { /* not parseable, stay collapsed */ }
+    }
+    return false;
+  });
   if (pair.name === "Bash") {
     return <BashRenderer input={pair.input} output={pair.output} metadata={pair.metadata} forceExpand={forceExpand} />;
   }

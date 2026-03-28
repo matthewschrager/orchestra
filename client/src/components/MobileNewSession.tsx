@@ -12,6 +12,8 @@ interface MobileNewSessionProps {
   agents: Array<{ name: string; detected: boolean }>;
   commands: SlashCommand[];
   activeProjectId: string | null;
+  defaultEffortLevel?: EffortLevel | "";
+  defaultAgent?: string;
   onNewThread: (
     agent: string,
     effortLevel: EffortLevel | null,
@@ -28,13 +30,15 @@ export function MobileNewSession({
   agents,
   commands,
   activeProjectId,
+  defaultEffortLevel,
+  defaultAgent,
   onNewThread,
 }: MobileNewSessionProps) {
   const detectedAgents = agents.filter((agent) => agent.detected);
-  const defaultAgent = detectedAgents[0]?.name ?? "claude";
+  const resolvedDefaultAgent = (defaultAgent && detectedAgents.some((a) => a.name === defaultAgent)) ? defaultAgent : (detectedAgents[0]?.name ?? "claude");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(activeProjectId);
-  const [selectedAgent, setSelectedAgent] = useState(defaultAgent);
-  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">("");
+  const [selectedAgent, setSelectedAgent] = useState(resolvedDefaultAgent);
+  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">(defaultEffortLevel ?? "");
   const [prompt, setPrompt] = useState("");
   const [isolate, setIsolate] = useState(true);
   const [worktreeName, setWorktreeName] = useState(() => {
@@ -51,9 +55,9 @@ export function MobileNewSession({
 
   useEffect(() => {
     if (effortLevel && !effortOptions.some((option) => option.value === effortLevel)) {
-      setEffortLevel("");
+      setEffortLevel(defaultEffortLevel && effortOptions.some((o) => o.value === defaultEffortLevel) ? defaultEffortLevel : "");
     }
-  }, [effortLevel, effortOptions]);
+  }, [effortLevel, effortOptions, defaultEffortLevel]);
 
   const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;

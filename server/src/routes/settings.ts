@@ -4,7 +4,9 @@ import { existsSync, mkdirSync } from "fs";
 import type { DB } from "../db";
 import { getAllSettings, getSetting, setSetting } from "../db";
 import { DEFAULT_WORKTREE_ROOT, type WorktreeManager } from "../worktrees/manager";
-import type { Settings } from "shared";
+import { ALL_EFFORT_OPTIONS, type EffortLevel, type Settings } from "shared";
+
+const VALID_EFFORT_LEVELS: readonly string[] = ALL_EFFORT_OPTIONS.map((o) => o.value);
 
 const DEFAULT_INACTIVITY_TIMEOUT_MINUTES = 30;
 
@@ -19,6 +21,8 @@ function resolveSettings(db: DB): Settings {
       ? timeoutParsed
       : DEFAULT_INACTIVITY_TIMEOUT_MINUTES,
     remoteUrl: raw.remoteUrl || "",
+    defaultEffortLevel: (VALID_EFFORT_LEVELS.includes(raw.defaultEffortLevel ?? "") ? raw.defaultEffortLevel as EffortLevel : "") as EffortLevel | "",
+    defaultAgent: raw.defaultAgent || "",
   };
 }
 
@@ -88,6 +92,26 @@ export function createSettingsRoutes(db: DB, worktreeManager: WorktreeManager) {
       validatedRemoteUrl = trimmed;
     }
 
+    let validatedDefaultEffortLevel: string | undefined;
+    if (body.defaultEffortLevel !== undefined) {
+      const val = body.defaultEffortLevel;
+      if (typeof val !== "string") {
+        return c.json({ error: "defaultEffortLevel must be a string" }, 400);
+      }
+      if (val !== "" && !VALID_EFFORT_LEVELS.includes(val)) {
+        return c.json({ error: `defaultEffortLevel must be one of: ${VALID_EFFORT_LEVELS.join(", ")} (or empty to clear)` }, 400);
+      }
+      validatedDefaultEffortLevel = val;
+    }
+
+    let validatedDefaultAgent: string | undefined;
+    if (body.defaultAgent !== undefined) {
+      if (typeof body.defaultAgent !== "string") {
+        return c.json({ error: "defaultAgent must be a string" }, 400);
+      }
+      validatedDefaultAgent = body.defaultAgent.trim();
+    }
+
     // ── Phase 2: Apply (all validated) ────────────────────
     if (validatedTimeout !== undefined) {
       setSetting(db, "inactivityTimeoutMinutes", String(validatedTimeout));
@@ -98,6 +122,12 @@ export function createSettingsRoutes(db: DB, worktreeManager: WorktreeManager) {
     }
     if (validatedRemoteUrl !== undefined) {
       setSetting(db, "remoteUrl", validatedRemoteUrl);
+    }
+    if (validatedDefaultEffortLevel !== undefined) {
+      setSetting(db, "defaultEffortLevel", validatedDefaultEffortLevel);
+    }
+    if (validatedDefaultAgent !== undefined) {
+      setSetting(db, "defaultAgent", validatedDefaultAgent);
     }
 
     return c.json(resolveSettings(db));
