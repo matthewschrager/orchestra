@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.32.2] - 2026-03-27
+
+### Added
+
+- **README screenshots** — added desktop and mobile UI screenshots so new visitors can see what Orchestra looks like at a glance
+- **Prerequisites section** — documented required tools (Bun, Git, agent CLIs) and optional dependencies (gh, Tailscale, cloudflared)
+- **CLI documentation expanded** — added the `add <path>` command, `serve --tunnel` flag, and environment variables table (`ORCHESTRA_HOST`, `ORCHESTRA_PORT`, `ORCHESTRA_DATA_DIR`)
+
 ## [0.1.32.1] - 2026-03-27
 
 ### Fixed
