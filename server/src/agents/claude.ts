@@ -1,5 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { CanUseTool, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { ASK_USER_TOOL_NAME_ALIASES, extractAskUserRequest, isAskUserToolName } from "./askUser";
 import type {
   AgentAdapter,
   AgentSession,
@@ -11,9 +12,6 @@ import type {
 } from "./types";
 import { normalizeToolResultContent } from "./toolResultMedia";
 
-/** Tool names that trigger attention events */
-const ASK_USER_TOOLS = new Set(["AskUserQuestion", "AskUserTool"]);
-
 /** Tool names handled as plan-approval attention items.
  *  ExitPlanMode has requiresUserInteraction()=true in the CLI, which causes a Zod
  *  validation error in headless SDK mode. We deny it in canUseTool and surface it
@@ -21,7 +19,7 @@ const ASK_USER_TOOLS = new Set(["AskUserQuestion", "AskUserTool"]);
 const PLAN_APPROVAL_TOOLS = new Set(["ExitPlanMode"]);
 
 /** Combined set of tools denied in canUseTool (used for skipping denial tool_results) */
-const ORCHESTRA_HANDLED_TOOLS = new Set([...ASK_USER_TOOLS, ...PLAN_APPROVAL_TOOLS]);
+const ORCHESTRA_HANDLED_TOOLS = new Set([...ASK_USER_TOOL_NAME_ALIASES, ...PLAN_APPROVAL_TOOLS]);
 
 const DEBUG = process.env.ORCHESTRA_DEBUG === "1";
 
@@ -37,7 +35,7 @@ const DEBUG = process.env.ORCHESTRA_DEBUG === "1";
  *   setPermissionMode() to exit plan mode at the CLI level.
  */
 const orchestraCanUseTool: CanUseTool = async (toolName, _input, _options) => {
-  if (ASK_USER_TOOLS.has(toolName)) {
+  if (isAskUserToolName(toolName)) {
     if (DEBUG) console.log(`[claude] canUseTool: denying ${toolName} with interrupt`);
     return { behavior: "deny", message: "Handled by Orchestra", interrupt: true };
   }
@@ -492,28 +490,14 @@ class ClaudeParser {
     toolUseId?: string,
     serializedInput?: string,
   ): AttentionEvent | undefined {
-    if (!ASK_USER_TOOLS.has(toolName) || !toolInput) return undefined;
+    const askUser = extractAskUserRequest(toolName, toolInput);
+    if (!askUser) return undefined;
 
-    const dedupeKey = toolUseId || `${toolName}:${serializedInput ?? serializeToolInput(toolInput)}`;
+    const dedupeKey = toolUseId || `${toolName}:${serializedInput ?? askUser.serializedInput}`;
     if (this.emittedAttentionKeys.has(dedupeKey)) return undefined;
     this.emittedAttentionKeys.add(dedupeKey);
 
-    const questions = toolInput.questions as Array<{
-      question?: string;
-      header?: string;
-      options?: Array<{ label?: string; description?: string }>;
-    }> | undefined;
-
-    const firstQ = questions?.[0];
-    const prompt = firstQ?.question ?? "Agent needs your input";
-    const options = firstQ?.options?.map((o) => o.label ?? "").filter(Boolean) ?? [];
-
-    return {
-      kind: "ask_user",
-      prompt,
-      options: options.length > 0 ? options : undefined,
-      metadata: { toolInput },
-    };
+    return askUser.attention;
   }
 
   /** Create a plan-approval attention event for ExitPlanMode.

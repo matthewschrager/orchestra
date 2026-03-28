@@ -412,6 +412,88 @@ describe("CodexParser", () => {
 
   // ── MCP tool call ──────────────────────────────────────
 
+  test("item.started (mcp_tool_call ask-user alias) produces AskUserQuestion start and preview", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.started",
+      item: {
+        id: "mcp-ask-1",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "request_user_input",
+        arguments: {
+          questions: [
+            {
+              header: "Branch",
+              question: "Which branch should I use?",
+              options: [{ label: "main" }, { label: "release" }],
+            },
+          ],
+        },
+        status: "in_progress",
+      },
+    });
+
+    expect(result.messages).toHaveLength(0);
+    expect(result.deltas).toHaveLength(2);
+    expect(result.deltas[0]).toMatchObject({ deltaType: "tool_start", toolName: "AskUserQuestion" });
+    expect(result.deltas[1]).toMatchObject({ deltaType: "tool_input" });
+    expect(result.deltas[1].toolInput).toContain("Which branch should I use?");
+  });
+
+  test("item.completed (mcp_tool_call ask-user alias) emits canonical tool message and attention", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.completed",
+      item: {
+        id: "mcp-ask-2",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "request_user_input",
+        arguments: {
+          questions: [
+            {
+              header: "Branch",
+              question: "Which branch should I use?",
+              options: [{ label: "main" }, { label: "release" }],
+            },
+          ],
+        },
+        result: { content: [{ type: "text", text: "waiting for user input" }] },
+        status: "completed",
+      },
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]).toMatchObject({
+      role: "tool",
+      toolName: "AskUserQuestion",
+      metadata: { sourceToolName: "request_user_input" },
+    });
+    expect(result.messages[0].toolOutput).toBeUndefined();
+    expect(result.messages[0].toolInput).toContain("Which branch should I use?");
+    expect(result.attention).toEqual({
+      kind: "ask_user",
+      prompt: "Which branch should I use?",
+      options: ["main", "release"],
+      metadata: {
+        toolInput: {
+          questions: [
+            {
+              header: "Branch",
+              question: "Which branch should I use?",
+              options: [
+                { label: "main", description: undefined },
+                { label: "release", description: undefined },
+              ],
+              multiSelect: undefined,
+            },
+          ],
+        },
+      },
+    });
+  });
+
   test("item.completed (mcp_tool_call) produces tool message", () => {
     const parser = createParser();
     const result = parser.handleEvent({

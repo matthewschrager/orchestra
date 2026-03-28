@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { extractAskUserRequest } from "./askUser";
 import { normalizeToolResultContent } from "./toolResultMedia";
 import type {
   AgentAdapter,
@@ -216,6 +217,16 @@ export class CodexParser {
 
       case "mcp_tool_call": {
         const toolName = (item.tool as string) ?? "McpTool";
+        const askUser = extractAskUserRequest(toolName, item.arguments);
+        if (askUser) {
+          return {
+            messages: [],
+            deltas: [
+              { deltaType: "tool_start", toolName: askUser.canonicalToolName },
+              { deltaType: "tool_input", toolInput: askUser.serializedInput },
+            ],
+          };
+        }
         return {
           messages: [],
           deltas: [{ deltaType: "tool_start", toolName }],
@@ -344,6 +355,21 @@ export class CodexParser {
         const args = item.arguments;
         const result = item.result as { content?: unknown } | undefined;
         const error = item.error as { message?: string } | undefined;
+        const askUser = error?.message ? null : extractAskUserRequest(toolName, args);
+        if (askUser) {
+          return {
+            messages: [{
+              role: "tool",
+              content: "",
+              toolName: askUser.canonicalToolName,
+              toolInput: askUser.serializedInput,
+              metadata: { sourceToolName: toolName },
+            }],
+            deltas: [{ deltaType: "tool_end" }],
+            attention: askUser.attention,
+          };
+        }
+
         const toolInput = JSON.stringify(args ?? {});
         const parsedResult = error?.message
           ? {
