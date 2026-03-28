@@ -38,8 +38,8 @@ export function MergeAllPrsButton({
         title={SIDEBAR_TOOLTIP}
         aria-label={SIDEBAR_TOOLTIP}
         className={[
-          "relative inline-flex h-7 w-7 items-center justify-center rounded-lg border border-amber-400/15",
-          "bg-amber-500/8 text-amber-100 hover:bg-amber-500/14 hover:text-amber-50",
+          "relative inline-flex h-7 w-7 items-center justify-center rounded-lg",
+          "bg-surface-3/60 text-content-2 hover:bg-surface-4 hover:text-content-1",
           "disabled:cursor-wait disabled:opacity-50",
         ].join(" ")}
       >
@@ -71,7 +71,7 @@ export function MergeAllPrsButton({
             <path d="M10.5 11.5 12 13l2.5-3" />
           </svg>
         )}
-        <span className="absolute -right-1 -top-1 min-w-[15px] rounded-full bg-amber-200/90 px-1 text-[9px] font-bold leading-[15px] text-amber-950 shadow-[0_1px_2px_rgba(0,0,0,0.25)]">
+        <span className="absolute -right-1 -top-1 min-w-[14px] rounded-full bg-accent/80 px-[3px] text-[9px] font-semibold leading-[14px] text-base tabular-nums">
           {count}
         </span>
       </button>
@@ -87,8 +87,8 @@ export function MergeAllPrsButton({
       onClick={handleClick}
       disabled={busy}
       className={[
-        "inline-flex items-center justify-between gap-3 rounded-xl border border-amber-400/20",
-        "bg-amber-500/10 text-amber-100 hover:bg-amber-500/15 disabled:opacity-50 disabled:cursor-wait",
+        "inline-flex items-center justify-between gap-3 rounded-lg border border-edge-2",
+        "bg-surface-2 text-content-2 hover:bg-surface-3 hover:text-content-1 disabled:opacity-50 disabled:cursor-wait",
         compactClasses,
         compact ? "w-full" : "min-w-[240px]",
       ].join(" ")}
@@ -104,23 +104,23 @@ export function MergeAllPrsButton({
           strokeWidth="1.5"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="shrink-0"
+          className="shrink-0 text-accent"
         >
           <path d="M3 3.5h10M3 8h10M3 12.5h6" />
           <path d="M10.5 11.5 12 13l2.5-3" />
         </svg>
         <span className="min-w-0 text-left">
-          <span className="block font-medium text-amber-50">
+          <span className="block font-medium text-content-1">
             {busy ? "Starting..." : "Merge all PRs"}
           </span>
           {!compact && (
-            <span className="block text-[11px] text-amber-100/70">
+            <span className="block text-[11px] text-content-3">
               {labelForCount(count)}
             </span>
           )}
         </span>
       </span>
-      <span className="shrink-0 rounded-full bg-amber-200/12 px-2 py-0.5 text-[11px] font-semibold text-amber-100">
+      <span className="shrink-0 rounded-md bg-surface-4 px-1.5 py-0.5 text-[11px] font-mono font-medium text-content-2 tabular-nums">
         {count}
       </span>
     </button>

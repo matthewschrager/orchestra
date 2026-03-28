@@ -43,33 +43,34 @@ const STATUS_CONFIG: Record<
   string,
   {
     icon: React.ComponentType<{ className?: string }> | null;
-    bg: string;
+    /** icon gets a subtle tint; background stays neutral */
+    iconColor: string;
     label: (n: number | null) => string;
     tooltip: (n: number | null) => string;
   }
 > = {
   draft: {
     icon: PrDraftIcon,
-    bg: "bg-gray-700/40 text-gray-400",
-    label: (n) => (n ? `Draft #${n}` : "Draft"),
+    iconColor: "text-content-3",
+    label: (n) => (n ? `#${n} draft` : "Draft"),
     tooltip: (n) => (n ? `Pull request #${n}, draft` : "Pull request, draft"),
   },
   open: {
     icon: PrOpenIcon,
-    bg: "bg-emerald-900/40 text-emerald-300",
-    label: (n) => (n ? `PR #${n}` : "PR"),
+    iconColor: "text-emerald-400/70",
+    label: (n) => (n ? `#${n}` : "PR"),
     tooltip: (n) => (n ? `Pull request #${n}, open` : "Pull request, open"),
   },
   merged: {
     icon: PrMergedIcon,
-    bg: "bg-purple-900/40 text-purple-300",
-    label: (n) => (n ? `Merged #${n}` : "Merged"),
+    iconColor: "text-purple-400/70",
+    label: (n) => (n ? `#${n}` : "Merged"),
     tooltip: (n) => (n ? `Pull request #${n}, merged` : "Pull request, merged"),
   },
   closed: {
     icon: PrClosedIcon,
-    bg: "bg-red-900/40 text-red-300",
-    label: (n) => (n ? `Closed #${n}` : "Closed"),
+    iconColor: "text-red-400/60",
+    label: (n) => (n ? `#${n}` : "Closed"),
     tooltip: (n) => (n ? `Pull request #${n}, closed` : "Pull request, closed"),
   },
 };
@@ -77,32 +78,28 @@ const STATUS_CONFIG: Record<
 /**
  * PR status badge for sidebar/mobile thread lists.
  * Renders as a <span> (NOT clickable — lives inside thread row <button>).
- * Shows status-specific icon + color + PR number.
- * Falls back to plain green "PR" when prStatus is null.
+ * Neutral chip with a status-tinted icon.
+ * Falls back to plain "PR" when prStatus is null.
  */
 export function PrBadge({ prUrl, prStatus, prNumber }: Props) {
   if (!prUrl) return null;
 
-  // Fallback: prUrl exists but no status yet (pre-migration, gh unavailable)
+  const BADGE_BASE =
+    "inline-flex items-center gap-1 text-[10px] leading-none px-1.5 py-0.5 rounded-md bg-surface-3/60 text-content-2 font-mono";
+
+  // Fallback: prUrl exists but no status yet
   if (!prStatus) {
     return (
-      <span
-        className="text-[10px] px-1 py-0.5 rounded bg-emerald-900/40 text-emerald-300"
-        title="Pull request"
-      >
+      <span className={BADGE_BASE} title="Pull request">
         PR
       </span>
     );
   }
 
   const config = STATUS_CONFIG[prStatus];
-  // Unknown status string (future value, DB corruption) — fallback to plain badge
   if (!config) {
     return (
-      <span
-        className="text-[10px] px-1 py-0.5 rounded bg-emerald-900/40 text-emerald-300"
-        title="Pull request"
-      >
+      <span className={BADGE_BASE} title="Pull request">
         PR
       </span>
     );
@@ -111,11 +108,8 @@ export function PrBadge({ prUrl, prStatus, prNumber }: Props) {
   const Icon = config.icon;
 
   return (
-    <span
-      className={`inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded ${config.bg}`}
-      title={config.tooltip(prNumber)}
-    >
-      {Icon && <Icon className="shrink-0 opacity-80" />}
+    <span className={BADGE_BASE} title={config.tooltip(prNumber)}>
+      {Icon && <Icon className={`shrink-0 ${config.iconColor}`} />}
       {config.label(prNumber)}
     </span>
   );

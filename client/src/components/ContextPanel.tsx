@@ -8,6 +8,12 @@ interface Props {
   onClose: () => void;
 }
 
+/** "https://github.com/owner/repo/pull/123" → "owner/repo#123" */
+function formatPrUrl(url: string): string {
+  const m = url.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+  return m ? `${m[1]}#${m[2]}` : url;
+}
+
 export function ContextPanel({ thread, onClose }: Props) {
   const [worktreeInfo, setWorktreeInfo] = useState<WorktreeInfo | null>(null);
   const [loading, setLoading] = useState(false);
@@ -139,18 +145,27 @@ export function ContextPanel({ thread, onClose }: Props) {
         {/* PR */}
         {thread.prUrl ? (
           <Section title="Pull Request">
-            <div className="flex items-center gap-2 mb-1.5">
+            <div className="flex items-center gap-2">
               <PrBadge
                 prUrl={thread.prUrl}
                 prStatus={thread.prStatus}
                 prNumber={thread.prNumber}
               />
-              {/* Refresh button: only for open/draft/null states */}
+              <a
+                href={thread.prUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-accent hover:text-accent-light font-mono truncate"
+                title={thread.prUrl}
+              >
+                {formatPrUrl(thread.prUrl)}
+              </a>
+              {/* Refresh: only for open/draft/null states */}
               {(!thread.prStatus || thread.prStatus === "open" || thread.prStatus === "draft") && (
                 <button
                   onClick={handleRefreshPr}
                   disabled={prRefreshing}
-                  className="text-content-3 hover:text-content-2 disabled:opacity-40"
+                  className="ml-auto shrink-0 text-content-3 hover:text-content-2 disabled:opacity-40"
                   title="Refresh PR status"
                 >
                   <svg
@@ -170,21 +185,13 @@ export function ContextPanel({ thread, onClose }: Props) {
                 </button>
               )}
             </div>
-            <a
-              href={thread.prUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-accent hover:text-accent-light hover:underline break-all font-mono"
-            >
-              {thread.prUrl}
-            </a>
           </Section>
         ) : (
           thread.worktree && (
             <button
               onClick={handleCreatePR}
               disabled={prLoading}
-              className="w-full py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base"
+              className="w-full py-2 bg-surface-3 hover:bg-surface-4 border border-edge-2 disabled:opacity-40 rounded-lg text-sm font-medium text-content-1"
             >
               {prLoading ? "Creating PR..." : "Create PR"}
             </button>
