@@ -5,7 +5,7 @@ I wanted an agent dashboard that combined five things I couldn't find together:
 - **Project-organized agent sessions** — threads grouped by repo, not scattered across terminal tabs
 - **Mobile access to local sessions** — monitor and steer agents from your phone while they run on your laptop
 - **Model agnostic** — bring your own CLI agent, not locked to one provider
-- **Seamless worktree isolation** — one click to isolate a thread into a worktree, convenience functions to make highly-parallel workflows easy
+- **Seamless worktree isolation** — one click to isolate a thread into a worktree, convenience functions to easily manage many worktrees simultaneously
 - **Use your existing subscriptions** — runs local CLI agents so you can use flat-rate plans (like Claude Pro/Max) instead of paying per token via API
 
 Existing tools were either tied to a single model (Claude/Codex apps), required per-token API billing (Cursor etc.), or lacked first-class mobile access. Orchestra fills that gap. 
@@ -29,8 +29,8 @@ Existing tools were either tied to a single model (Claude/Codex apps), required 
 
 - **Thread-based UX** — Manage agent conversations as threads with streaming output, inline Bash previews, collapsible tool blocks, and rich diffs
 - **Remote/mobile access** — Use from your phone while agents run on your laptop, with push notifications for attention events
-- **Git worktree isolation** — One-click isolation of a thread into its own worktree
-- **PR creation** — Create PRs directly from worktree threads via `gh`, with auto-refreshing status badges
+- **Worktree isolation** — One-click isolation of a thread into its own worktree, with convenience functions for managing many worktrees simultaneously
+- **Parallel Dev Made Easy** — One-click to merge all outstanding PRs (you'll have lots due to easy worktree isolation), one-click to delete all threads with merged PRs, etc. 
 - **Multi-agent** — Bring your own CLIs; Claude Code and Codex adapters included, easy to add more
 - **Integrated terminal** — xterm.js terminal per thread, backed by a real PTY on the server
 - **Token auth** — Secure remote access with bearer token auth
