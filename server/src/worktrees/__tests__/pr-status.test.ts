@@ -6,6 +6,16 @@ import {
   resolveThreadBranch,
 } from "../pr-status";
 
+function withMockedNow(nowMs: number, fn: () => void) {
+  const originalNow = Date.now;
+  Date.now = () => nowMs;
+  try {
+    fn();
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
 describe("extractPrNumber", () => {
   test("extracts number from standard GitHub URL", () => {
     expect(extractPrNumber("https://github.com/owner/repo/pull/42")).toBe(42);
@@ -52,10 +62,12 @@ describe("isPrStatusStale", () => {
     expect(isPrStatusStale(now)).toBe(false);
   });
 
-  test("returns true when checkedAt is exactly 5 min ago", () => {
-    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    // At exactly 5 min, elapsed === threshold, so NOT stale (> not >=)
-    expect(isPrStatusStale(fiveMinAgo)).toBe(false);
+  test("returns false when checkedAt is exactly 5 min ago", () => {
+    withMockedNow(Date.parse("2026-03-28T12:00:00.000Z"), () => {
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      // At exactly 5 min, elapsed === threshold, so NOT stale (> not >=)
+      expect(isPrStatusStale(fiveMinAgo)).toBe(false);
+    });
   });
 
   test("returns true when checkedAt is 5 min and 1 second ago", () => {
