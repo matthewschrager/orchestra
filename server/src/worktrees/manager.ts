@@ -91,23 +91,41 @@ export class WorktreeManager {
       ...untrackedText.trim().split("\n").filter(Boolean),
     ];
 
-    // Ahead/behind (relative to main/master)
+    // Ahead/behind + diff stats (relative to main/master)
     let ahead = 0;
     let behind = 0;
+    let diffStats: { insertions: number; deletions: number } | undefined;
     if (thread.branch) {
       const mainBranch = await this.detectMainBranch(thread.worktree);
+
       const abProc = gitSpawn(
         ["rev-list", "--left-right", "--count", `${mainBranch}...${thread.branch}`],
         { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
       );
+      const statProc = gitSpawn(
+        ["diff", "--shortstat", mainBranch],
+        { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
+      );
+
       const abText = await new Response(abProc.stdout).text();
       await abProc.exited;
       const [b, a] = abText.trim().split(/\s+/).map(Number);
       behind = b || 0;
       ahead = a || 0;
+
+      const statText = await new Response(statProc.stdout).text();
+      await statProc.exited;
+      const ins = statText.match(/(\d+) insertion/);
+      const del = statText.match(/(\d+) deletion/);
+      if (ins || del) {
+        diffStats = {
+          insertions: ins ? Number(ins[1]) : 0,
+          deletions: del ? Number(del[1]) : 0,
+        };
+      }
     }
 
-    return { aheadBehind: { ahead, behind }, changedFiles };
+    return { aheadBehind: { ahead, behind }, changedFiles, diffStats };
   }
 
   async createPR(

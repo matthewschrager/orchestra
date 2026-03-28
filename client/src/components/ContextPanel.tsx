@@ -111,16 +111,29 @@ export function ContextPanel({ thread, onClose }: Props) {
           </Section>
         )}
 
-        {/* Ahead/Behind */}
+        {/* Ahead/Behind + Diff Stats */}
         {worktreeInfo && (
           <Section title="Status">
-            <div className="flex gap-3 text-sm font-mono">
-              <span className="text-emerald-400">
-                +{worktreeInfo.aheadBehind.ahead} ahead
-              </span>
-              <span className="text-red-400">
-                -{worktreeInfo.aheadBehind.behind} behind
-              </span>
+            <div className="space-y-1.5">
+              <div className="flex gap-3 text-sm font-mono">
+                <span className="text-emerald-400">
+                  +{worktreeInfo.aheadBehind.ahead} ahead
+                </span>
+                <span className="text-red-400">
+                  -{worktreeInfo.aheadBehind.behind} behind
+                </span>
+              </div>
+              {worktreeInfo.diffStats && (
+                <div className="flex gap-3 text-sm font-mono">
+                  <span className="text-emerald-400">
+                    +{worktreeInfo.diffStats.insertions.toLocaleString()}
+                  </span>
+                  <span className="text-red-400">
+                    -{worktreeInfo.diffStats.deletions.toLocaleString()}
+                  </span>
+                  <span className="text-content-3">lines</span>
+                </div>
+              )}
             </div>
           </Section>
         )}
