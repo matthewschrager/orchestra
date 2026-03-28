@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **Context panel toggle uses diff icon instead of text label** — replaced the "Context" text button in the header bar with a split-pane diff icon (side-by-side code lines), matching the Lucide/Codex visual language; panel header now shows the icon alongside "Diff" label
 - **Images always visible in collapsed tool groups** — when multiple tool calls are grouped (e.g., "Read 3 files ▸"), image-bearing tools now surface below the group header even when the group is collapsed, so screenshots and images are always discoverable without clicking through
 - **Auto-expand for metadata images** — tool results with `metadata.images` (screenshots from browse tools, MCP tools, etc.) now auto-expand in the chat view, matching the existing auto-expand behavior for Edit diffs and Read image files
 
