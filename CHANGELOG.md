@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.32.2] - 2026-03-27
+
+### Changed
+
+- **PR badges use neutral chips with status-tinted icons** — replaced saturated colored backgrounds (emerald, purple, red, amber) with the design system's `surface-3` neutral chip and subtle icon-only color, so badges blend into the dark theme instead of clashing
+- **Merge-all-PRs button uses design system tokens** — swapped warm amber palette for cool `surface`/`edge`/`accent` tokens matching the rest of the UI; count badge uses cyan accent dot instead of bright amber pill
+- **Context panel PR section is tighter** — badge, short `owner/repo#123` link, and refresh button now sit on one row instead of two; "Create PR" button uses neutral surface styling instead of bright accent fill
+
 ## [0.1.32.1] - 2026-03-27
 
 ### Fixed
