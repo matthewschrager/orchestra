@@ -5,10 +5,11 @@ I wanted an agent dashboard that combined five things I couldn't find together:
 - **Project-organized agent sessions** — threads grouped by repo, not scattered across terminal tabs
 - **Mobile access to local sessions** — monitor and steer agents from your phone while they run on your laptop
 - **Model agnostic** — bring your own CLI agent, not locked to one provider
-- **Seamless worktree isolation** — one click to isolate a thread into a worktree, convenience functions to easily manage many worktrees simultaneously
+- **Parallel development** — one-click worktree isolation, convenience functions to manage many worktrees simultaneously
 - **Use your existing subscriptions** — runs local CLI agents so you can use flat-rate plans (like Claude Pro/Max) instead of paying per token via API
+- **Cross-platform** - accessible from Windows, Mac, Linux, etc., since it's browser-based
 
-Existing tools were either tied to a single model (Claude/Codex apps), required per-token API billing (Cursor etc.), or lacked first-class mobile access. Orchestra fills that gap. 
+Existing tools were either not agent first, tied to a single model (Claude/Codex apps), Mac-only (Conductor), required per-token API billing (Cursor etc.), or lacked first-class mobile access. Orchestra fills that gap. 
 
 <b>Manage your agents from any model provider, using your existing subscriptions, from wherever you are.</b>
 
