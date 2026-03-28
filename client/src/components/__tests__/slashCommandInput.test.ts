@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { findSlashToken, buildHighlightSegments, replaceSlashToken } from "../SlashCommandInput";
+import { findSlashToken, findAtToken, buildHighlightSegments, replaceSlashToken, replaceAtToken } from "../SlashCommandInput";
 import type { SlashCommand } from "shared";
 
 const COMMANDS: SlashCommand[] = [
@@ -121,5 +121,128 @@ describe("replaceSlashToken", () => {
   test("replaces token at end of input", () => {
     const result = replaceSlashToken("do /con", { start: 3, end: 7 }, "/config");
     expect(result).toEqual({ newValue: "do /config ", newCursorPos: 11 });
+  });
+});
+
+// ── findAtToken ─────────────────────────────────────
+
+describe("findAtToken", () => {
+  test("detects token at start of input", () => {
+    const result = findAtToken("@src", 4);
+    expect(result).toEqual({ token: "@src", query: "src", start: 0, end: 4 });
+  });
+
+  test("detects token mid-text after space", () => {
+    const result = findAtToken("check @src/comp", 15);
+    expect(result).toEqual({ token: "@src/comp", query: "src/comp", start: 6, end: 15 });
+  });
+
+  test("detects token after newline", () => {
+    const result = findAtToken("line one\n@App", 13);
+    expect(result).toEqual({ token: "@App", query: "App", start: 9, end: 13 });
+  });
+
+  test("returns null when no @ token at cursor", () => {
+    expect(findAtToken("hello world", 5)).toBeNull();
+  });
+
+  test("returns null for email-style @ (no preceding whitespace)", () => {
+    expect(findAtToken("user@example.com", 16)).toBeNull();
+  });
+
+  test("detects bare @", () => {
+    const result = findAtToken("@", 1);
+    expect(result).toEqual({ token: "@", query: "", start: 0, end: 1 });
+  });
+
+  test("allows dots in file paths", () => {
+    const result = findAtToken("@src/App.tsx", 12);
+    expect(result).toEqual({ token: "@src/App.tsx", query: "src/App.tsx", start: 0, end: 12 });
+  });
+
+  test("allows slashes in file paths", () => {
+    const result = findAtToken("@server/src/routes/filesystem.ts", 32);
+    expect(result).toEqual({
+      token: "@server/src/routes/filesystem.ts",
+      query: "server/src/routes/filesystem.ts",
+      start: 0,
+      end: 32,
+    });
+  });
+
+  test("extends past cursor to full non-whitespace token", () => {
+    // Cursor after "@src/" in "@src/App.tsx"
+    const result = findAtToken("@src/App.tsx more text", 5);
+    expect(result).toEqual({ token: "@src/App.tsx", query: "src/App.tsx", start: 0, end: 12 });
+  });
+
+  test("does not trigger for slash that looks like @-token", () => {
+    // findAtToken should not match /help — that's a slash token
+    expect(findAtToken("/help", 5)).toBeNull();
+  });
+});
+
+// ── replaceAtToken ──────────────────────────────────
+
+describe("replaceAtToken", () => {
+  test("replaces token at start of input", () => {
+    // "@src" → "src/components/App.tsx " (22 chars + 1 space, cursor after space)
+    const result = replaceAtToken("@src", { start: 0, end: 4 }, "src/components/App.tsx");
+    expect(result).toEqual({
+      newValue: "src/components/App.tsx ",
+      newCursorPos: "src/components/App.tsx ".length,
+    });
+  });
+
+  test("replaces token mid-text preserving surroundings", () => {
+    // findAtToken("check @src/co and fix", 13) gives { start: 6, end: 13 }
+    const result = replaceAtToken("check @src/co and fix", { start: 6, end: 13 }, "src/components/App.tsx");
+    expect(result).toEqual({
+      newValue: "check src/components/App.tsx  and fix",
+      newCursorPos: 6 + "src/components/App.tsx".length + 1,
+    });
+  });
+
+  test("replaces token at end of input", () => {
+    // "@App" at pos 4-8, replaced with "src/App.tsx "
+    const result = replaceAtToken("fix @App", { start: 4, end: 8 }, "src/App.tsx");
+    expect(result).toEqual({
+      newValue: "fix src/App.tsx ",
+      newCursorPos: 4 + "src/App.tsx".length + 1,
+    });
+  });
+
+  test("inserts path without @ prefix", () => {
+    const result = replaceAtToken("@test", { start: 0, end: 5 }, "test/utils.ts");
+    // Should not have @ in the output
+    expect(result.newValue.startsWith("test/")).toBe(true);
+  });
+});
+
+// ── slash vs file token interaction ──────────────────
+
+describe("slash vs file token interaction", () => {
+  test("slash token does not match @-prefix", () => {
+    expect(findSlashToken("@src/foo", 8)).toBeNull();
+  });
+
+  test("file token does not match /-prefix", () => {
+    expect(findAtToken("/help", 5)).toBeNull();
+  });
+
+  test("both can exist in same text, each matches its own", () => {
+    const text = "/help @src/foo";
+    // Cursor at end of /help
+    const slash = findSlashToken(text, 5);
+    expect(slash?.token).toBe("/help");
+    // Cursor at end of @src/foo
+    const at = findAtToken(text, 14);
+    expect(at?.query).toBe("src/foo");
+  });
+
+  test("@ after slash command argument works", () => {
+    const text = "/review @src/app.tsx";
+    const at = findAtToken(text, 19);
+    expect(at?.query).toBe("src/app.tsx");
   });
 });

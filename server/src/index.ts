@@ -206,7 +206,7 @@ app.route("/api/projects", createProjectRoutes(db, sessionManager, worktreeManag
 app.route("/api/threads", createThreadRoutes(db, sessionManager, worktreeManager, terminalManager));
 app.route("/api/agents", createAgentRoutes(registry));
 app.route("/api/commands", createCommandRoutes(db));
-app.route("/api/fs", createFilesystemRoutes());
+app.route("/api/fs", createFilesystemRoutes(db));
 app.route("/api/attention", createAttentionRoutes(db, sessionManager));
 app.route("/api/push", createPushRoutes(pushManager));
 app.route("/api/uploads", createUploadRoutes(uploadsDir));
