@@ -2,6 +2,19 @@
 
 The missing conductor for your local agent CLIs. Orchestra gives your existing agents (Claude Code, Codex, etc.) a web/mobile interface with thread management, git worktree isolation, and one-click PR creation.
 
+<p>
+  <img src="docs/screenshots/desktop-thread.png" alt="Desktop — thread view with code diffs, bash output, and sidebar" width="800" />
+</p>
+
+<details>
+<summary>Mobile UI</summary>
+<p>
+  <img src="docs/screenshots/mobile-sessions.png" alt="Mobile — session list" width="300" />
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/mobile-chat.png" alt="Mobile — chat view" width="300" />
+</p>
+</details>
+
 ```
 ┌─────────────────────────────────────┐
 │  Web / Mobile UI                    │
@@ -41,6 +54,18 @@ Existing tools were either tied to a single model, required per-token API billin
 - **Token auth** — Secure remote access with bearer token auth
 - **PWA** — Installable on mobile for a native-app feel
 
+## Prerequisites
+
+- [Bun](https://bun.sh/) (runtime and package manager)
+- [Git](https://git-scm.com/)
+- At least one agent CLI installed:
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) — requires a Claude Pro/Max subscription or API key
+  - [Codex](https://github.com/openai/codex) (`codex`) — requires an OpenAI API key
+- Optional:
+  - [`gh`](https://cli.github.com/) — for PR creation from worktree threads
+  - [`tailscale`](https://tailscale.com/) — for zero-config remote access
+  - [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) — for Cloudflare Tunnel access
+
 ## Quick start
 
 ```bash
@@ -51,10 +76,18 @@ bun install
 cd client && bun run build && cd ..
 
 # Start the server
-cd server && bun run src/index.ts
+bun run start
 ```
 
 Open [http://localhost:3847](http://localhost:3847).
+
+Register a project (point it at any git repo):
+
+```bash
+bun run server/src/cli.ts add ~/projects/my-repo
+```
+
+Or use the "Add a project" button in the UI.
 
 ## Development
 
@@ -73,7 +106,7 @@ The Vite dev server proxies API and WebSocket requests to the backend.
 By default, Orchestra binds to `127.0.0.1` (localhost only). To enable remote access:
 
 ```bash
-ORCHESTRA_HOST=0.0.0.0 bun run server/src/index.ts
+ORCHESTRA_HOST=0.0.0.0 bun run start
 ```
 
 This generates a bearer token stored in `~/.orchestra/auth-token`.
@@ -85,17 +118,27 @@ This generates a bearer token stored in `~/.orchestra/auth-token`.
 **Recommended setup:**
 - **Tailscale** — zero-config VPN, works from anywhere
 - **LAN** — accessible on local WiFi
-- **Cloudflare Tunnel** — `cloudflared tunnel --url http://localhost:3847`
+- **Cloudflare Tunnel** — `bun run start -- --tunnel` (or manually: `cloudflared tunnel --url http://localhost:3847`)
 - **SSH tunnel** — `ssh -L 3847:localhost:3847 <host>`
 
 ## CLI
 
 ```bash
-bun run server/src/cli.ts serve          # Start the server (default)
-bun run server/src/cli.ts auth show      # Show auth token
-bun run server/src/cli.ts auth regenerate  # Generate new token
-bun run server/src/cli.ts help           # Show help
+bun run server/src/cli.ts serve              # Start the server (default)
+bun run server/src/cli.ts serve --tunnel     # Start with Cloudflare Tunnel
+bun run server/src/cli.ts add <path>         # Register a project (git repo)
+bun run server/src/cli.ts auth show          # Show auth token
+bun run server/src/cli.ts auth regenerate    # Generate new token
+bun run server/src/cli.ts help               # Show help
 ```
+
+## Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORCHESTRA_HOST` | `127.0.0.1` | Bind address (`0.0.0.0` for remote access) |
+| `ORCHESTRA_PORT` | `3847` | Server port |
+| `ORCHESTRA_DATA_DIR` | `~/.orchestra` | Data directory (SQLite DB, auth token, uploads) |
 
 ## Tech stack
 
