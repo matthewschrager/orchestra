@@ -3,6 +3,9 @@
 // that Claude uses as decorative text separators.
 const BOX_STRUCTURAL_RE =
   /[\u2502\u2503\u2506\u2507\u250a-\u254b\u254e\u254f\u2551-\u2570]/g;
+const ARROW_SYMBOL_RE =
+  /[\u2190-\u21ff\u25c0\u25b6\u25b2\u25bc\u25c1\u25b7\u25b3\u25bd\u27f5-\u27ff]/g;
+const FILL_SYMBOL_RE = /[\u2591-\u2593\u2588]/g;
 
 // Lines inside blockquotes must not be wrapped because injecting top-level
 // fences would split the container. Lists are handled separately by indenting
@@ -36,6 +39,19 @@ function countStructuralChars(line: string): number {
   return matches ? matches.length : 0;
 }
 
+function countMatches(line: string, re: RegExp): number {
+  const matches = line.match(re);
+  return matches ? matches.length : 0;
+}
+
+function countArtSignalChars(line: string): number {
+  return (
+    countStructuralChars(line) +
+    countMatches(line, ARROW_SYMBOL_RE) +
+    countMatches(line, FILL_SYMBOL_RE)
+  );
+}
+
 function isInContainer(line: string): boolean {
   return BLOCKQUOTE_RE.test(line);
 }
@@ -57,6 +73,35 @@ function isLikelyClosingBoxLine(line: string): boolean {
   return (
     trimmed.startsWith("└") ||
     trimmed.startsWith("╰")
+  );
+}
+
+function isStandaloneSymbolArt(line: string): boolean {
+  return countArtSignalChars(line) >= 4 && !/[A-Za-z0-9]/.test(line);
+}
+
+function isLikelyDiagramLeadIn(
+  line: string,
+  nextLine: string,
+  nextNextLine: string,
+): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || /[.:!?]$/.test(trimmed)) return false;
+
+  const nextLooksArtish =
+    countArtSignalChars(nextLine) >= 1 ||
+    countArtSignalChars(nextNextLine) >= 1 ||
+    isAsciiBorder(nextLine) ||
+    isAsciiBorder(nextNextLine) ||
+    isAsciiPipeRow(nextLine) ||
+    isAsciiPipeRow(nextNextLine);
+
+  if (!nextLooksArtish) return false;
+
+  return (
+    /\S(?:\s{2,}|\t)\S/.test(line) ||
+    /\b\d(?:\s+\d){3,}\b/.test(trimmed) ||
+    trimmed.endsWith("/")
   );
 }
 
@@ -125,7 +170,11 @@ export function wrapAsciiArt(md: string): string {
     const hasStrongArt = artBlock.some(
       (l) => countStructuralChars(l) >= 2 || isAsciiBorder(l),
     );
-    if ((!hasStrongArt && artBlock.length < 2) || (!hasStrongArt && isMarkdownTableBlock(artBlock))) {
+    const hasStandaloneSymbolBlock = artBlock.some(isStandaloneSymbolArt);
+    if (
+      (!hasStrongArt && !hasStandaloneSymbolBlock && artBlock.length < 2) ||
+      (!hasStrongArt && !hasStandaloneSymbolBlock && isMarkdownTableBlock(artBlock))
+    ) {
       result.push(...artBlock);
     } else {
       const fenceIndent = artBlockFenceIndent ?? "";
@@ -174,20 +223,36 @@ export function wrapAsciiArt(md: string): string {
     const hasUnicodeArt = countStructuralChars(line) >= 2;
     const hasBorderArt = isAsciiBorder(line);
     const hasPipeArt = isAsciiPipeRow(line);
+    const hasWeakArt = countArtSignalChars(line) >= 1;
+    const hasStandaloneSymbols = isStandaloneSymbolArt(line);
     const isGfmSeparator = GFM_SEPARATOR_RE.test(line);
     const hasOuterPipes = ASCII_PIPE_OUTER_RE.test(line);
     const nextLine = i + 1 < lines.length ? lines[i + 1] : "";
+    const nextNextLine = i + 2 < lines.length ? lines[i + 2] : "";
     const startsPipeBlock =
       hasPipeArt ||
       (hasOuterPipes && (ASCII_PIPE_OUTER_RE.test(nextLine) || GFM_SEPARATOR_RE.test(nextLine)));
+    const nextLooksArtish =
+      countArtSignalChars(nextLine) >= 1 ||
+      isAsciiBorder(nextLine) ||
+      isAsciiPipeRow(nextLine) ||
+      isStandaloneSymbolArt(nextLine);
+    const startsWeakArtBlock =
+      hasWeakArt &&
+      !hasPipeArt &&
+      !hasBorderArt &&
+      artBlock.length === 0 &&
+      nextLooksArtish;
+    const startsLeadInBlock =
+      artBlock.length === 0 &&
+      isLikelyDiagramLeadIn(line, nextLine, nextNextLine);
 
     // Continuation: when already inside an art block, a line with just outer pipes
     // (| text |) or a separator row (| --- | --- |) stays in the block until
     // whole-block classification decides whether it is a real markdown table.
     const isContinuation =
       artBlock.length > 0 &&
-      !isLikelyClosingBoxLine(artBlock[artBlock.length - 1]) &&
-      (hasOuterPipes || isGfmSeparator);
+      (hasOuterPipes || isGfmSeparator || hasWeakArt);
 
     const startsNewPipeBlockAfterBoundary =
       !skip &&
@@ -199,7 +264,15 @@ export function wrapAsciiArt(md: string): string {
     // Pipe-based blocks are classified on flush instead of line-by-line.
     const isArt =
       !skip &&
-      (hasUnicodeArt || hasBorderArt || startsPipeBlock || isContinuation);
+      (
+        hasUnicodeArt ||
+        hasBorderArt ||
+        startsPipeBlock ||
+        startsWeakArtBlock ||
+        startsLeadInBlock ||
+        hasStandaloneSymbols ||
+        isContinuation
+      );
 
     if (startsNewPipeBlockAfterBoundary) {
       flushArt();

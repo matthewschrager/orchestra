@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState, type ComponentProps } from "react";
+import { isValidElement, memo, useCallback, useEffect, useState, type ComponentProps } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -138,16 +138,17 @@ function MarkdownLink({ href, children, ...props }: ComponentProps<"a">) {
 
 const components: Components = {
   code({ className, children, ...props }) {
-    const isBlock = className?.startsWith("language-");
-    const text = String(children);
-    if (isBlock) {
-      return <CodeBlock className={className} children={text} />;
-    }
     return <code className="md-inline-code" {...props}>{children}</code>;
   },
   pre({ children }) {
-    // Unwrap — CodeBlock handles its own <pre>
-    return <>{children}</>;
+    if (isValidElement(children)) {
+      const className = typeof children.props.className === "string"
+        ? children.props.className
+        : undefined;
+      return <CodeBlock className={className} children={String(children.props.children ?? "")} />;
+    }
+
+    return <pre className="md-code-block">{children}</pre>;
   },
   a({ href, children, ...props }) {
     return <MarkdownLink href={href} {...props}>{children}</MarkdownLink>;

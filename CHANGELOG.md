@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.36.0] - 2026-03-28
+
+### Fixed
+
+- **ASCII art diagrams now stay intact across connector rows and lead-in headers** — Unicode diagrams with connector-only lines, aligned lead-in labels, and arrow samplers are wrapped as single text blocks so Claude and Codex layouts keep their alignment in the thread view
+- **Unlabeled fenced code blocks now render as block code** — plain triple-backtick responses from Claude now flow through the block-code renderer instead of collapsing into inline code, so fenced ASCII art stays monospaced
+
+### Added
+
+- **Regression coverage for the new ASCII rendering edge cases** — added tests for connector-only rows, aligned lead-in headers, arrow-only samplers, and unlabeled fenced code blocks
+
 ## [0.1.35.6] - 2026-03-28
 
 ### Added
