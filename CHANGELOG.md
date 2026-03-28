@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.35.2] - 2026-03-28
+
+### Removed
+
+- **Removed planning artifacts** — deleted `PLAN.md` and `AUTH-HARDENING-AUTOPLAN.md` from repo root (generated during development, not meant to be committed)
+
 ## [0.1.35.1] - 2026-03-28
 
 ### Changed
