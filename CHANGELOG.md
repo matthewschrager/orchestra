@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.34.1] - 2026-03-28
+
+### Changed
+
+- **Updated README screenshots** — refreshed all three screenshots (desktop thread view, mobile session list, mobile chat view) to reflect the current UI design
+
 ## [0.1.34.0] - 2026-03-28
 
 ### Fixed
