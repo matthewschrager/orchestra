@@ -119,9 +119,21 @@ export function ContextPanel({ thread, onClose }: Props) {
       <div className="flex items-center justify-between p-3 border-b border-edge-1">
         {/* Drag handle (mobile) */}
         <div className="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1 rounded-full bg-surface-4 md:hidden" />
-        <h3 className="text-xs font-semibold text-content-3 uppercase tracking-widest">
-          Context
-        </h3>
+        <div className="flex items-center gap-1.5 text-content-3">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="12" y1="3" x2="12" y2="21" strokeOpacity="0.35" />
+            <line x1="6" y1="8" x2="10" y2="8" />
+            <line x1="6" y1="12" x2="9" y2="12" />
+            <line x1="6" y1="16" x2="10" y2="16" />
+            <line x1="14" y1="8" x2="18" y2="8" />
+            <line x1="14" y1="12" x2="17" y2="12" />
+            <line x1="14" y1="16" x2="18" y2="16" />
+          </svg>
+          <h3 className="text-xs font-semibold uppercase tracking-widest">
+            Diff
+          </h3>
+        </div>
         <button onClick={onClose} className="text-content-3 hover:text-content-1 text-sm">
           Close
         </button>

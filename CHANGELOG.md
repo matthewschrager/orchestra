@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.36.1] - 2026-03-28
+
+### Changed
+
+- **Context panel toggle uses diff icon instead of text label** — replaced the "Context" text button in the header bar with a split-pane diff icon (side-by-side code lines), matching the Lucide/Codex visual language; panel header now shows the icon alongside "Diff" label
+
 ## [0.1.36.0] - 2026-03-28
 
 ### Fixed
