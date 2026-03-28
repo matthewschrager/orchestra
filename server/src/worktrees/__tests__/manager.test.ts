@@ -129,3 +129,103 @@ describe("WorktreeManager.create", () => {
     });
   });
 });
+
+describe("WorktreeManager.getStatus", () => {
+  let repoDir: string;
+  let wtRoot: string;
+  let db: Database;
+
+  beforeEach(() => {
+    repoDir = createTempRepo();
+    wtRoot = mkdtempSync(join(tmpdir(), "wt-root-"));
+    db = createTestDb();
+  });
+
+  afterEach(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+    rmSync(wtRoot, { recursive: true, force: true });
+  });
+
+  test("returns diffStats with insertions and deletions", async () => {
+    const mgr = new WorktreeManager(db, wtRoot);
+    const wt = await mgr.create("status-test", repoDir);
+
+    // Insert thread row so getStatus can find it
+    db.run(
+      "INSERT INTO threads (id, title, agent, repo_path, worktree, branch, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["status-test", "test", "claude", repoDir, wt.path, wt.branch, "idle"],
+    );
+
+    // Add a file with some content in the worktree
+    const { writeFileSync } = await import("fs");
+    writeFileSync(join(wt.path, "new-file.ts"), "line1\nline2\nline3\n");
+    Bun.spawnSync(["git", "add", "new-file.ts"], { cwd: wt.path });
+    Bun.spawnSync(["git", "commit", "-m", "add file"], { cwd: wt.path });
+
+    const status = await mgr.getStatus("status-test");
+    expect(status).not.toBeNull();
+    expect(status!.diffStats).toBeDefined();
+    expect(status!.diffStats!.insertions).toBe(3);
+    expect(status!.diffStats!.deletions).toBe(0);
+    expect(status!.aheadBehind.ahead).toBe(1);
+  });
+
+  test("returns undefined diffStats when no changes vs main", async () => {
+    const mgr = new WorktreeManager(db, wtRoot);
+    const wt = await mgr.create("no-diff-test", repoDir);
+
+    db.run(
+      "INSERT INTO threads (id, title, agent, repo_path, worktree, branch, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["no-diff-test", "test", "claude", repoDir, wt.path, wt.branch, "idle"],
+    );
+
+    const status = await mgr.getStatus("no-diff-test");
+    expect(status).not.toBeNull();
+    expect(status!.diffStats).toBeUndefined();
+  });
+
+  test("returns null diffStats when thread has no branch", async () => {
+    const mgr = new WorktreeManager(db, wtRoot);
+    const wt = await mgr.create("no-branch-test", repoDir);
+
+    // Insert thread WITHOUT branch
+    db.run(
+      "INSERT INTO threads (id, title, agent, repo_path, worktree, branch, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["no-branch-test", "test", "claude", repoDir, wt.path, null, "idle"],
+    );
+
+    const status = await mgr.getStatus("no-branch-test");
+    expect(status).not.toBeNull();
+    expect(status!.diffStats).toBeUndefined();
+    expect(status!.aheadBehind.ahead).toBe(0);
+    expect(status!.aheadBehind.behind).toBe(0);
+  });
+
+  test("counts both insertions and deletions correctly", async () => {
+    const mgr = new WorktreeManager(db, wtRoot);
+
+    // Create a file on main first
+    const { writeFileSync } = await import("fs");
+    writeFileSync(join(repoDir, "existing.ts"), "old1\nold2\nold3\n");
+    Bun.spawnSync(["git", "add", "existing.ts"], { cwd: repoDir });
+    Bun.spawnSync(["git", "commit", "-m", "add existing"], { cwd: repoDir });
+
+    const wt = await mgr.create("both-test", repoDir);
+
+    db.run(
+      "INSERT INTO threads (id, title, agent, repo_path, worktree, branch, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["both-test", "test", "claude", repoDir, wt.path, wt.branch, "idle"],
+    );
+
+    // Modify the file: replace content (deletions + insertions)
+    writeFileSync(join(wt.path, "existing.ts"), "new1\nnew2\nnew3\nnew4\n");
+    Bun.spawnSync(["git", "add", "existing.ts"], { cwd: wt.path });
+    Bun.spawnSync(["git", "commit", "-m", "modify file"], { cwd: wt.path });
+
+    const status = await mgr.getStatus("both-test");
+    expect(status).not.toBeNull();
+    expect(status!.diffStats).toBeDefined();
+    expect(status!.diffStats!.insertions).toBe(4);
+    expect(status!.diffStats!.deletions).toBe(3);
+  });
+});

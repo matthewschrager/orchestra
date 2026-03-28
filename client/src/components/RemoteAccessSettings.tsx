@@ -87,10 +87,10 @@ export function RemoteAccessSettings() {
               </button>
             </div>
             <p className="text-xs text-content-3">
-              This URL works from any device on your tailnet. Push notifications will deep-link here.
+              This URL works from devices on your tailnet. Orchestra will sign browser sessions in with your Tailscale identity.
             </p>
             <p className="text-xs text-amber-400/80">
-              ⚠ Any device on your Tailscale network can access Orchestra without a token.
+              Tagged-device and fallback access still use the bearer token from <code className="font-mono">~/.orchestra/auth-token</code>.
             </p>
           </>
         ) : state === "detected" ? (

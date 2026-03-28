@@ -13,8 +13,10 @@ export interface DiffResult {
   removals: number;
 }
 
-/** Large diff threshold — fall back to block diff to avoid O(N²) */
-const MYERS_LINE_LIMIT = 500;
+/** Avoid pathological browser work on genuinely large rewrites */
+const MYERS_MAX_TOTAL_LINES = 4000;
+/** Stop Myers once the edit distance is clearly no longer "small" */
+const MYERS_MAX_EDIT_DISTANCE = 200;
 
 /**
  * Compute a line-level diff between two strings using Myers algorithm.
@@ -52,14 +54,50 @@ export function computeDiff(oldStr: string, newStr: string): DiffResult {
 
   const oldLines = splitLines(oldStr);
   const newLines = splitLines(newStr);
+  const prefixCount = countCommonPrefix(oldLines, newLines);
+  const suffixCount = countCommonSuffix(oldLines, newLines, prefixCount);
 
-  // Large diff bail-out
-  if (oldLines.length + newLines.length > MYERS_LINE_LIMIT) {
-    return blockDiff(oldLines, newLines);
+  const oldCore = oldLines.slice(prefixCount, oldLines.length - suffixCount);
+  const newCore = newLines.slice(prefixCount, newLines.length - suffixCount);
+
+  const prefixLines = buildContextLines(
+    oldLines.slice(0, prefixCount),
+    1,
+    1,
+  );
+  const suffixLines = buildContextLines(
+    oldLines.slice(oldLines.length - suffixCount),
+    oldLines.length - suffixCount + 1,
+    newLines.length - suffixCount + 1,
+  );
+
+  if (oldCore.length === 0 && newCore.length === 0) {
+    return {
+      lines: [...prefixLines, ...suffixLines],
+      additions: 0,
+      removals: 0,
+    };
   }
 
-  const editScript = myersDiff(oldLines, newLines);
-  return buildResult(editScript, oldLines, newLines);
+  let coreDiff: DiffResult;
+  if (oldCore.length === 0 || newCore.length === 0) {
+    coreDiff = blockDiff(oldCore, newCore);
+  } else if (oldCore.length + newCore.length > MYERS_MAX_TOTAL_LINES) {
+    coreDiff = blockDiff(oldCore, newCore);
+  } else {
+    const editScript = myersDiff(oldCore, newCore, MYERS_MAX_EDIT_DISTANCE);
+    coreDiff = editScript ? buildResult(editScript, oldCore, newCore) : blockDiff(oldCore, newCore);
+  }
+
+  return {
+    lines: [
+      ...prefixLines,
+      ...shiftLineNumbers(coreDiff.lines, prefixCount, prefixCount),
+      ...suffixLines,
+    ],
+    additions: coreDiff.additions,
+    removals: coreDiff.removals,
+  };
 }
 
 /** Strip trailing newline, then split by \n */
@@ -80,13 +118,55 @@ function blockDiff(oldLines: string[], newLines: string[]): DiffResult {
   return { lines, additions: newLines.length, removals: oldLines.length };
 }
 
+function countCommonPrefix(oldLines: string[], newLines: string[]): number {
+  const limit = Math.min(oldLines.length, newLines.length);
+  let count = 0;
+  while (count < limit && oldLines[count] === newLines[count]) count++;
+  return count;
+}
+
+function countCommonSuffix(oldLines: string[], newLines: string[], prefixCount: number): number {
+  const oldLimit = oldLines.length - prefixCount;
+  const newLimit = newLines.length - prefixCount;
+  const limit = Math.min(oldLimit, newLimit);
+  let count = 0;
+  while (
+    count < limit &&
+    oldLines[oldLines.length - 1 - count] === newLines[newLines.length - 1 - count]
+  ) {
+    count++;
+  }
+  return count;
+}
+
+function buildContextLines(
+  lines: string[],
+  oldStart: number,
+  newStart: number,
+): DiffLine[] {
+  return lines.map((content, index) => ({
+    type: "context" as const,
+    content,
+    oldLineNum: oldStart + index,
+    newLineNum: newStart + index,
+  }));
+}
+
+function shiftLineNumbers(lines: DiffLine[], oldOffset: number, newOffset: number): DiffLine[] {
+  return lines.map((line) => ({
+    ...line,
+    oldLineNum: line.oldLineNum === undefined ? undefined : line.oldLineNum + oldOffset,
+    newLineNum: line.newLineNum === undefined ? undefined : line.newLineNum + newOffset,
+  }));
+}
+
 type EditOp = "keep" | "insert" | "delete";
 
 /**
  * Myers diff algorithm — finds shortest edit script (SES).
  * Returns an array of edit operations.
  */
-function myersDiff(a: string[], b: string[]): EditOp[] {
+function myersDiff(a: string[], b: string[], maxEditDistance: number): EditOp[] | null {
   const n = a.length;
   const m = b.length;
   const max = n + m;
@@ -102,8 +182,8 @@ function myersDiff(a: string[], b: string[]): EditOp[] {
   // Trace stores V snapshots for backtracking
   const trace: Int32Array[] = [];
 
-  outer:
-  for (let d = 0; d <= max; d++) {
+  const maxD = Math.min(max, maxEditDistance);
+  for (let d = 0; d <= maxD; d++) {
     const snapshot = new Int32Array(v);
     trace.push(snapshot);
 
@@ -125,13 +205,12 @@ function myersDiff(a: string[], b: string[]): EditOp[] {
       v[k + offset] = x;
 
       if (x >= n && y >= m) {
-        break outer;
+        return backtrack(trace, a, b, offset);
       }
     }
   }
 
-  // Backtrack to recover the edit script
-  return backtrack(trace, a, b, offset);
+  return null;
 }
 
 function backtrack(trace: Int32Array[], a: string[], b: string[], offset: number): EditOp[] {

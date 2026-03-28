@@ -324,6 +324,52 @@ describe("wrapAsciiArt", () => {
     );
   });
 
+  test("wraps Claude-style ASCII mockups that contain separator rows", () => {
+    const input = [
+      "Modal Layout:",
+      "| Cleanup Merged Threads |",
+      "| ---------------------- |",
+      "| Safe to delete (11) | Needs review (1) |",
+      "| ------------------- | ---------------- |",
+      "| Delete selected | Cancel |",
+      "After.",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(
+      [
+        "Modal Layout:",
+        "```text",
+        "| Cleanup Merged Threads |",
+        "| ---------------------- |",
+        "| Safe to delete (11) | Needs review (1) |",
+        "| ------------------- | ---------------- |",
+        "| Delete selected | Cancel |",
+        "```",
+        "After.",
+      ].join("\n"),
+    );
+  });
+
+  test("wraps mixed mockups with multiple markdown-like separator rows", () => {
+    const input = [
+      "| Section | Count |",
+      "| --- | --- |",
+      "| Safe to delete | 11 |",
+      "| --- | --- |",
+      "| Needs review | 1 |",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(
+      [
+        "```text",
+        "| Section | Count |",
+        "| --- | --- |",
+        "| Safe to delete | 11 |",
+        "| --- | --- |",
+        "| Needs review | 1 |",
+        "```",
+      ].join("\n"),
+    );
+  });
+
   test("does not wrap ASCII pipe rows inside blockquotes", () => {
     const input = [
       "> | col1 | col2 |",

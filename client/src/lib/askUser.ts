@@ -5,7 +5,13 @@ export interface ParsedQuestion {
   multiSelect?: boolean;
 }
 
-const ASK_USER_TOOL_NAMES = new Set(["AskUserQuestion", "AskUserTool"]);
+const ASK_USER_TOOL_NAMES = new Set([
+  "AskUserQuestion",
+  "AskUserTool",
+  "request_user_input",
+  "requestUserInput",
+  "functions.request_user_input",
+]);
 
 export function isAskUserTool(name: string | null | undefined): boolean {
   return !!name && ASK_USER_TOOL_NAMES.has(name);

@@ -47,13 +47,45 @@ function isAsciiPipeRow(line: string): boolean {
   return ASCII_PIPE_ROW_RE.test(line) && !GFM_SEPARATOR_RE.test(line);
 }
 
+function isLikelyClosingBoxLine(line: string): boolean {
+  const trimmed = line.trim();
+  return (
+    trimmed.startsWith("└") ||
+    trimmed.startsWith("╰")
+  );
+}
+
+function countPipeColumns(line: string): number | null {
+  if (!ASCII_PIPE_OUTER_RE.test(line) && !GFM_SEPARATOR_RE.test(line)) return null;
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|").length;
+}
+
 /**
- * Detect whether a contiguous block of pipe-rows is actually a GFM table.
- * A GFM table has: header row, separator row (| --- | --- |), then body rows.
- * If a separator row exists in the block, it's a table, not art.
+ * Markdown tables are stricter than Claude's ASCII mockups:
+ *   - exactly one separator row
+ *   - separator row is the second line
+ *   - all non-separator rows have the same column count
+ *
+ * Mockups often contain multiple separator rows or section lines that only look
+ * like markdown table separators. Those should stay ASCII art.
  */
-function isGfmTableBlock(lines: string[]): boolean {
-  return lines.some((l) => GFM_SEPARATOR_RE.test(l));
+function isMarkdownTableBlock(lines: string[]): boolean {
+  const block = lines.filter((line) => line.trim() !== "");
+  if (block.length < 3) return false;
+
+  const separatorIndexes = block.flatMap((line, index) => (
+    GFM_SEPARATOR_RE.test(line) ? [index] : []
+  ));
+  if (separatorIndexes.length !== 1 || separatorIndexes[0] !== 1) return false;
+
+  const columnCount = countPipeColumns(block[0]);
+  if (!columnCount || columnCount < 2) return false;
+
+  return block.every((line, index) => {
+    if (index === 1) return true;
+    return countPipeColumns(line) === columnCount;
+  });
 }
 
 /**
@@ -62,11 +94,13 @@ function isGfmTableBlock(lines: string[]): boolean {
  * Scans lines for art indicators and groups contiguous art lines:
  *   - Unicode box-drawing structural chars (≥2 per line)
  *   - ASCII border patterns (+---+)
- *   - ASCII pipe-column rows (| x | y |) that are NOT GFM table separators
- *   - Continuation: lines with outer pipes (| text |) extend an existing art block
+ *   - ASCII pipe-column rows (| x | y |)
+ *   - Continuation: lines with outer pipes (| text |) or separator rows
+ *     (| --- | --- |) extend an existing art block
  *
- * On flush, pipe-only blocks that look like GFM tables (contain a separator
- * row) are passed through unwrapped so react-markdown renders them as tables.
+ * On flush, pipe-only blocks are classified by whole-block structure.
+ * Real markdown tables pass through unchanged; mockups get wrapped into text
+ * code fences before react-markdown can collapse spacing or build <table>s.
  *
  * Lines inside code fences, blockquotes, or list context are never wrapped.
  */
@@ -76,18 +110,14 @@ export function wrapAsciiArt(md: string): string {
   let artBlock: string[] = [];
   let inCodeFence = false;
   let inListContext = false;
-  let inGfmTable = false;
 
   function flushArt() {
     if (artBlock.length === 0) return;
 
-    // If the block is entirely pipe-rows (no Unicode box-drawing or ASCII borders),
-    // check if it's actually a GFM table — if so, don't wrap it.
-    const hasUnicodeOrBorder = artBlock.some(
+    const hasStrongArt = artBlock.some(
       (l) => countStructuralChars(l) >= 2 || isAsciiBorder(l),
     );
-    if (!hasUnicodeOrBorder && isGfmTableBlock(artBlock)) {
-      // This is a GFM table, not ASCII art — pass through unwrapped
+    if ((!hasStrongArt && artBlock.length < 2) || (!hasStrongArt && isMarkdownTableBlock(artBlock))) {
       result.push(...artBlock);
     } else {
       result.push("```text", ...artBlock, "```");
@@ -116,45 +146,42 @@ export function wrapAsciiArt(md: string): string {
 
     const skip = inCodeFence || isInContainer(line) || inListContext;
 
-    // Detect art: Unicode structural chars, ASCII borders, or ASCII pipe rows
+    // Detect art: Unicode structural chars, ASCII borders, or ASCII pipe rows.
+    // Separator rows can be part of art and are classified at block flush.
     const hasUnicodeArt = countStructuralChars(line) >= 2;
     const hasBorderArt = isAsciiBorder(line);
     const hasPipeArt = isAsciiPipeRow(line);
-
-    // GFM table tracking: a separator row (| --- | --- |) starts table context.
-    // Pipe rows after a separator are table body, not art. Non-pipe/blank lines end it.
     const isGfmSeparator = GFM_SEPARATOR_RE.test(line);
-    if (isGfmSeparator) {
-      inGfmTable = true;
-    } else if (inGfmTable && !ASCII_PIPE_OUTER_RE.test(line)) {
-      inGfmTable = false;
-    }
-
-    // Lookahead: if the NEXT line is a GFM separator, this pipe row is a table
-    // header — flush the art block and don't treat this line as art.
-    const nextIsGfmSep =
-      i + 1 < lines.length && GFM_SEPARATOR_RE.test(lines[i + 1]);
+    const hasOuterPipes = ASCII_PIPE_OUTER_RE.test(line);
+    const nextLine = i + 1 < lines.length ? lines[i + 1] : "";
+    const startsPipeBlock =
+      hasPipeArt ||
+      (hasOuterPipes && (ASCII_PIPE_OUTER_RE.test(nextLine) || GFM_SEPARATOR_RE.test(nextLine)));
 
     // Continuation: when already inside an art block, a line with just outer pipes
-    // (| text |) is still part of the diagram even without interior pipes.
-    // GFM separators, table body rows, and lines preceding separators break continuation.
+    // (| text |) or a separator row (| --- | --- |) stays in the block until
+    // whole-block classification decides whether it is a real markdown table.
     const isContinuation =
       artBlock.length > 0 &&
-      ASCII_PIPE_OUTER_RE.test(line) &&
-      !isGfmSeparator &&
-      !inGfmTable &&
-      !nextIsGfmSep;
+      !isLikelyClosingBoxLine(artBlock[artBlock.length - 1]) &&
+      (hasOuterPipes || isGfmSeparator);
+
+    const startsNewPipeBlockAfterBoundary =
+      !skip &&
+      artBlock.length > 0 &&
+      isLikelyClosingBoxLine(artBlock[artBlock.length - 1]) &&
+      startsPipeBlock;
 
     // A line is art if it has box-drawing chars, border patterns, or pipe-column structure.
-    // Lines in GFM table context (separator, header before separator, body after) are not art.
+    // Pipe-based blocks are classified on flush instead of line-by-line.
     const isArt =
       !skip &&
-      !isGfmSeparator &&
-      !inGfmTable &&
-      !nextIsGfmSep &&
-      (hasUnicodeArt || hasBorderArt || hasPipeArt || isContinuation);
+      (hasUnicodeArt || hasBorderArt || startsPipeBlock || isContinuation);
 
-    if (isArt) {
+    if (startsNewPipeBlockAfterBoundary) {
+      flushArt();
+      artBlock.push(line);
+    } else if (isArt) {
       artBlock.push(line);
     } else {
       flushArt();

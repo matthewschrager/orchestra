@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
-import { createDb, expireAttentionItems } from "./db";
+import { createDb, expireAttentionItems, getSetting } from "./db";
 import { createThreadRoutes } from "./routes/threads";
 import { createAgentRoutes } from "./routes/agents";
 import { createProjectRoutes } from "./routes/projects";
@@ -18,10 +18,15 @@ import { SessionManager } from "./sessions/manager";
 import { AgentRegistry } from "./agents/registry";
 import { WorktreeManager } from "./worktrees/manager";
 import {
+  createHostValidationMiddleware,
+  createApiAuthMiddleware,
+  createTailscaleBootstrapMiddleware,
   getOrCreateToken,
+  getOrCreateSessionSecret,
+  getRequestHost,
   isLocalRequest,
-  validateToken,
-  validateWSToken,
+  isWebSocketAuthorized,
+  shouldAttemptTailscaleHostRefresh,
 } from "./auth";
 
 import { TunnelManager, generateQRCodeAscii } from "./tunnel/manager";
@@ -29,7 +34,12 @@ import { TailscaleDetector } from "./tailscale/detector";
 import { createTailscaleRoutes } from "./routes/tailscale";
 import { TerminalManager } from "./terminal/manager";
 import { detectWorktree } from "./utils/git";
-import { getAllowedOrigins, getAllowedHosts } from "./utils/origins";
+import { getAllowedOrigins, getAllowedHosts, getLocalInterfaceHosts } from "./utils/origins";
+import {
+  DEFAULT_ORCHESTRA_PORT,
+  getDefaultWorktreeDataDir,
+  getIsolatedWorktreePort,
+} from "./utils/worktree";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -51,22 +61,23 @@ if (process.env.ORCHESTRA_MANAGED === "1") {
 // When running from a git worktree (e.g., dev:server in a worktree), auto-isolate
 // to prevent sharing the DB/port with the main server or other worktrees.
 const worktreeName = detectWorktree(process.cwd());
-const DEFAULT_PORT = 3847;
 
 let effectiveDataDir = process.env.ORCHESTRA_DATA_DIR || undefined;
-let effectivePort = parseInt(process.env.ORCHESTRA_PORT || String(DEFAULT_PORT), 10);
+let effectivePort = parseInt(process.env.ORCHESTRA_PORT || String(DEFAULT_ORCHESTRA_PORT), 10);
 
 if (worktreeName && !process.env.ORCHESTRA_DATA_DIR) {
-  // Use a worktree-specific data directory
-  effectiveDataDir = join(homedir(), ".orchestra", `worktree-${worktreeName}`);
-  console.log(`[worktree] Detected worktree "${worktreeName}" — using isolated data dir: ${effectiveDataDir}`);
+  const orchestraManaged = process.env.ORCHESTRA_MANAGED === "1";
+  effectiveDataDir = getDefaultWorktreeDataDir(worktreeName, process.cwd(), {
+    orchestraManaged,
+  });
+  const logLabel = orchestraManaged
+    ? "using worktree-local data dir for nested Orchestra session"
+    : "using isolated data dir";
+  console.log(`[worktree] Detected worktree "${worktreeName}" — ${logLabel}: ${effectiveDataDir}`);
 }
 if (worktreeName && !process.env.ORCHESTRA_PORT) {
   // Hash the worktree name to a stable port offset (range 1-9999)
-  let hash = 0;
-  for (const ch of worktreeName) hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
-  const offset = (Math.abs(hash) % 9999) + 1;
-  effectivePort = DEFAULT_PORT + offset;
+  effectivePort = getIsolatedWorktreePort(worktreeName);
   console.log(`[worktree] Using isolated port: ${effectivePort}`);
 }
 
@@ -98,6 +109,7 @@ const pushManager = new PushManager(db);
 const terminalManager = new TerminalManager();
 const tailscaleDetector = new TailscaleDetector(PORT);
 const tunnelManager = new TunnelManager();
+const localInterfaceHosts = getLocalInterfaceHosts();
 
 // Wire push notifications to attention events
 sessionManager.onAttention((_threadId, attention) => {
@@ -107,8 +119,9 @@ sessionManager.onAttention((_threadId, attention) => {
 });
 
 let authToken: string | null = null;
+authToken = getOrCreateToken(DATA_DIR);
+const sessionSecret = getOrCreateSessionSecret(DATA_DIR);
 if (isExternal) {
-  authToken = getOrCreateToken(DATA_DIR);
   console.log(`Auth token required for external access.`);
   console.log(`Token stored in ${DATA_DIR || "~/.orchestra"}/auth-token`);
 }
@@ -123,7 +136,7 @@ const app = new Hono();
 // Fix 1: Restrict CORS to known origins (prevents cross-origin localhost attacks)
 app.use("*", cors({
   origin: (origin) => {
-    const allowed = getAllowedOrigins(PORT, db, tunnelManager, tailscaleHostname);
+    const allowed = getAllowedOrigins(PORT, db, tunnelManager, tailscaleHostname, [HOST, ...localInterfaceHosts]);
     return allowed.includes(origin) ? origin : null;
   },
 }));
@@ -144,23 +157,27 @@ app.use("*", async (c, next) => {
 });
 
 // Fix 2B: Host header validation (DNS rebinding protection)
-app.use("*", async (c, next) => {
-  const host = c.req.header("host")?.split(":")[0];
-  if (host) {
-    const allowed = getAllowedHosts(tailscaleHostname);
-    if (!allowed.includes(host) && !authToken) {
-      return c.text("Invalid Host", 403);
-    }
-  }
-  await next();
-});
+app.use("*", createHostValidationMiddleware({
+  getAllowedHosts: () => getAllowedHosts(
+    tailscaleHostname,
+    getSetting(db, "remoteUrl") as string | null,
+    tunnelManager.url,
+    [HOST, ...localInterfaceHosts],
+  ),
+  getTailscaleHostname: () => tailscaleHostname,
+  refreshTailscaleHostname: async () => {
+    const refreshed = await tailscaleDetector.refresh().catch(() => null);
+    if (refreshed?.hostname) tailscaleHostname = refreshed.hostname;
+    return refreshed?.hostname ?? null;
+  },
+}));
 
 // Fix 2A: Origin validation for state-changing requests (CSRF protection)
 app.use("/api/*", async (c, next) => {
   if (["POST", "PATCH", "PUT", "DELETE"].includes(c.req.method)) {
     const origin = c.req.header("origin");
     if (origin) {
-      const allowed = getAllowedOrigins(PORT, db, tunnelManager, tailscaleHostname);
+      const allowed = getAllowedOrigins(PORT, db, tunnelManager, tailscaleHostname, [HOST, ...localInterfaceHosts]);
       if (!allowed.includes(origin)) {
         return c.json({ error: "Forbidden" }, 403);
       }
@@ -169,19 +186,20 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 
-// Auth middleware — enforced for non-local requests (tunnel traffic has CF-Connecting-IP)
-app.use("/api/*", async (c, next) => {
-  if (authToken) {
-    const isTunneled = !!c.req.raw.headers.get("cf-connecting-ip");
-    const isLocal = isLocalRequest(c.req.raw, (c as any).env?.ip);
-    if (isTunneled || !isLocal) {
-      if (!validateToken(c.req.raw, authToken)) {
-        return c.json({ error: "Unauthorized — provide Bearer token" }, 401);
-      }
-    }
-  }
-  await next();
-});
+app.use("*", createTailscaleBootstrapMiddleware(() => ({
+  authToken: authToken!,
+  sessionSecret,
+  tailscaleHostname,
+  remoteUrl: getSetting(db, "remoteUrl") as string | null,
+})));
+
+// Auth middleware — enforced via explicit request classification
+app.use("/api/*", createApiAuthMiddleware(() => ({
+  authToken: authToken!,
+  sessionSecret,
+  tailscaleHostname,
+  remoteUrl: getSetting(db, "remoteUrl") as string | null,
+})));
 
 // API routes
 app.route("/api/projects", createProjectRoutes(db, sessionManager, worktreeManager, terminalManager));
@@ -217,7 +235,7 @@ try {
   server = Bun.serve({
     port: PORT,
     hostname: HOST,
-    fetch(req, server) {
+    async fetch(req, server) {
       const url = new URL(req.url);
 
       // WebSocket upgrade
@@ -225,25 +243,27 @@ try {
         // Fix 2C: WebSocket Origin check (CORS does NOT protect WebSocket connections)
         const wsOrigin = req.headers.get("origin");
         if (wsOrigin) {
-          const allowed = getAllowedOrigins(PORT, db, tunnelManager, tailscaleHostname);
+          const allowed = getAllowedOrigins(PORT, db, tunnelManager, tailscaleHostname, [HOST, ...localInterfaceHosts]);
           if (!allowed.includes(wsOrigin)) {
             return new Response("Forbidden origin", { status: 403 });
           }
         }
 
-        // Auth check for external WS connections (tunnel traffic has CF-Connecting-IP)
-        if (authToken) {
-          const isTunneled = !!req.headers.get("cf-connecting-ip");
-          const ip = server.requestIP(req);
-          const isLocal =
-            !ip ||
-            ip.address === "127.0.0.1" ||
-            ip.address === "::1" ||
-            ip.address === "::ffff:127.0.0.1";
+        if (shouldAttemptTailscaleHostRefresh(getRequestHost(req), server.requestIP(req), tailscaleHostname)) {
+          const refreshed = await tailscaleDetector.refresh().catch(() => null);
+          if (refreshed?.hostname) tailscaleHostname = refreshed.hostname;
+        }
 
-          if ((isTunneled || !isLocal) && !validateWSToken(url, authToken)) {
-            return new Response("Unauthorized", { status: 401 });
+        if (!isWebSocketAuthorized(url, req, server.requestIP(req), {
+          authToken: authToken!,
+          sessionSecret,
+          tailscaleHostname,
+          remoteUrl: getSetting(db, "remoteUrl") as string | null,
+        })) {
+          if (isLocalRequest(req, server.requestIP(req)) && getRequestHost(req)?.endsWith(".ts.net")) {
+            return new Response("Unauthorized — tagged Tailscale access requires token", { status: 401 });
           }
+          return new Response("Unauthorized", { status: 401 });
         }
 
         if (server.upgrade(req, { data: { subscriptions: new Set() } }))
@@ -318,7 +338,8 @@ tailscaleDetector.detect().then((ts) => {
   } else if (ts.httpsAvailable && ts.portMatch && ts.httpsUrl) {
     console.log(`[tailscale] HTTPS active: ${ts.httpsUrl}`);
     console.log(`[tailscale] Remote access ready — open this URL on your phone.`);
-    console.log(`[tailscale] ⚠ Any device on your tailnet can access Orchestra without a token.`);
+    console.log(`[tailscale] Browser sign-in uses Tailscale identity headers and a session cookie.`);
+    console.log(`[tailscale] Tagged-device or fallback access can still use the bearer token in ~/.orchestra/auth-token.`);
   } else if (ts.httpsAvailable && !ts.portMatch) {
     console.log(`[tailscale] ⚠ tailscale serve is active but not mapped to port ${PORT}.`);
     console.log(`[tailscale] Fix: tailscale serve --bg ${PORT}`);

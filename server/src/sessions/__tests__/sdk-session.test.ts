@@ -253,6 +253,123 @@ describe("SDK Session lifecycle", () => {
 
     sessionManager.stopAll();
   });
+
+  test("non-persistent session: AskUser attention can be resolved and resumed with stored session_id", async () => {
+    const seenStarts: Array<{ prompt: string; resumeSessionId?: string }> = [];
+    let turn = 0;
+
+    const adapter: AgentAdapter = {
+      name: "mock",
+      detect: async () => true,
+      getVersion: async () => "1.0.0-mock",
+      supportsResume: () => true,
+      start(opts: StartOpts): AgentSession {
+        seenStarts.push({ prompt: opts.prompt, resumeSessionId: opts.resumeSessionId });
+        turn += 1;
+
+        async function* generate() {
+          yield { type: "system", subtype: "init", session_id: "sess-legacy-attn", tools: [], cwd: "/tmp" };
+
+          if (turn === 1) {
+            yield {
+              type: "assistant",
+              message: { content: [{ type: "text", text: "I need your input." }] },
+              session_id: "sess-legacy-attn",
+            };
+            yield {
+              type: "result",
+              subtype: "success",
+              session_id: "sess-legacy-attn",
+              permission_denials: [],
+              _hasAttention: true,
+            };
+            return;
+          }
+
+          yield {
+            type: "assistant",
+            message: { content: [{ type: "text", text: "Thanks, I'll continue with main." }] },
+            session_id: "sess-legacy-attn",
+          };
+          yield {
+            type: "result",
+            subtype: "success",
+            session_id: "sess-legacy-attn",
+            permission_denials: [],
+          };
+        }
+
+        return {
+          messages: generate(),
+          abort: () => {},
+          parseMessage(msg: unknown): ParseResult {
+            const m = msg as Record<string, unknown>;
+
+            if (m.type === "system") {
+              return { messages: [], deltas: [], sessionId: m.session_id as string | undefined };
+            }
+
+            if (m.type === "assistant") {
+              const message = m.message as { content?: Array<{ type: string; text?: string }> };
+              const text = message?.content?.filter((block) => block.type === "text").map((block) => block.text ?? "").join("") ?? "";
+              return { messages: text ? [{ role: "assistant", content: text }] : [], deltas: [] };
+            }
+
+            if (m.type === "result") {
+              const result: ParseResult = {
+                messages: [],
+                deltas: [{ deltaType: "turn_end" }],
+                sessionId: m.session_id as string | undefined,
+              };
+              if (m._hasAttention) {
+                result.attention = {
+                  kind: "ask_user",
+                  prompt: "Which branch should I use?",
+                  options: ["main", "release"],
+                };
+              }
+              return result;
+            }
+
+            return { messages: [], deltas: [] };
+          },
+        };
+      },
+    };
+
+    const { db, repoDir, sessionManager } = setupSessionManager(adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "legacy attention test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    let updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("waiting");
+    expect(seenStarts).toEqual([{ prompt: "legacy attention test", resumeSessionId: undefined }]);
+
+    const pending = getPendingAttention(db, thread.id);
+    expect(pending).toHaveLength(1);
+
+    await sessionManager.resolveAttention(pending[0].id, { type: "user", optionIndex: 0 });
+    await new Promise((r) => setTimeout(r, 100));
+
+    updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("done");
+    expect(seenStarts).toEqual([
+      { prompt: "legacy attention test", resumeSessionId: undefined },
+      { prompt: 'User selected: "main"', resumeSessionId: "sess-legacy-attn" },
+    ]);
+
+    const messages = db.query("SELECT role, content FROM messages WHERE thread_id = ? ORDER BY seq").all(thread.id) as Array<{ role: string; content: string }>;
+    expect(messages.some((message) => message.role === "assistant" && message.content.includes("continue with main"))).toBe(true);
+
+    sessionManager.stopAll();
+  });
 });
 
 // ── Persistent Session Tests ────────────────────────────────────

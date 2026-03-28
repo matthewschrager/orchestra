@@ -42,6 +42,8 @@ import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
 import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal";
 import { buildCleanupAlert } from "./lib/cleanup";
 import { buildInputHistory } from "./lib/inputHistory";
+import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
+import { usePrAutoRefresh } from "./hooks/usePrAutoRefresh";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -141,9 +143,11 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
         case "metrics": {
           const metrics = new Map(state.metrics);
           const prev = state.metrics.get(delta.threadId) ?? { ...EMPTY_METRICS };
-          // Only count as a turn on result events (cost/duration), not intermediate
-          // context updates from message_start stream events
-          const hasTurnData = delta.costUsd !== undefined || delta.durationMs !== undefined;
+          // Only count completed-turn metrics, not intermediate context updates.
+          const hasTurnData =
+            delta.finalMetrics === true ||
+            delta.costUsd !== undefined ||
+            delta.durationMs !== undefined;
           metrics.set(delta.threadId, {
             costUsd: prev.costUsd + (delta.costUsd ?? 0),
             durationMs: prev.durationMs + (delta.durationMs ?? 0),
@@ -283,14 +287,23 @@ function AppInner() {
   const activeTurnEnded = activeThreadId ? streaming.turnEnded.has(activeThreadId) : false;
   const activeTodos = activeThreadId ? latestTodos.get(activeThreadId) ?? null : null;
 
-  // Recent non-archived threads for the active project (empty-state display)
-  const recentProjectThreads = useMemo(() =>
+  const activeProjectThreads = useMemo(() =>
     threads
       .filter((t) => t.projectId === activeProjectId && !t.archivedAt)
-      .sort((a, b) => new Date(b.lastInteractedAt).getTime() - new Date(a.lastInteractedAt).getTime())
-      .slice(0, 5),
+      .sort((a, b) => new Date(b.lastInteractedAt).getTime() - new Date(a.lastInteractedAt).getTime()),
     [threads, activeProjectId],
   );
+
+  // Recent non-archived threads for the active project (empty-state display)
+  const recentProjectThreads = useMemo(() =>
+    activeProjectThreads
+      .slice(0, 5),
+    [activeProjectThreads],
+  );
+  const activeProjectOutstandingPrCount = useMemo(() => {
+    if (!activeProject) return 0;
+    return getEffectiveOutstandingPrCount(activeProject, activeProjectThreads);
+  }, [activeProject, activeProjectThreads]);
 
   // Detect unanswered ask-user tool calls — check if there's one after the last user message
   const pendingQuestion = useMemo(() => {
@@ -474,6 +487,12 @@ function AppInner() {
     wasConnectedRef.current = connected;
   }, [connected]);
 
+  usePrAutoRefresh({
+    connected,
+    onThreads: setThreads,
+    threads,
+  });
+
   // Load messages for active thread
   useEffect(() => {
     if (!activeThreadId) return;
@@ -502,6 +521,14 @@ function AppInner() {
       }
     });
   }, [activeThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update browser tab title when there are unseen completed threads
+  useEffect(() => {
+    const unseenDoneCount = threads.filter(
+      (t) => unreadThreadIds.has(t.id) && (t.status === "done" || t.status === "error"),
+    ).length;
+    document.title = unseenDoneCount > 0 ? `(${unseenDoneCount}) Orchestra` : "Orchestra";
+  }, [unreadThreadIds, threads]);
 
   // ── Actions ───────────────────────────────────────────
 
@@ -980,6 +1007,7 @@ function AppInner() {
             <>
               <ProjectEmptyState
                 project={activeProject}
+                outstandingPrCount={activeProjectOutstandingPrCount}
                 recentThreads={recentProjectThreads}
                 onSelectThread={handleSelectThread}
                 onMergeAllPrs={handleMergeAllPrs}
@@ -1144,12 +1172,14 @@ function formatRelativeTime(dateStr: string): string {
 
 function ProjectEmptyState({
   project,
+  outstandingPrCount,
   recentThreads,
   onSelectThread,
   onMergeAllPrs,
   mergeAllLoading,
 }: {
   project: ProjectWithStatus;
+  outstandingPrCount: number;
   recentThreads: Thread[];
   onSelectThread: (id: string) => void;
   onMergeAllPrs: (projectId: string) => void;
@@ -1181,18 +1211,18 @@ function ProjectEmptyState({
             {project.activeThreadCount > 0 && (
               <span className="text-emerald-400 ml-1">&middot; {project.activeThreadCount} running</span>
             )}
-            {project.outstandingPrCount > 0 && (
+            {outstandingPrCount > 0 && (
               <span className="text-amber-300 ml-1">
-                &middot; {project.outstandingPrCount} PR{project.outstandingPrCount === 1 ? "" : "s"} open
+                &middot; {outstandingPrCount} PR{outstandingPrCount === 1 ? "" : "s"} open
               </span>
             )}
           </div>
         </div>
 
-        {project.outstandingPrCount > 0 && (
+        {outstandingPrCount > 0 && (
           <div className="flex justify-center">
             <MergeAllPrsButton
-              count={project.outstandingPrCount}
+              count={outstandingPrCount}
               busy={mergeAllLoading}
               onClick={() => onMergeAllPrs(project.id)}
             />

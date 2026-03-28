@@ -1,5 +1,101 @@
 # Changelog
 
+## [0.1.34.0] - 2026-03-28
+
+### Fixed
+
+- **PR indicators now refresh without a reload** — clients re-fetch thread PR metadata when the window regains focus, when a hidden tab becomes visible again, and once per minute while there are unresolved worktree PR candidates, so PRs created outside Orchestra show up without a reconnect
+- **Create PR now updates the thread immediately** — `POST /threads/:id/pr` now returns the updated thread row and broadcasts `thread_updated`, and the context panel exposes `Check existing PR` even before a `prUrl` is cached so users can discover already-open PRs from the branch
+- **PR sync regressions are covered end to end** — added route, hook, and UI regression coverage for auto-refresh and branch-backed PR discovery, and stabilized the PTY integration test to wait for real shell output instead of sleeping on timing assumptions
+
+### Added
+
+- **Git diff stats in context panel** — the context side panel now shows lines added and removed (`+N / -N lines`) for the branch vs main, similar to Codex. `git diff --shortstat` runs in parallel with the existing ahead/behind check, sharing a single `detectMainBranch` call. New `diffStats` field on `WorktreeInfo` type. Four integration tests cover insertions-only, both directions, no-diff, and no-branch scenarios.
+
+## [0.1.33.2] - 2026-03-28
+
+### Fixed
+
+- **Claude ASCII mockups no longer get mistaken for markdown tables** — Orchestra now classifies pipe-heavy blocks by whole-block structure instead of treating any `| --- |` row as a real GFM table, so Claude/Codex ASCII UI layouts render inside monospace code blocks while legitimate markdown tables still render as tables; added regressions for mixed separator-row mockups and for real tables that follow boxed diagrams
+
+### Added
+
+- **Browser tab indicator for unseen completed threads** — when threads finish while the user is in another tab, `document.title` updates to show a count (e.g. `(2) Orchestra`), reverting to `Orchestra` once the threads are viewed
+
+## [0.1.33.1] - 2026-03-28
+
+### Changed
+
+- **CLAUDE.md / AGENTS.md audit and trim** — updated file tree to add 15 files that existed in code but weren't documented (toolResultMedia, terminal/manager, merge-all-prs, thread-pr-metadata, TodoItemList, ToolMediaRenderer, shiki.ts, diffCompute.ts, etc.); cut 39 implementation-detail bullets from "Key design decisions" that agents can discover from code, keeping 16 essential architectural constraints; fixed renderers/ tree formatting; both files remain identical per sync comment
+
+## [0.1.33.0] - 2026-03-27
+
+### Fixed
+
+- **Codex AskUser now enters Orchestra's real waiting flow** — Codex MCP ask-user calls are normalized into canonical `AskUserQuestion` tool messages, emit `ask_user` attention items, and reuse the existing session-resume path when the user answers
+- **Codex AskUser cards render even when the raw MCP tool name leaks through** — the client AskUser renderer now keys off the shared ask-user detector, so aliases like `request_user_input` and `functions.request_user_input` still show the inline question card instead of a generic tool row
+- **Codex AskUser parity is locked in with regression coverage** — new parser tests cover ask-user alias handling, and a session-manager regression test proves the non-persistent resume flow still works after attention is resolved
+
+## [0.1.32.3] - 2026-03-27
+
+### Changed
+
+- **PR badges use neutral chips with status-tinted icons** — replaced saturated colored backgrounds (emerald, purple, red, amber) with the design system's `surface-3` neutral chip and subtle icon-only color, so badges blend into the dark theme instead of clashing
+- **Merge-all-PRs button uses design system tokens** — swapped warm amber palette for cool `surface`/`edge`/`accent` tokens matching the rest of the UI; count badge uses cyan accent dot instead of bright amber pill
+- **Context panel PR section is tighter** — badge, short `owner/repo#123` link, and refresh button now sit on one row instead of two; "Create PR" button uses neutral surface styling instead of bright accent fill
+
+## [0.1.32.2] - 2026-03-27
+
+### Added
+
+- **README screenshots** — added desktop and mobile UI screenshots so new visitors can see what Orchestra looks like at a glance
+- **Prerequisites section** — documented required tools (Bun, Git, agent CLIs) and optional dependencies (gh, Tailscale, cloudflared)
+- **CLI documentation expanded** — added the `add <path>` command, `serve --tunnel` flag, and environment variables table (`ORCHESTRA_HOST`, `ORCHESTRA_PORT`, `ORCHESTRA_DATA_DIR`)
+
+## [0.1.32.1] - 2026-03-27
+
+### Fixed
+
+- **PR discovery now follows the live branch instead of stale cached URLs** — thread refresh, cleanup, and project-wide merge-all now treat the current worktree branch as the source of truth, so PRs opened directly by agents are discovered even when Orchestra never created the PR itself, and old cached PR URLs no longer override a newer PR on the same thread
+- **Merged PR badges now reconcile as soon as a branch drops out of the open-PR set** — when a thread was cached as open or draft but the batched GitHub open-PR lookup says otherwise, Orchestra now does an exact refresh immediately instead of waiting for the stale window, keeping thread badges, project counts, and cleanup decisions in sync right after merges
+- **Transient branch lookup failures no longer wipe cached PR metadata** — exact refresh paths now preserve the last known PR data on GitHub or `gh` errors and only clear the cache on a real not-found result
+- **Stateless PR discovery is regression-tested end to end** — added route coverage for branch-backed refresh, stale-URL replacement, error preservation, and immediate merged-state reconciliation, plus helper coverage for branch-map filtering and fallback branch resolution
+
+## [0.1.32.0] - 2026-03-27
+
+### Changed
+
+- **Todo task views now share one renderer** — latest TodoWrite cards, inline task renderers, and the pinned task panel now use the same row component so active, pending, and completed states stay visually consistent
+- **Tailscale browser sessions now sign in with identity bootstrap** — the first HTML request behind `tailscale serve` mints a signed `HttpOnly` session cookie from Tailscale user headers, and REST plus WebSocket traffic reuse that session instead of relying on loopback trust
+- **Remote access copy now matches the actual auth model** — the Settings panel explains Tailscale identity sign-in and keeps tagged-device or fallback access on the bearer token path
+
+### Fixed
+
+- **Claude TodoWrite cards now survive more real SDK payload shapes** — the todo renderer now accepts nested stringified `todos/items` arrays, bare array payloads, and `title`-only items so Claude task lists do not disappear when the SDK sends alternate but recoverable shapes; parser coverage now locks in those cases
+- **Codex todo progress now shows a real active task** — live Codex todo snapshots now synthesize an `in_progress` item from the first unfinished step, so Orchestra no longer renders every unfinished task as plain pending
+- **Todo activity coverage is locked in** — added regression coverage for Codex live-vs-terminal todo states and for the shared in-progress task marker in the UI
+- **Large edit diffs no longer inflate into fake whole-file rewrites** — the client diff engine now trims unchanged prefix/suffix before running Myers, preserves correct line numbers through the changed region, and only falls back when the changed core is genuinely large, so Codex edits in big files keep showing the real `+/-` counts instead of full-file noise; added regression coverage for single-line and distant small-edit cases
+- **Always-on DNS rebinding protection no longer breaks LAN or tunnel usage** — Host and Origin allowlists now include the machine's local interface addresses, configured remote hosts, and tunnel hosts so bearer-auth LAN, SSH tunnel, and Cloudflare flows keep working while spoofed hosts still fail closed
+- **Tagged Tailscale requests now fail closed** — when Tailscale Serve omits user identity headers, Orchestra requires the bearer token instead of implicitly trusting loopback traffic
+- **IPv6 Host parsing no longer corrupts auth decisions** — bracketed hosts like `[::1]:4850` are normalized correctly before Host validation and request classification
+- **Auth hardening is covered by targeted regressions** — added tests for first-request Tailscale bootstrap, tagged-device fallback, LAN origin allowlisting, and IPv6 Host parsing
+- **Long single-line bash previews no longer explode vertically** — bash tool previews now truncate pathological one-line output in collapsed mode, offer an expand affordance for truncated single lines, and keep expanded output on one visual row via horizontal scrolling instead of vertical wrapping
+- **Bash long-line truncation is now regression-tested** — renderer parser coverage now locks in single-line truncation and mixed hidden-line-plus-truncated-line preview behavior
+- **Send button vertical misalignment** — removed conflicting `text-base` class that overrode `text-sm` on the Send button, making it taller than the input textarea and visually misaligned
+- **Codex runs now keep their token-usage summary visible** — Orchestra now forwards Codex `turn.completed` token counts into the streaming metrics path, treats them as completed-turn metrics so the idle session summary survives, and falls back to a token-only run-bar display when the Codex SDK does not provide a context-window size; added regression coverage for both the server parser and the run-bar formatting logic
+
+## [0.1.31.0] - 2026-03-27
+
+### Changed
+
+- **Worktree QA now defaults to a safe nested-server sandbox** — Orchestra-managed worktree sessions now spell out the exact nested QA command in the agent preamble, and nested servers launched without `ORCHESTRA_DATA_DIR` now default to `.orchestra-worktree` inside the worktree instead of writing into `~/.orchestra`
+- **Worktree instructions now match the real QA flow** — AGENTS/CLAUDE guidance now tells agents to build from the repo root, use `ORCHESTRA_ALLOW_NESTED=1`, and keep nested runtime state inside the worktree
+
+### Fixed
+
+- **Merge-all PR actions stay visible when project counts lag behind thread state** — the desktop sidebar, empty project view, and mobile project headers now fall back to loaded thread PR metadata when the project-level outstanding PR count is stale, so the merge-all affordance no longer disappears after partial refreshes
+- **Worktree-safe nested QA is covered by regression tests** — new isolation tests lock in the worktree-local data-dir default and the injected safe nested-server command so this workflow does not regress quietly
+
 ## [0.1.30.0] - 2026-03-27
 
 ### Added

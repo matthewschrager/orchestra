@@ -6,6 +6,7 @@ import { join } from "path";
 import { Hono } from "hono";
 import { createProjectRoutes } from "../projects";
 import type { SessionManager } from "../../sessions/manager";
+import type { PrLookupInfo } from "../../worktrees/pr-status";
 
 function createTestDb(): Database {
   const db = new Database(":memory:");
@@ -61,9 +62,23 @@ function insertThread(
   );
 }
 
-function createApp(db: Database, sessionManager?: SessionManager) {
+function createPr(branch: string, number: number, status: "draft" | "open" = "open"): PrLookupInfo {
+  return {
+    url: `https://github.com/acme/orchestra/pull/${number}`,
+    number,
+    status,
+    headRefName: branch,
+    headRefOid: `oid-${number}`,
+  };
+}
+
+function createApp(
+  db: Database,
+  sessionManager?: SessionManager,
+  deps: Parameters<typeof createProjectRoutes>[4] = {},
+) {
   const app = new Hono();
-  app.route("/projects", createProjectRoutes(db as any, sessionManager));
+  app.route("/projects", createProjectRoutes(db as any, sessionManager, undefined, undefined, deps));
   return app;
 }
 
@@ -89,22 +104,26 @@ describe("project PR metadata and merge-all route", () => {
     insertProject(db, "proj-1", tempDir);
     insertThread(db, "open-pr", "proj-1", tempDir, {
       title: "Open PR",
-      pr_url: "https://github.com/acme/repo/pull/41",
-      pr_status: "open",
-      pr_number: 41,
+      branch: "orchestra/open-pr",
     });
     insertThread(db, "merged-pr", "proj-1", tempDir, {
       title: "Merged PR",
       pr_url: "https://github.com/acme/repo/pull/42",
       pr_status: "merged",
       pr_number: 42,
+      branch: "orchestra/merged-pr",
     });
     insertThread(db, "plain-thread", "proj-1", tempDir, {
       title: "No PR",
+      branch: "orchestra/plain-thread",
       pr_url: null,
     });
 
-    const app = createApp(db);
+    const app = createApp(db, undefined, {
+      openPrLister: async () => new Map([
+        ["orchestra/open-pr", createPr("orchestra/open-pr", 41)],
+      ]),
+    });
     const res = await app.request("/projects");
     expect(res.status).toBe(200);
 
@@ -117,9 +136,9 @@ describe("project PR metadata and merge-all route", () => {
     insertProject(db, "proj-1", tempDir, "Orchestra");
     insertThread(db, "pr-open", "proj-1", tempDir, {
       title: "Fix auth edge case",
-      pr_url: "https://github.com/acme/orchestra/pull/17",
-      pr_status: "open",
-      pr_number: 17,
+      pr_url: null,
+      pr_status: null,
+      pr_number: null,
       branch: "orchestra/auth-fix",
       worktree: "/tmp/wt-auth",
     });
@@ -165,7 +184,12 @@ describe("project PR metadata and merge-all route", () => {
       },
     } as unknown as SessionManager;
 
-    const app = createApp(db, sessionManager);
+    const app = createApp(db, sessionManager, {
+      openPrLister: async () => new Map([
+        ["orchestra/auth-fix", createPr("orchestra/auth-fix", 17, "open")],
+        ["orchestra/mobile-polish", createPr("orchestra/mobile-polish", 19, "draft")],
+      ]),
+    });
     const res = await app.request("/projects/proj-1/merge-all-prs", {
       method: "POST",
       body: JSON.stringify({ agent: "codex" }),
@@ -209,7 +233,9 @@ describe("project PR metadata and merge-all route", () => {
       },
     } as unknown as SessionManager;
 
-    const app = createApp(db, sessionManager);
+    const app = createApp(db, sessionManager, {
+      openPrLister: async () => new Map(),
+    });
     const res = await app.request("/projects/proj-1/merge-all-prs", {
       method: "POST",
       body: JSON.stringify({ agent: "codex" }),

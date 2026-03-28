@@ -190,7 +190,7 @@ describe("computeDiff", () => {
     const oldLines = Array.from({ length: 300 }, (_, i) => `old-line-${i}`).join("\n");
     const newLines = Array.from({ length: 300 }, (_, i) => `new-line-${i}`).join("\n");
     const result = computeDiff(oldLines, newLines);
-    // Should bail out: 300 + 300 > 500
+    // Fully different large files still bail out to block diff.
     expect(result.removals).toBe(300);
     expect(result.additions).toBe(300);
     expect(result.lines).toHaveLength(600);
@@ -198,6 +198,40 @@ describe("computeDiff", () => {
     expect(result.lines[0].type).toBe("remove");
     expect(result.lines[299].type).toBe("remove");
     expect(result.lines[300].type).toBe("add");
+  });
+
+  test("large file with a single changed line does not degrade into a whole-file rewrite", () => {
+    const oldLines = Array.from({ length: 300 }, (_, i) => i === 149 ? "before" : `line-${i}`).join("\n");
+    const newLines = Array.from({ length: 300 }, (_, i) => i === 149 ? "after" : `line-${i}`).join("\n");
+    const result = computeDiff(oldLines, newLines);
+
+    expect(result.removals).toBe(1);
+    expect(result.additions).toBe(1);
+    expect(result.lines[148]).toMatchObject({ type: "context", content: "line-148" });
+    expect(result.lines[149]).toMatchObject({ type: "remove", content: "before", oldLineNum: 150 });
+    expect(result.lines[150]).toMatchObject({ type: "add", content: "after", newLineNum: 150 });
+    expect(result.lines[151]).toMatchObject({ type: "context", content: "line-150" });
+  });
+
+  test("large file with distant small edits still produces a precise diff", () => {
+    const oldLines = Array.from({ length: 1000 }, (_, i) => {
+      if (i === 49) return "alpha-before";
+      if (i === 949) return "omega-before";
+      return `line-${i}`;
+    }).join("\n");
+    const newLines = Array.from({ length: 1000 }, (_, i) => {
+      if (i === 49) return "alpha-after";
+      if (i === 949) return "omega-after";
+      return `line-${i}`;
+    }).join("\n");
+    const result = computeDiff(oldLines, newLines);
+
+    expect(result.removals).toBe(2);
+    expect(result.additions).toBe(2);
+    expect(result.lines[49]).toMatchObject({ type: "remove", content: "alpha-before", oldLineNum: 50 });
+    expect(result.lines[50]).toMatchObject({ type: "add", content: "alpha-after", newLineNum: 50 });
+    expect(result.lines[950]).toMatchObject({ type: "remove", content: "omega-before", oldLineNum: 950 });
+    expect(result.lines[951]).toMatchObject({ type: "add", content: "omega-after", newLineNum: 950 });
   });
 });
 
@@ -263,6 +297,7 @@ describe("getBashPreview", () => {
     expect(preview.text).toBe("one\ntwo");
     expect(preview.totalLines).toBe(2);
     expect(preview.hiddenLineCount).toBe(0);
+    expect(preview.truncatedLineCount).toBe(0);
   });
 
   test("truncates output to the requested number of lines", () => {
@@ -270,6 +305,23 @@ describe("getBashPreview", () => {
     expect(preview.text).toBe("1\n2\n3");
     expect(preview.totalLines).toBe(5);
     expect(preview.hiddenLineCount).toBe(2);
+    expect(preview.truncatedLineCount).toBe(0);
+  });
+
+  test("truncates very long single lines even when output fits within the line limit", () => {
+    const preview = getBashPreview("abcdefghijklmno", 4, 10);
+    expect(preview.text).toBe("abcdefghi…");
+    expect(preview.totalLines).toBe(1);
+    expect(preview.hiddenLineCount).toBe(0);
+    expect(preview.truncatedLineCount).toBe(1);
+  });
+
+  test("tracks hidden lines and truncated long lines together", () => {
+    const preview = getBashPreview("1\nabcdefghijklmno\n3\n4\n5", 4, 10);
+    expect(preview.text).toBe("1\nabcdefghi…\n3\n4");
+    expect(preview.totalLines).toBe(5);
+    expect(preview.hiddenLineCount).toBe(1);
+    expect(preview.truncatedLineCount).toBe(1);
   });
 });
 
@@ -560,5 +612,37 @@ describe("parseTodos", () => {
     const result = parseTodos(input);
     expect(result).not.toBeNull();
     expect(result!.items[0].status).toBe("pending");
+  });
+
+  test("parses Claude stringified todos payload with title fields", () => {
+    const input = JSON.stringify({
+      todos: JSON.stringify([
+        { id: "1", title: "First task", status: "in_progress" },
+        { id: "2", title: "Second task", status: "pending" },
+      ]),
+    });
+    const result = parseTodos(input);
+    expect(result).not.toBeNull();
+    expect(result!.total).toBe(2);
+    expect(result!.items[0]).toMatchObject({
+      content: "First task",
+      activeForm: "First task",
+      status: "in_progress",
+    });
+    expect(result!.items[1].content).toBe("Second task");
+  });
+
+  test("parses bare array todo payloads", () => {
+    const input = JSON.stringify([
+      { title: "Standalone task", status: "completed" },
+    ]);
+    const result = parseTodos(input);
+    expect(result).not.toBeNull();
+    expect(result!.completed).toBe(1);
+    expect(result!.items[0]).toMatchObject({
+      content: "Standalone task",
+      activeForm: "Standalone task",
+      status: "completed",
+    });
   });
 });
