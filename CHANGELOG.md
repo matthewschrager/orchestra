@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.34.0] - 2026-03-28
+
+### Fixed
+
+- **PR indicators now refresh without a reload** — clients re-fetch thread PR metadata when the window regains focus, when a hidden tab becomes visible again, and once per minute while there are unresolved worktree PR candidates, so PRs created outside Orchestra show up without a reconnect
+- **Create PR now updates the thread immediately** — `POST /threads/:id/pr` now returns the updated thread row and broadcasts `thread_updated`, and the context panel exposes `Check existing PR` even before a `prUrl` is cached so users can discover already-open PRs from the branch
+- **PR sync regressions are covered end to end** — added route, hook, and UI regression coverage for auto-refresh and branch-backed PR discovery, and stabilized the PTY integration test to wait for real shell output instead of sleeping on timing assumptions
+
 ## [0.1.33.1] - 2026-03-28
 
 ### Changed
