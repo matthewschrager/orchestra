@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.33.0] - 2026-03-27
+
+### Fixed
+
+- **Codex AskUser now enters Orchestra's real waiting flow** — Codex MCP ask-user calls are normalized into canonical `AskUserQuestion` tool messages, emit `ask_user` attention items, and reuse the existing session-resume path when the user answers
+- **Codex AskUser cards render even when the raw MCP tool name leaks through** — the client AskUser renderer now keys off the shared ask-user detector, so aliases like `request_user_input` and `functions.request_user_input` still show the inline question card instead of a generic tool row
+- **Codex AskUser parity is locked in with regression coverage** — new parser tests cover ask-user alias handling, and a session-manager regression test proves the non-persistent resume flow still works after attention is resolved
+
 ## [0.1.32.1] - 2026-03-27
 
 ### Fixed
