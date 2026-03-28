@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.32.1] - 2026-03-27
+
+### Fixed
+
+- **PR discovery now follows the live branch instead of stale cached URLs** — thread refresh, cleanup, and project-wide merge-all now treat the current worktree branch as the source of truth, so PRs opened directly by agents are discovered even when Orchestra never created the PR itself, and old cached PR URLs no longer override a newer PR on the same thread
+- **Merged PR badges now reconcile as soon as a branch drops out of the open-PR set** — when a thread was cached as open or draft but the batched GitHub open-PR lookup says otherwise, Orchestra now does an exact refresh immediately instead of waiting for the stale window, keeping thread badges, project counts, and cleanup decisions in sync right after merges
+- **Transient branch lookup failures no longer wipe cached PR metadata** — exact refresh paths now preserve the last known PR data on GitHub or `gh` errors and only clear the cache on a real not-found result
+- **Stateless PR discovery is regression-tested end to end** — added route coverage for branch-backed refresh, stale-URL replacement, error preservation, and immediate merged-state reconciliation, plus helper coverage for branch-map filtering and fallback branch resolution
+
 ## [0.1.32.0] - 2026-03-27
 
 ### Changed

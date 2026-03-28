@@ -4,7 +4,7 @@ import type { DB, ThreadRow } from "../db";
 import { getThread, updateThread } from "../db";
 import { gitSpawn } from "../utils/git";
 import { extractPrNumber } from "./pr-status";
-import type { CleanupReason } from "shared";
+import type { CleanupReason, PrStatus } from "shared";
 
 export const DEFAULT_WORKTREE_ROOT = join(
   process.env.HOME || "~",
@@ -233,10 +233,16 @@ export class WorktreeManager {
    */
   async isPushedToRemote(
     threadId: string,
-    opts?: { mergedPrHeadOid?: string | null },
+    opts?: {
+      mergedPrHeadOid?: string | null;
+      branchOverride?: string | null;
+      prStatusOverride?: PrStatus | null;
+    },
   ): Promise<{ pushed: boolean; reason?: CleanupReason; requiresConfirmation?: boolean }> {
     const thread = getThread(this.db, threadId) as ThreadRow | null;
-    if (!thread?.worktree || !thread.branch) {
+    const branch = opts?.branchOverride ?? thread?.branch ?? null;
+    const prStatus = opts?.prStatusOverride ?? (thread?.pr_status as PrStatus | null) ?? null;
+    if (!thread?.worktree || !branch) {
       return { pushed: false, reason: "no_worktree" };
     }
     if (!existsSync(thread.worktree)) {
@@ -258,13 +264,13 @@ export class WorktreeManager {
     }
 
     // Check if branch exists on remote
-    const remoteRef = `origin/${thread.branch}`;
+    const remoteRef = `origin/${branch}`;
     const refProc = gitSpawn(["rev-parse", "--verify", remoteRef], {
       cwd: thread.worktree, stdout: "pipe", stderr: "pipe",
     });
     await refProc.exited;
     if (refProc.exitCode !== 0) {
-      if (thread.pr_status === "merged") {
+      if (prStatus === "merged") {
         if (opts?.mergedPrHeadOid) {
           const headProc = gitSpawn(["rev-parse", "HEAD"], {
             cwd: thread.worktree, stdout: "pipe", stderr: "pipe",

@@ -1,5 +1,10 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
-import { extractPrNumber, isPrStatusStale } from "../pr-status";
+import { describe, test, expect } from "bun:test";
+import {
+  buildOpenPrMap,
+  extractPrNumber,
+  isPrStatusStale,
+  resolveThreadBranch,
+} from "../pr-status";
 
 describe("extractPrNumber", () => {
   test("extracts number from standard GitHub URL", () => {
@@ -66,3 +71,59 @@ describe("isPrStatusStale", () => {
 // Note: fetchPrStatus tests require mocking Bun.spawn which is complex.
 // The core parsing logic is covered by extractPrNumber and isPrStatusStale.
 // Integration testing of fetchPrStatus is done via the /refresh-pr endpoint tests.
+
+describe("buildOpenPrMap", () => {
+  test("indexes open PRs by branch and skips cross-repo branches", () => {
+    const map = buildOpenPrMap([
+      {
+        state: "OPEN",
+        isDraft: false,
+        number: 41,
+        url: "https://github.com/acme/repo/pull/41",
+        headRefName: "orchestra/open-pr",
+        headRefOid: "abc123",
+      },
+      {
+        state: "OPEN",
+        isDraft: true,
+        number: 42,
+        url: "https://github.com/acme/repo/pull/42",
+        headRefName: "orchestra/draft-pr",
+        headRefOid: "def456",
+      },
+      {
+        state: "OPEN",
+        isDraft: false,
+        number: 99,
+        url: "https://github.com/fork/repo/pull/99",
+        headRefName: "orchestra/fork-pr",
+        headRefOid: "ghi789",
+        isCrossRepository: true,
+      },
+    ]);
+
+    expect(map.size).toBe(2);
+    expect(map.get("orchestra/open-pr")).toEqual({
+      url: "https://github.com/acme/repo/pull/41",
+      number: 41,
+      status: "open",
+      headRefName: "orchestra/open-pr",
+      headRefOid: "abc123",
+    });
+    expect(map.get("orchestra/draft-pr")?.status).toBe("draft");
+    expect(map.has("orchestra/fork-pr")).toBe(false);
+  });
+});
+
+describe("resolveThreadBranch", () => {
+  test("falls back to stored branch when worktree is missing", () => {
+    expect(resolveThreadBranch("/tmp/does-not-exist", "orchestra/fallback")).toBe(
+      "orchestra/fallback",
+    );
+  });
+
+  test("returns null when neither live nor stored branch is usable", () => {
+    expect(resolveThreadBranch(null, null)).toBeNull();
+    expect(resolveThreadBranch(null, "unknown")).toBeNull();
+  });
+});
