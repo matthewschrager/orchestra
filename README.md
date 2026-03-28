@@ -109,10 +109,6 @@ bun run server/src/cli.ts help               # Show all commands
 
 ## Architecture
 
-<p>
-  <img src="docs/screenshots/desktop-context.png" alt="Desktop — context panel with worktree status and PR creation" width="800" />
-</p>
-
 ```
 ┌─────────────────────────────────────┐
 │  Web / Mobile UI                    │
