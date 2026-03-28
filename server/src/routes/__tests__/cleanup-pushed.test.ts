@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { createProjectRoutes } from "../projects";
 import type { SessionManager } from "../../sessions/manager";
 import type { WorktreeManager } from "../../worktrees/manager";
+import type { PrLookupResult } from "../../worktrees/pr-status";
 
 function createTestDb(): Database {
   const db = new Database(":memory:");
@@ -125,11 +126,7 @@ function createApp(
   db: Database,
   sessionManager?: SessionManager,
   worktreeManager?: WorktreeManager,
-  prStatusFetcher?: (prUrl: string, cwd: string) => Promise<{
-    status: "draft" | "open" | "merged" | "closed";
-    number: number;
-    headRefOid: string | null;
-  } | null>,
+  deps: Parameters<typeof createProjectRoutes>[4] = {},
 ) {
   const app = new Hono();
   app.route(
@@ -139,7 +136,7 @@ function createApp(
       sessionManager,
       worktreeManager,
       undefined,
-      prStatusFetcher,
+      deps,
     ),
   );
   return app;
@@ -629,11 +626,18 @@ describe("POST /projects/:id/cleanup-pushed", () => {
           },
         },
       }),
-      async () => ({
-        status: "merged",
-        number: 123,
-        headRefOid: "abc123",
-      }),
+      {
+        prByUrlResolver: async (): Promise<PrLookupResult> => ({
+          kind: "found",
+          pr: {
+            url: "https://github.com/octo/repo/pull/123",
+            number: 123,
+            status: "merged",
+            headRefName: "orchestra/freshly-merged",
+            headRefOid: "abc123",
+          },
+        }),
+      },
     );
 
     const res = await app.request("/projects/proj-1/cleanup-pushed", {
@@ -685,7 +689,16 @@ describe("POST /projects/:id/cleanup-pushed", () => {
           },
         },
       }),
-      async () => null,
+      {
+        prByUrlResolver: async (): Promise<PrLookupResult> => ({
+          kind: "not_found",
+          message: "no pull requests found",
+        }),
+        prByBranchResolver: async (): Promise<PrLookupResult> => ({
+          kind: "not_found",
+          message: "no pull requests found",
+        }),
+      },
     );
 
     const res = await app.request("/projects/proj-1/cleanup-pushed", {

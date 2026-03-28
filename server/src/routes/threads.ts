@@ -15,25 +15,56 @@ import type { SessionManager } from "../sessions/manager";
 import type { WorktreeManager } from "../worktrees/manager";
 import type { TerminalManager } from "../terminal/manager";
 import {
-  fetchPrStatus,
   isPrStatusStale,
+  listOpenPrsByBranchCached,
+  resolvePrByBranch,
+  resolvePrByUrl,
+  resolveThreadBranch,
+  type PrLookupInfo,
+  type PrLookupResult,
 } from "../worktrees/pr-status";
+import {
+  clearCachedPr,
+  persistResolvedPr,
+  persistThreadBranch,
+  resolveThreadPrLookup,
+  touchPrStatusCheckedAt,
+} from "../worktrees/thread-pr-metadata";
+
+interface ThreadRouteDeps {
+  openPrLister?: typeof listOpenPrsByBranchCached;
+  prByBranchResolver?: typeof resolvePrByBranch;
+  prByUrlResolver?: typeof resolvePrByUrl;
+}
 
 export function createThreadRoutes(
   db: DB,
   sessionManager: SessionManager,
   worktreeManager: WorktreeManager,
   terminalManager?: TerminalManager,
+  deps: ThreadRouteDeps = {},
 ) {
   const app = new Hono();
+  const openPrLister = deps.openPrLister ?? listOpenPrsByBranchCached;
+  const prByBranchResolver = deps.prByBranchResolver ?? resolvePrByBranch;
+  const prByUrlResolver = deps.prByUrlResolver ?? resolvePrByUrl;
 
   // List threads
-  app.get("/", (c) => {
+  app.get("/", async (c) => {
     const threadRows = listThreads(db);
+
+    await enrichThreadsWithOpenPrs(
+      db,
+      threadRows,
+      sessionManager,
+      openPrLister,
+      prByBranchResolver,
+      prByUrlResolver,
+    );
     const threads = threadRows.map(threadRowToApi);
 
     // Fire-and-forget: refresh PR status for open/draft threads with stale checks
-    refreshStalePrStatuses(db, threadRows, sessionManager);
+    refreshStalePrStatuses(db, threadRows, sessionManager, prByUrlResolver);
 
     return c.json(threads);
   });
@@ -196,30 +227,24 @@ export function createThreadRoutes(
     const threadId = c.req.param("id");
     const thread = getThread(db, threadId) as ThreadRow | null;
     if (!thread) return c.json({ error: "Not found" }, 404);
-    if (!thread.pr_url) return c.json({ error: "Thread has no PR" }, 400);
 
-    // Honor stale guard — skip fetch if recently checked
-    if (!isPrStatusStale(thread.pr_status_checked_at)) {
-      return c.json(threadRowToApi(thread));
+    const liveBranch = resolveThreadBranch(thread.worktree, thread.branch);
+    let shouldNotify = persistThreadBranch(db, thread, liveBranch);
+    const result = await resolveThreadPrLookup(thread, liveBranch, {
+      prByBranchResolver,
+      prByUrlResolver,
+    });
+
+    if (result?.kind === "found") {
+      shouldNotify = persistResolvedPr(db, thread, result.pr) || shouldNotify;
+    } else if (result?.kind === "not_found") {
+      shouldNotify = clearCachedPr(db, thread) || shouldNotify;
+    } else {
+      touchPrStatusCheckedAt(db, thread);
     }
 
-    const result = await fetchPrStatus(thread.pr_url, thread.repo_path);
-    if (result) {
-      const changed = result.status !== thread.pr_status;
-      // Use silent update — PR background refresh shouldn't affect sidebar sort order
-      updateThreadSilent(db, threadId, {
-        pr_status: result.status,
-        pr_number: result.number,
-        pr_status_checked_at: new Date().toISOString(),
-      });
-      if (changed) {
-        sessionManager.notifyThread(threadId);
-      }
-    } else {
-      // Update checked_at even on failure to avoid retry storms
-      updateThreadSilent(db, threadId, {
-        pr_status_checked_at: new Date().toISOString(),
-      });
+    if (shouldNotify) {
+      sessionManager.notifyThread(threadId);
     }
 
     const updated = getThread(db, threadId)!;
@@ -277,6 +302,62 @@ export function createThreadRoutes(
   return app;
 }
 
+async function enrichThreadsWithOpenPrs(
+  db: DB,
+  threads: ThreadRow[],
+  sessionManager: SessionManager,
+  openPrLister: (cwd: string) => Promise<Map<string, PrLookupInfo>>,
+  prByBranchResolver: (branch: string, cwd: string) => Promise<PrLookupResult>,
+  prByUrlResolver: (prUrl: string, cwd: string) => Promise<PrLookupResult>,
+): Promise<void> {
+  const threadsByRepo = new Map<string, ThreadRow[]>();
+  for (const thread of threads) {
+    const group = threadsByRepo.get(thread.repo_path) ?? [];
+    group.push(thread);
+    threadsByRepo.set(thread.repo_path, group);
+  }
+
+  const openPrsByRepo = new Map<string, Map<string, PrLookupInfo>>();
+  await Promise.all(
+    Array.from(threadsByRepo.keys()).map(async (repoPath) => {
+      try {
+        openPrsByRepo.set(repoPath, await openPrLister(repoPath));
+      } catch {
+        openPrsByRepo.set(repoPath, new Map<string, PrLookupInfo>());
+      }
+    }),
+  );
+
+  for (const thread of threads) {
+    const liveBranch = resolveThreadBranch(thread.worktree, thread.branch);
+    let shouldNotify = persistThreadBranch(db, thread, liveBranch);
+    const repoPrs = openPrsByRepo.get(thread.repo_path) ?? new Map<string, PrLookupInfo>();
+    const livePr = liveBranch ? repoPrs.get(liveBranch) : null;
+    if (livePr) {
+      shouldNotify = persistResolvedPr(db, thread, livePr) || shouldNotify;
+    } else if (
+      thread.pr_url &&
+      (thread.pr_status === "open" || thread.pr_status === "draft" || thread.pr_status === null)
+    ) {
+      const exactResult = await resolveThreadPrLookup(thread, liveBranch, {
+        prByBranchResolver,
+        prByUrlResolver,
+      });
+      if (exactResult?.kind === "found") {
+        shouldNotify = persistResolvedPr(db, thread, exactResult.pr) || shouldNotify;
+      } else if (exactResult?.kind === "not_found") {
+        shouldNotify = clearCachedPr(db, thread) || shouldNotify;
+      } else if (exactResult?.kind === "error") {
+        touchPrStatusCheckedAt(db, thread);
+      }
+    }
+
+    if (shouldNotify) {
+      sessionManager.notifyThread(thread.id);
+    }
+  }
+}
+
 /**
  * Fire-and-forget: refresh PR statuses for threads with open/draft PRs
  * that haven't been checked recently. Only broadcasts WS when status changes.
@@ -285,6 +366,7 @@ function refreshStalePrStatuses(
   db: DB,
   threads: ThreadRow[],
   sessionManager: SessionManager,
+  prByUrlResolver: (prUrl: string, cwd: string) => Promise<PrLookupResult>,
 ): void {
   const refreshable = threads.filter(
     (t) =>
@@ -296,23 +378,18 @@ function refreshStalePrStatuses(
   for (const thread of refreshable) {
     // Each call is individually fire-and-forget; semaphore in pr-status.ts
     // handles concurrency limiting
-    fetchPrStatus(thread.pr_url!, thread.repo_path).then((result) => {
-      if (result) {
-        const changed = result.status !== thread.pr_status;
-        // Silent update — background refresh shouldn't affect sidebar sort order
-        updateThreadSilent(db, thread.id, {
-          pr_status: result.status,
-          pr_number: result.number,
-          pr_status_checked_at: new Date().toISOString(),
-        });
+    prByUrlResolver(thread.pr_url!, thread.repo_path).then((result) => {
+      if (result.kind === "found") {
+        const changed = persistResolvedPr(db, thread, result.pr);
         if (changed) {
           sessionManager.notifyThread(thread.id);
         }
+      } else if (result.kind === "not_found") {
+        if (clearCachedPr(db, thread)) {
+          sessionManager.notifyThread(thread.id);
+        }
       } else {
-        // Update checked_at even on failure to avoid retry storms
-        updateThreadSilent(db, thread.id, {
-          pr_status_checked_at: new Date().toISOString(),
-        });
+        touchPrStatusCheckedAt(db, thread);
       }
     }).catch(() => {
       // Silently ignore — fire-and-forget

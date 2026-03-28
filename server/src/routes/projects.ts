@@ -5,7 +5,6 @@ import {
   deleteProject,
   getProject,
   getProjectThreadCounts,
-  listOutstandingPrThreads,
   listProjects,
   projectRowToApi,
   threadRowToApi,
@@ -20,19 +19,59 @@ import type { SessionManager } from "../sessions/manager";
 import type { WorktreeManager } from "../worktrees/manager";
 import type { TerminalManager } from "../terminal/manager";
 import { buildMergeAllPrsPrompt } from "../projects/merge-all-prs";
-import { fetchPrStatus } from "../worktrees/pr-status";
-import type { CleanupPushedResponse } from "shared";
+import {
+  listOpenPrsByBranchCached,
+  resolvePrByBranch,
+  resolvePrByUrl,
+  resolveThreadBranch,
+  type PrLookupInfo,
+} from "../worktrees/pr-status";
+import type { CleanupPushedResponse, PrStatus } from "shared";
+import {
+  persistResolvedPr,
+  persistThreadBranch,
+  resolveThreadPrLookup,
+  touchPrStatusCheckedAt,
+} from "../worktrees/thread-pr-metadata";
 
-type PrStatusFetcher = typeof fetchPrStatus;
+interface ProjectRouteDeps {
+  openPrLister?: typeof listOpenPrsByBranchCached;
+  prByBranchResolver?: typeof resolvePrByBranch;
+  prByUrlResolver?: typeof resolvePrByUrl;
+}
+
+function listProjectThreads(db: DB, projectId: string): ThreadRow[] {
+  return db
+    .query("SELECT * FROM threads WHERE project_id = ? AND archived_at IS NULL")
+    .all(projectId) as ThreadRow[];
+}
+
+function buildLiveOpenPrMatches(
+  threads: ThreadRow[],
+  openPrsByBranch: Map<string, PrLookupInfo>,
+): Array<{ thread: ThreadRow; branch: string; pr: PrLookupInfo }> {
+  const matches: Array<{ thread: ThreadRow; branch: string; pr: PrLookupInfo }> = [];
+  for (const thread of threads) {
+    const branch = resolveThreadBranch(thread.worktree, thread.branch);
+    if (!branch) continue;
+    const pr = openPrsByBranch.get(branch);
+    if (!pr) continue;
+    matches.push({ thread, branch, pr });
+  }
+  return matches;
+}
 
 export function createProjectRoutes(
   db: DB,
   sessionManager?: SessionManager,
   worktreeManager?: WorktreeManager,
   terminalManager?: TerminalManager,
-  prStatusFetcher: PrStatusFetcher = fetchPrStatus,
+  deps: ProjectRouteDeps = {},
 ) {
   const app = new Hono();
+  const openPrLister = deps.openPrLister ?? listOpenPrsByBranchCached;
+  const prByBranchResolver = deps.prByBranchResolver ?? resolvePrByBranch;
+  const prByUrlResolver = deps.prByUrlResolver ?? resolvePrByUrl;
 
   // List all projects with enriched status
   app.get("/", async (c) => {
@@ -46,13 +85,18 @@ export function createProjectRoutes(
           ? getCurrentBranch(row.path)
           : "unknown";
         const counts = getProjectThreadCounts(db, row.id);
+        const projectThreads = listProjectThreads(db, row.id);
+        const openPrs = pathExists
+          ? await openPrLister(row.path)
+          : new Map<string, PrLookupInfo>();
+        const outstandingPrCount = buildLiveOpenPrMatches(projectThreads, openPrs).length;
 
         return {
           ...base,
           currentBranch,
           threadCount: counts.total,
           activeThreadCount: counts.active,
-          outstandingPrCount: counts.outstandingPrs,
+          outstandingPrCount,
         };
       }),
     );
@@ -140,11 +184,7 @@ export function createProjectRoutes(
       // git not available or path invalid — continue with local refs
     }
 
-    const threads = db
-      .query(
-        "SELECT * FROM threads WHERE project_id = ? AND archived_at IS NULL",
-      )
-      .all(projectId) as ThreadRow[];
+    const threads = listProjectThreads(db, projectId);
 
     const cleaned: CleanupPushedResponse["cleaned"] = [];
     const skipped: CleanupPushedResponse["skipped"] = [];
@@ -166,30 +206,31 @@ export function createProjectRoutes(
 
       let mergedPrHeadOid: string | null = null;
       let prStatusVerified = false;
-      if (thread.pr_url) {
-        const checkedAt = new Date().toISOString();
-        const prStatus = await prStatusFetcher(thread.pr_url, thread.repo_path);
-        if (prStatus) {
-          updateThreadSilent(db, thread.id, {
-            pr_status: prStatus.status,
-            pr_number: prStatus.number,
-            pr_status_checked_at: checkedAt,
-          });
-          thread.pr_status = prStatus.status;
-          thread.pr_number = prStatus.number;
-          thread.pr_status_checked_at = checkedAt;
-          mergedPrHeadOid = prStatus.headRefOid;
-          prStatusVerified = true;
-        } else {
-          updateThreadSilent(db, thread.id, {
-            pr_status_checked_at: checkedAt,
-          });
-          thread.pr_status_checked_at = checkedAt;
+      let resolvedPrStatus: PrStatus | null = null;
+      const liveBranch = resolveThreadBranch(thread.worktree, thread.branch);
+      persistThreadBranch(db, thread, liveBranch);
+
+      const lookupResult = await resolveThreadPrLookup(thread, liveBranch, {
+        prByBranchResolver,
+        prByUrlResolver,
+      });
+
+      if (lookupResult?.kind === "found") {
+        const changed = persistResolvedPr(db, thread, lookupResult.pr);
+        mergedPrHeadOid = lookupResult.pr.headRefOid;
+        prStatusVerified = true;
+        resolvedPrStatus = lookupResult.pr.status;
+        if (changed) {
+          sessionManager?.notifyThread(thread.id);
         }
+      } else if (thread.pr_url) {
+        touchPrStatusCheckedAt(db, thread);
       }
 
       const pushStatus = await worktreeManager.isPushedToRemote(thread.id, {
         mergedPrHeadOid,
+        branchOverride: liveBranch,
+        prStatusOverride: resolvedPrStatus,
       });
       if (pushStatus.requiresConfirmation && !confirmedThreadIds.has(thread.id)) {
         const canDefaultSelect = pushStatus.reason !== "post_merge_commits" &&
@@ -259,20 +300,22 @@ export function createProjectRoutes(
       return c.json({ error: "Project path no longer exists" }, 400);
     }
 
-    const outstanding = listOutstandingPrThreads(db, projectId);
+    const projectThreads = listProjectThreads(db, projectId);
+    const openPrs = await openPrLister(project.path);
+    const outstanding = buildLiveOpenPrMatches(projectThreads, openPrs);
     if (outstanding.length === 0) {
       return c.json({ error: "This project has no outstanding PRs" }, 400);
     }
 
     const prompt = buildMergeAllPrsPrompt(
       project.name,
-      outstanding.map((thread) => ({
+      outstanding.map(({ thread, branch, pr }) => ({
         id: thread.id,
         title: thread.title,
-        prUrl: thread.pr_url,
-        prNumber: thread.pr_number,
-        prStatus: thread.pr_status,
-        branch: thread.branch,
+        prUrl: pr.url,
+        prNumber: pr.number,
+        prStatus: pr.status,
+        branch,
         worktree: thread.worktree,
       })),
     );
