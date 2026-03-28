@@ -106,7 +106,7 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
         <ContextWindowIndicator metrics={metrics} />
         <span>{formatDuration(elapsedMs)}</span>
         {queuedCount > 0 && (
-          <span className="text-accent/80 font-medium" title={`${queuedCount} message${queuedCount !== 1 ? "s" : ""} queued for next turn`}>
+          <span className="text-accent/80 font-medium" title={`${queuedCount} message${queuedCount !== 1 ? "s" : ""} queued`}>
             · {queuedCount} queued
           </span>
         )}

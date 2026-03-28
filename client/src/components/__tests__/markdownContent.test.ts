@@ -117,15 +117,23 @@ describe("wrapAsciiArt", () => {
     expect(wrapAsciiArt(input)).toBe(input);
   });
 
-  test("does not wrap box-drawing inside list items", () => {
+  test("wraps box-drawing inside list items with indented fences", () => {
     const input = [
       "- item",
       "  ┌─┐",
       "  └─┘",
       "- next",
     ].join("\n");
-    // Lines after a list item (before a blank line) must not be wrapped
-    expect(wrapAsciiArt(input)).toBe(input);
+    expect(wrapAsciiArt(input)).toBe(
+      [
+        "- item",
+        "  ```text",
+        "  ┌─┐",
+        "  └─┘",
+        "  ```",
+        "- next",
+      ].join("\n"),
+    );
   });
 
   test("wraps art after blank line ends list context", () => {
@@ -378,14 +386,46 @@ describe("wrapAsciiArt", () => {
     expect(wrapAsciiArt(input)).toBe(input);
   });
 
-  test("does not wrap ASCII pipe rows inside list context", () => {
+  test("wraps ASCII pipe rows inside list context with indented fences", () => {
     const input = [
       "- item",
       "  | col1 | col2 |",
       "  | a | b |",
       "- next",
     ].join("\n");
-    expect(wrapAsciiArt(input)).toBe(input);
+    expect(wrapAsciiArt(input)).toBe(
+      [
+        "- item",
+        "  ```text",
+        "  | col1 | col2 |",
+        "  | a | b |",
+        "  ```",
+        "- next",
+      ].join("\n"),
+    );
+  });
+
+  test("wraps Claude-style diagrams inside numbered list items", () => {
+    const input = [
+      "1. Simple flowchart:",
+      "   ┌───────┐   ┌───────┐",
+      "   │ Input │──▶│ Agent │",
+      "   └───────┘   └───────┘",
+      "2. Next section:",
+      "   Done.",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(
+      [
+        "1. Simple flowchart:",
+        "   ```text",
+        "   ┌───────┐   ┌───────┐",
+        "   │ Input │──▶│ Agent │",
+        "   └───────┘   └───────┘",
+        "   ```",
+        "2. Next section:",
+        "   Done.",
+      ].join("\n"),
+    );
   });
 
   // --- Adversarial review findings ---
