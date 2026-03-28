@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.33.2] - 2026-03-28
+
+### Added
+
+- **Browser tab indicator for unseen completed threads** — when threads finish while the user is in another tab, `document.title` updates to show a count (e.g. `(2) Orchestra`), reverting to `Orchestra` once the threads are viewed
+
 ## [0.1.33.1] - 2026-03-28
 
 ### Changed
