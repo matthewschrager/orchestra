@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.36.0] - 2026-03-28
+## [0.1.35.5] - 2026-03-28
 
 ### Fixed
 
@@ -9,6 +9,24 @@
 ### For contributors
 
 - **PR status stale-threshold test no longer flakes on the 5-minute boundary** — the exact-threshold assertion now freezes `Date.now()` and matches the intended `>` staleness rule instead of racing real clock drift during the test run
+
+## [0.1.35.4] - 2026-03-28
+
+### Fixed
+
+- **Claude ASCII diagrams now render correctly inside markdown lists** — `wrapAsciiArt()` no longer skips numbered and bulleted list items, instead emitting indented fenced code blocks so box-drawing mockups keep their spacing and alignment when Claude nests them under list headings; added regression coverage for bulleted, pipe-based, and numbered-list diagrams
+
+## [0.1.35.3] - 2026-03-28
+
+### Fixed
+
+- **Send button vertical alignment** — fixed 6px misalignment between the Send button and the chat input textarea caused by the textarea's default `inline-block` display leaving a baseline descender gap; added `display: block` to eliminate it
+
+## [0.1.35.2] - 2026-03-28
+
+### Removed
+
+- **Removed planning artifacts** — deleted `PLAN.md` and `AUTH-HARDENING-AUTOPLAN.md` from repo root (generated during development, not meant to be committed)
 
 ## [0.1.35.1] - 2026-03-28
 

@@ -1,28 +1,29 @@
 # Orchestra
 
-The missing conductor for your local agent CLIs. Orchestra gives your existing agents (Claude Code, Codex, etc.) a web/mobile interface with thread management, git worktree isolation, and one-click PR creation with auto-refreshing PR status.
+I wanted an agent dashboard that combined five things I couldn't find together:
+
+- **Project-organized agent sessions** — threads grouped by repo, not scattered across terminal tabs
+- **Mobile access to local sessions** — monitor and steer agents from your phone while they run on your laptop
+- **Model agnostic** — bring your own CLI agent, not locked to one provider
+- **Seamless worktree isolation** — one click to isolate a thread into its own git worktree, with PR creation built in
+- **Use your existing subscriptions** — runs local CLI agents so you can use flat-rate plans (like Claude Pro/Max) instead of paying per token via API
+
+Existing tools were either tied to a single model (Claude/Codex apps), required per-token API billing (Cursor etc.), or lacked first-class mobile access. Orchestra fills that gap. 
+
+<b>Manage your agents from any model provider, using your existing subscriptions, from wherever you are.</b>
+
+#### Desktop
 
 <p>
   <img src="docs/screenshots/desktop-thread.png" alt="Desktop — thread view with code diffs, bash output, and sidebar" width="800" />
 </p>
 
+#### Mobile access to local sessions
 <p>
   <img src="docs/screenshots/mobile-sessions.png" alt="Mobile — session list" width="300" />
   &nbsp;&nbsp;
   <img src="docs/screenshots/mobile-chat.png" alt="Mobile — chat view" width="300" />
 </p>
-
-## Why Orchestra?
-
-I wanted an agent dashboard that combined five things no existing tool offered together:
-
-- **Project-organized agent sessions** — threads grouped by repo, not scattered across terminal tabs
-- **Model agnostic** — bring your own CLI agent, not locked to one provider
-- **Mobile access to local sessions** — monitor and steer agents from your phone while they run on your laptop
-- **Seamless worktree isolation** — one click to isolate a thread into its own git worktree, with PR creation built in
-- **Use your existing subscriptions** — runs local CLI agents so you can use flat-rate plans (like Claude Pro/Max) instead of paying per token via API
-
-Existing tools were either tied to a single model, required per-token API billing, lacked mobile access, or didn't understand git workflows. Orchestra fills that gap.
 
 ## Features
 
