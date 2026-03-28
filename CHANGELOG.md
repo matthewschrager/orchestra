@@ -8,6 +8,22 @@
 - **Codex AskUser cards render even when the raw MCP tool name leaks through** — the client AskUser renderer now keys off the shared ask-user detector, so aliases like `request_user_input` and `functions.request_user_input` still show the inline question card instead of a generic tool row
 - **Codex AskUser parity is locked in with regression coverage** — new parser tests cover ask-user alias handling, and a session-manager regression test proves the non-persistent resume flow still works after attention is resolved
 
+## [0.1.32.3] - 2026-03-27
+
+### Changed
+
+- **PR badges use neutral chips with status-tinted icons** — replaced saturated colored backgrounds (emerald, purple, red, amber) with the design system's `surface-3` neutral chip and subtle icon-only color, so badges blend into the dark theme instead of clashing
+- **Merge-all-PRs button uses design system tokens** — swapped warm amber palette for cool `surface`/`edge`/`accent` tokens matching the rest of the UI; count badge uses cyan accent dot instead of bright amber pill
+- **Context panel PR section is tighter** — badge, short `owner/repo#123` link, and refresh button now sit on one row instead of two; "Create PR" button uses neutral surface styling instead of bright accent fill
+
+## [0.1.32.2] - 2026-03-27
+
+### Added
+
+- **README screenshots** — added desktop and mobile UI screenshots so new visitors can see what Orchestra looks like at a glance
+- **Prerequisites section** — documented required tools (Bun, Git, agent CLIs) and optional dependencies (gh, Tailscale, cloudflared)
+- **CLI documentation expanded** — added the `add <path>` command, `serve --tunnel` flag, and environment variables table (`ORCHESTRA_HOST`, `ORCHESTRA_PORT`, `ORCHESTRA_DATA_DIR`)
+
 ## [0.1.32.1] - 2026-03-27
 
 ### Fixed
