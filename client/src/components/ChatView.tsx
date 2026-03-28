@@ -428,8 +428,6 @@ interface ToolRenderContext {
 }
 
 const TOOL_RENDERERS: Record<string, (ctx: ToolRenderContext) => React.ReactNode> = {
-  AskUserQuestion: (ctx) => <QuestionCard pair={ctx.pair} isAnswered={ctx.isAnswered} onSubmitAnswers={ctx.onSubmitAnswers} />,
-  AskUserTool: (ctx) => <QuestionCard pair={ctx.pair} isAnswered={ctx.isAnswered} onSubmitAnswers={ctx.onSubmitAnswers} />,
   Agent: (ctx) => <SubAgentCard input={ctx.pair.input} output={ctx.pair.output} isActive={!ctx.pair.output} metadata={ctx.pair.metadata} />,
   TodoWrite: (ctx) => <TodoCard input={ctx.pair.input} isLatest={ctx.pair.id === ctx.latestTodoId} />,
 };
@@ -441,6 +439,10 @@ function ToolLine({ pair, isAnswered, onSubmitAnswers, forceExpand = false, late
     return <BashRenderer input={pair.input} output={pair.output} metadata={pair.metadata} forceExpand={forceExpand} />;
   }
   const isOpen = expanded || forceExpand;
+
+  if (isAskUserTool(pair.name)) {
+    return <QuestionCard pair={pair} isAnswered={isAnswered} onSubmitAnswers={onSubmitAnswers} />;
+  }
 
   // Check registry for special rendering (AskUser, Agent, TodoWrite)
   const specialRenderer = TOOL_RENDERERS[pair.name];

@@ -90,6 +90,8 @@ describe("ask-user helpers", () => {
   test("recognizes both ask-user tool names", () => {
     expect(isAskUserTool("AskUserQuestion")).toBe(true);
     expect(isAskUserTool("AskUserTool")).toBe(true);
+    expect(isAskUserTool("request_user_input")).toBe(true);
+    expect(isAskUserTool("functions.request_user_input")).toBe(true);
     expect(isAskUserTool("Bash")).toBe(false);
   });
 });
