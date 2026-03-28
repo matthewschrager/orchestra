@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.33.2] - 2026-03-28
+
+### Fixed
+
+- **Claude ASCII mockups no longer get mistaken for markdown tables** — Orchestra now classifies pipe-heavy blocks by whole-block structure instead of treating any `| --- |` row as a real GFM table, so Claude/Codex ASCII UI layouts render inside monospace code blocks while legitimate markdown tables still render as tables; added regressions for mixed separator-row mockups and for real tables that follow boxed diagrams
+
 ## [0.1.33.1] - 2026-03-28
 
 ### Changed
