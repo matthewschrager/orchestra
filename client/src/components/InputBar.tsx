@@ -4,6 +4,7 @@ import { SlashCommandInput } from "./SlashCommandInput";
 import { WorktreePathInput } from "./WorktreePathInput";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { api } from "../hooks/useApi";
+import { useFileAutocomplete } from "../hooks/useFileAutocomplete";
 
 interface Props {
   agents: Array<{ name: string; detected: boolean }>;
@@ -42,6 +43,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
 
   const isRunning = thread?.status === "running";
   const effortOptions = getEffortOptions(agent);
+  const { fileSuggestions, fileLoading, handleFileQueryChange } = useFileAutocomplete(activeProjectId);
 
   useEffect(() => {
     if (effortLevel && !effortOptions.some((option) => option.value === effortLevel)) {
@@ -267,6 +269,9 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
                 ? "Type your answer..."
                 : "Send a message..."
           }
+          fileSuggestions={fileSuggestions}
+          fileLoading={fileLoading}
+          onFileQueryChange={handleFileQueryChange}
         />
 
         {/* Send button — always visible */}

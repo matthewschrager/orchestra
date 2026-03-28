@@ -148,6 +148,16 @@ export const api = {
       directories: Array<{ name: string; path: string; isGitRepo: boolean }>;
     }>(`/fs/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`),
 
+  getProjectFiles: (projectId: string) =>
+    request<{ files: string[]; truncated: boolean }>(
+      `/fs/files?projectId=${encodeURIComponent(projectId)}`,
+    ),
+
+  searchFiles: (projectId: string, query: string, limit = 20) =>
+    request<{ files: string[]; truncated: false }>(
+      `/fs/files?projectId=${encodeURIComponent(projectId)}&query=${encodeURIComponent(query)}&limit=${limit}`,
+    ),
+
   // Settings
   getSettings: () => request<import("shared").Settings>("/settings"),
 

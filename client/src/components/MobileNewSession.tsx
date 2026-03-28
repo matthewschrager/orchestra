@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getEffortOptions, type Attachment, type EffortLevel, type ProjectWithStatus, type SlashCommand } from "shared";
 import { api } from "../hooks/useApi";
+import { useFileAutocomplete } from "../hooks/useFileAutocomplete";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { SlashCommandInput } from "./SlashCommandInput";
 import { WorktreePathInput } from "./WorktreePathInput";
@@ -48,6 +49,7 @@ export function MobileNewSession({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
   const effortOptions = getEffortOptions(selectedAgent);
+  const { fileSuggestions, fileLoading, handleFileQueryChange } = useFileAutocomplete(selectedProjectId);
 
   useEffect(() => {
     if (effortLevel && !effortOptions.some((option) => option.value === effortLevel)) {
@@ -229,6 +231,9 @@ export function MobileNewSession({
                 commands={commands}
                 placeholder={`What should the agent do in ${selectedProject.name}?`}
                 rows={4}
+                fileSuggestions={fileSuggestions}
+                fileLoading={fileLoading}
+                onFileQueryChange={handleFileQueryChange}
               />
             </div>
           </div>
