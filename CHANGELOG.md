@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.34.1] - 2026-03-28
+
+### Fixed
+
+- **Claude ASCII diagrams now render correctly inside markdown lists** — `wrapAsciiArt()` no longer skips numbered and bulleted list items, instead emitting indented fenced code blocks so box-drawing mockups keep their spacing and alignment when Claude nests them under list headings; added regression coverage for bulleted, pipe-based, and numbered-list diagrams
+
 ## [0.1.34.0] - 2026-03-28
 
 ### Fixed

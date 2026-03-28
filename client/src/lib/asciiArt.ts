@@ -4,10 +4,11 @@
 const BOX_STRUCTURAL_RE =
   /[\u2502\u2503\u2506\u2507\u250a-\u254b\u254e\u254f\u2551-\u2570]/g;
 
-// Lines inside markdown containers (blockquotes, lists) must not be wrapped —
-// injecting top-level fences would split the container.
+// Lines inside blockquotes must not be wrapped because injecting top-level
+// fences would split the container. Lists are handled separately by indenting
+// fences so the art stays nested under the list item.
 const BLOCKQUOTE_RE = /^\s*>/;
-const LIST_ITEM_RE = /^\s*(?:[-*+]|\d+\.)\s/;
+const LIST_ITEM_RE = /^(\s*)(?:[-*+]|\d+\.)\s+/;
 
 // ASCII border row: +---+---+ or +===+===+ patterns.
 // Requires at least one - or = between the + chars to avoid matching bare +++ or ++++.
@@ -37,6 +38,10 @@ function countStructuralChars(line: string): number {
 
 function isInContainer(line: string): boolean {
   return BLOCKQUOTE_RE.test(line);
+}
+
+function getLeadingWhitespace(line: string): string {
+  return line.match(/^\s*/)?.[0] ?? "";
 }
 
 function isAsciiBorder(line: string): boolean {
@@ -102,14 +107,17 @@ function isMarkdownTableBlock(lines: string[]): boolean {
  * Real markdown tables pass through unchanged; mockups get wrapped into text
  * code fences before react-markdown can collapse spacing or build <table>s.
  *
- * Lines inside code fences, blockquotes, or list context are never wrapped.
+ * Lines inside code fences or blockquotes are never wrapped.
+ * Lines inside list items are wrapped with indented fences so markdown keeps
+ * the code block inside the list item instead of breaking the list structure.
  */
 export function wrapAsciiArt(md: string): string {
   const lines = md.split("\n");
   const result: string[] = [];
   let artBlock: string[] = [];
   let inCodeFence = false;
-  let inListContext = false;
+  let activeListFenceIndent: string | null = null;
+  let artBlockFenceIndent: string | null = null;
 
   function flushArt() {
     if (artBlock.length === 0) return;
@@ -120,13 +128,23 @@ export function wrapAsciiArt(md: string): string {
     if ((!hasStrongArt && artBlock.length < 2) || (!hasStrongArt && isMarkdownTableBlock(artBlock))) {
       result.push(...artBlock);
     } else {
-      result.push("```text", ...artBlock, "```");
+      const fenceIndent = artBlockFenceIndent ?? "";
+      result.push(`${fenceIndent}\`\`\`text`, ...artBlock, `${fenceIndent}\`\`\``);
     }
     artBlock = [];
+    artBlockFenceIndent = null;
+  }
+
+  function pushArtLine(line: string) {
+    if (artBlock.length === 0) {
+      artBlockFenceIndent = activeListFenceIndent;
+    }
+    artBlock.push(line);
   }
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    const lineIndent = getLeadingWhitespace(line);
 
     // Track existing code fences (``` and ~~~, including inside blockquotes)
     if (isCodeFenceLine(line)) {
@@ -136,15 +154,20 @@ export function wrapAsciiArt(md: string): string {
       continue;
     }
 
-    // Track list context — art on indented lines after a list item breaks the list
-    if (LIST_ITEM_RE.test(line)) {
-      inListContext = true;
+    // Track list context so fenced art can stay nested under the list item.
+    const listItemMatch = line.match(LIST_ITEM_RE);
+    if (listItemMatch) {
+      activeListFenceIndent = " ".repeat(listItemMatch[0].length);
     } else if (line.trim() === "") {
-      // Blank line ends list context (markdown paragraph break)
-      inListContext = false;
+      activeListFenceIndent = null;
+    } else if (
+      activeListFenceIndent &&
+      lineIndent.length < activeListFenceIndent.length
+    ) {
+      activeListFenceIndent = null;
     }
 
-    const skip = inCodeFence || isInContainer(line) || inListContext;
+    const skip = inCodeFence || isInContainer(line);
 
     // Detect art: Unicode structural chars, ASCII borders, or ASCII pipe rows.
     // Separator rows can be part of art and are classified at block flush.
@@ -180,9 +203,9 @@ export function wrapAsciiArt(md: string): string {
 
     if (startsNewPipeBlockAfterBoundary) {
       flushArt();
-      artBlock.push(line);
+      pushArtLine(line);
     } else if (isArt) {
-      artBlock.push(line);
+      pushArtLine(line);
     } else {
       flushArt();
       result.push(line);
