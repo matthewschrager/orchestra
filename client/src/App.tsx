@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import type {
   Attachment,
   AttentionResolution,
-  CleanupConfirmationCandidate,
   CleanupPushedResponse,
   EffortLevel,
   Message,
@@ -40,7 +39,6 @@ import { OrchestraLogo } from "./components/OrchestraLogo";
 import { MergeAllPrsButton } from "./components/MergeAllPrsButton";
 import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
 import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal";
-import { buildCleanupAlert } from "./lib/cleanup";
 import { buildInputHistory } from "./lib/inputHistory";
 import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
 import { usePrAutoRefresh } from "./hooks/usePrAutoRefresh";
@@ -225,11 +223,21 @@ function extractToolContextForBar(tool: string | null, input: string): string | 
 }
 
 function AppInner() {
-  interface CleanupConfirmationState {
+  type CleanupPhase = "loading" | "preview" | "executing" | "complete";
+
+  interface CleanupModalState {
     projectId: string;
-    candidates: CleanupConfirmationCandidate[];
-    cleanedCount: number;
-    skipped: CleanupPushedResponse["skipped"];
+    phase: CleanupPhase;
+    preview: {
+      willClean: CleanupPushedResponse["cleaned"];
+      needsReview: CleanupPushedResponse["needsConfirmation"];
+      skipped: CleanupPushedResponse["skipped"];
+    } | null;
+    result: {
+      cleanedCount: number;
+      skippedCount: number;
+      leftUntouched: CleanupPushedResponse["skipped"];
+    } | null;
   }
 
   const [projects, setProjects] = useState<ProjectWithStatus[]>([]);
@@ -243,8 +251,7 @@ function AppInner() {
   const [contextOpen, setContextOpen] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [cleanupConfirmation, setCleanupConfirmation] = useState<CleanupConfirmationState | null>(null);
-  const [cleanupConfirming, setCleanupConfirming] = useState(false);
+  const [cleanupModal, setCleanupModal] = useState<CleanupModalState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mergingProjectId, setMergingProjectId] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
@@ -670,102 +677,105 @@ function AppInner() {
     }
   };
 
+  /** Remove cleaned thread IDs from local state */
+  const applyCleanedIds = (cleanedIds: Set<string>) => {
+    if (cleanedIds.size === 0) return;
+    setThreads((prev) => prev.filter((t) => !cleanedIds.has(t.id)));
+    if (activeThreadId && cleanedIds.has(activeThreadId)) {
+      setActiveThreadId(null);
+    }
+    setMessages((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const id of cleanedIds) {
+        if (next.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    api.listProjects().then(setProjects).catch(console.error);
+  };
+
   const handleCleanupPushed = async (projectId: string) => {
+    // Open modal immediately with loading spinner
+    setCleanupModal({ projectId, phase: "loading", preview: null, result: null });
+
     try {
       setError(null);
-      const result = await api.cleanupPushedThreads(projectId);
+      const dryResult = await api.cleanupPushedThreads(projectId, { dryRun: true });
 
-      const cleanedIds = new Set(result.cleaned.map((c) => c.id));
-      if (cleanedIds.size > 0) {
-        setThreads((prev) => prev.filter((t) => !cleanedIds.has(t.id)));
-        if (activeThreadId && cleanedIds.has(activeThreadId)) {
-          setActiveThreadId(null);
+      // Guard: if user dismissed the modal while the dry-run was in flight, don't reopen
+      setCleanupModal((prev) => {
+        if (!prev || prev.phase !== "loading") return prev;
+
+        // Nothing to do at all
+        if (dryResult.cleaned.length === 0 && dryResult.needsConfirmation.length === 0 && dryResult.skipped.length === 0) {
+          setError("No threads to clean up.");
+          return null;
         }
-        setMessages((prev) => {
-          let changed = false;
-          const next = new Map(prev);
-          for (const id of cleanedIds) {
-            if (next.has(id)) {
-              next.delete(id);
-              changed = true;
-            }
-          }
-          return changed ? next : prev;
-        });
-        api.listProjects().then(setProjects).catch(console.error);
-      }
 
-      if (result.needsConfirmation.length > 0) {
-        setCleanupConfirmation({
+        return {
           projectId,
-          candidates: result.needsConfirmation,
-          cleanedCount: result.cleaned.length,
-          skipped: result.skipped,
-        });
-        return;
-      }
-
-      alert(buildCleanupAlert({
-        cleanedCount: result.cleaned.length,
-        skipped: result.skipped,
-        needsConfirmation: result.needsConfirmation,
-      }));
+          phase: "preview",
+          preview: {
+            willClean: dryResult.cleaned,
+            needsReview: dryResult.needsConfirmation,
+            skipped: dryResult.skipped,
+          },
+          result: null,
+        };
+      });
     } catch (err) {
+      setCleanupModal((prev) => prev?.phase === "loading" ? null : prev);
       setError((err as Error).message);
     }
   };
 
-  const handleCleanupConfirmationClose = () => {
-    if (!cleanupConfirmation) return;
-    alert(buildCleanupAlert({
-      cleanedCount: cleanupConfirmation.cleanedCount,
-      skipped: cleanupConfirmation.skipped,
-      needsConfirmation: cleanupConfirmation.candidates,
-    }));
-    setCleanupConfirmation(null);
-  };
+  const handleCleanupConfirm = async (confirmedThreadIds: string[]) => {
+    if (!cleanupModal?.preview) return;
 
-  const handleCleanupConfirmationSubmit = async (confirmedThreadIds: string[]) => {
-    if (!cleanupConfirmation) return;
+    // Capture the preview's thread IDs so the server only processes what the user saw
+    const scopeToThreadIds = [
+      ...cleanupModal.preview.willClean.map((t) => t.id),
+      ...cleanupModal.preview.needsReview.map((t) => t.id),
+      ...cleanupModal.preview.skipped.map((t) => t.id),
+    ];
+
+    setCleanupModal((prev) => prev ? { ...prev, phase: "executing" } : null);
 
     try {
-      setCleanupConfirming(true);
       setError(null);
-      const result = await api.cleanupPushedThreads(cleanupConfirmation.projectId, {
+      const result = await api.cleanupPushedThreads(cleanupModal.projectId, {
         confirmedThreadIds,
+        scopeToThreadIds,
       });
 
       const cleanedIds = new Set(result.cleaned.map((c) => c.id));
-      if (cleanedIds.size > 0) {
-        setThreads((prev) => prev.filter((t) => !cleanedIds.has(t.id)));
-        if (activeThreadId && cleanedIds.has(activeThreadId)) {
-          setActiveThreadId(null);
-        }
-        setMessages((prev) => {
-          let changed = false;
-          const next = new Map(prev);
-          for (const id of cleanedIds) {
-            if (next.has(id)) {
-              next.delete(id);
-              changed = true;
-            }
-          }
-          return changed ? next : prev;
-        });
-        api.listProjects().then(setProjects).catch(console.error);
-      }
+      applyCleanedIds(cleanedIds);
 
-      alert(buildCleanupAlert({
-        cleanedCount: cleanupConfirmation.cleanedCount + result.cleaned.length,
-        skipped: [...cleanupConfirmation.skipped, ...result.skipped],
-        needsConfirmation: result.needsConfirmation,
-      }));
-      setCleanupConfirmation(null);
+      // Combine skipped + unconfirmed review items for "left untouched"
+      const leftUntouched = [...result.skipped, ...result.needsConfirmation];
+
+      setCleanupModal((prev) => prev ? {
+        ...prev,
+        phase: "complete",
+        result: {
+          cleanedCount: result.cleaned.length,
+          skippedCount: leftUntouched.length,
+          leftUntouched,
+        },
+      } : null);
     } catch (err) {
+      // Revert to preview so user can retry or cancel
+      setCleanupModal((prev) => prev ? { ...prev, phase: "preview" } : null);
       setError((err as Error).message);
-    } finally {
-      setCleanupConfirming(false);
     }
+  };
+
+  const handleCleanupClose = () => {
+    setCleanupModal(null);
   };
 
   const handleNewThreadFromSidebar = (projectId: string) => {
@@ -1113,14 +1123,13 @@ function AppInner() {
         />
       )}
 
-      {cleanupConfirmation && (
+      {cleanupModal && (
         <CleanupConfirmationModal
-          candidates={cleanupConfirmation.candidates}
-          autoCleanedCount={cleanupConfirmation.cleanedCount}
-          skippedCount={cleanupConfirmation.skipped.length}
-          loading={cleanupConfirming}
-          onClose={handleCleanupConfirmationClose}
-          onConfirm={handleCleanupConfirmationSubmit}
+          phase={cleanupModal.phase}
+          preview={cleanupModal.preview}
+          result={cleanupModal.result}
+          onClose={handleCleanupClose}
+          onConfirm={handleCleanupConfirm}
         />
       )}
 

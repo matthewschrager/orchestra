@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.35.0] - 2026-03-28
+
+### Changed
+
+- **Cleanup modal redesigned with dry-run preview** — "Clean up merged/pushed" now opens a single modal that scans all threads first (with a loading spinner), shows a full preview of what will be deleted, what needs review, and what won't be touched, then executes only after user confirmation. No more surprise deletions or native `alert()` dialogs. Server-side `dryRun` flag added to the cleanup-pushed endpoint so the initial scan has no side effects.
+
+### Removed
+
+- **Removed native `alert()` from cleanup flow** — all three `alert()` calls replaced by inline modal states (preview and completion summary)
+
 ## [0.1.34.1] - 2026-03-28
 
 ### Changed
