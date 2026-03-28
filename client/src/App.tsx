@@ -43,6 +43,7 @@ import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal"
 import { buildCleanupAlert } from "./lib/cleanup";
 import { buildInputHistory } from "./lib/inputHistory";
 import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
+import { usePrAutoRefresh } from "./hooks/usePrAutoRefresh";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -482,6 +483,12 @@ function AppInner() {
     }
     wasConnectedRef.current = connected;
   }, [connected]);
+
+  usePrAutoRefresh({
+    connected,
+    onThreads: setThreads,
+    threads,
+  });
 
   // Load messages for active thread
   useEffect(() => {

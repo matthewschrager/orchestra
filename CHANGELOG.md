@@ -2,6 +2,12 @@
 
 ## [0.1.34.0] - 2026-03-28
 
+### Fixed
+
+- **PR indicators now refresh without a reload** — clients re-fetch thread PR metadata when the window regains focus, when a hidden tab becomes visible again, and once per minute while there are unresolved worktree PR candidates, so PRs created outside Orchestra show up without a reconnect
+- **Create PR now updates the thread immediately** — `POST /threads/:id/pr` now returns the updated thread row and broadcasts `thread_updated`, and the context panel exposes `Check existing PR` even before a `prUrl` is cached so users can discover already-open PRs from the branch
+- **PR sync regressions are covered end to end** — added route, hook, and UI regression coverage for auto-refresh and branch-backed PR discovery, and stabilized the PTY integration test to wait for real shell output instead of sleeping on timing assumptions
+
 ### Added
 
 - **Git diff stats in context panel** — the context side panel now shows lines added and removed (`+N / -N lines`) for the branch vs main, similar to Codex. `git diff --shortstat` runs in parallel with the existing ahead/behind check, sharing a single `detectMainBranch` call. New `diffStats` field on `WorktreeInfo` type. Four integration tests cover insertions-only, both directions, no-diff, and no-branch scenarios.

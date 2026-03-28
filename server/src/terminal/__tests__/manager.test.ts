@@ -7,6 +7,18 @@ import { join } from "path";
 let manager: TerminalManager;
 let testDir: string;
 
+async function waitForOutput(
+  predicate: () => boolean,
+  timeoutMs = 2_500,
+  pollIntervalMs = 25,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+}
+
 beforeEach(() => {
   manager = new TerminalManager();
   testDir = mkdtempSync(join(tmpdir(), "terminal-test-"));
@@ -165,8 +177,7 @@ describe("TerminalManager", () => {
     // Write a command that produces output
     manager.write("t1", "echo hello_terminal_test\n");
 
-    // Wait for PTY output (batched at ~16ms intervals)
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await waitForOutput(() => outputs.join("").includes("hello_terminal_test"));
 
     const combined = outputs.join("");
     expect(combined).toContain("hello_terminal_test");
@@ -184,7 +195,7 @@ describe("TerminalManager", () => {
     outputs.length = 0; // Clear init output
     manager.write("t-cwd", "pwd\n");
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await waitForOutput(() => outputs.join("").includes(testDir));
 
     const combined = outputs.join("");
     // The PTY should report the testDir as cwd, not $HOME or elsewhere
