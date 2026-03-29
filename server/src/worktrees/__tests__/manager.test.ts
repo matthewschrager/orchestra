@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { WorktreeManager } from "../manager";
@@ -227,5 +227,124 @@ describe("WorktreeManager.getStatus", () => {
     expect(status!.diffStats).toBeDefined();
     expect(status!.diffStats!.insertions).toBe(4);
     expect(status!.diffStats!.deletions).toBe(3);
+  });
+});
+
+describe("WorktreeManager.getFileDiff", () => {
+  let repoDir: string;
+  let wtRoot: string;
+  let db: Database;
+
+  beforeEach(() => {
+    repoDir = createTempRepo();
+    wtRoot = mkdtempSync(join(tmpdir(), "wt-root-"));
+    db = createTestDb();
+  });
+
+  afterEach(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+    rmSync(wtRoot, { recursive: true, force: true });
+  });
+
+  function insertThread(id: string, wt: { path: string; branch: string }) {
+    db.run(
+      "INSERT INTO threads (id, title, agent, repo_path, worktree, branch, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [id, "test", "claude", repoDir, wt.path, wt.branch, "idle"],
+    );
+  }
+
+  test("returns old and new content for a modified file", async () => {
+    // Create a file on main
+    writeFileSync(join(repoDir, "app.ts"), "const x = 1;\n");
+    Bun.spawnSync(["git", "add", "app.ts"], { cwd: repoDir });
+    Bun.spawnSync(["git", "commit", "-m", "add app"], { cwd: repoDir });
+
+    const mgr = new WorktreeManager(db, wtRoot);
+    const wt = await mgr.create("diff-mod", repoDir);
+    insertThread("diff-mod", wt);
+
+    // Modify in worktree
+    writeFileSync(join(wt.path, "app.ts"), "const x = 2;\nconst y = 3;\n");
+
+    const diff = await mgr.getFileDiff("diff-mod", "app.ts");
+    expect(diff).not.toBeNull();
+    expect(diff!.filePath).toBe("app.ts");
+    expect(diff!.oldContent).toBe("const x = 1;\n");
+    expect(diff!.newContent).toBe("const x = 2;\nconst y = 3;\n");
+    expect(diff!.binary).toBeUndefined();
+  });
+
+  test("returns empty oldContent for a new file", async () => {
+    const mgr = new WorktreeManager(db, wtRoot);
+    const wt = await mgr.create("diff-new", repoDir);
+    insertThread("diff-new", wt);
+
+    // Create a new file in the worktree (not in main)
+    writeFileSync(join(wt.path, "brand-new.ts"), "hello\n");
+
+    const diff = await mgr.getFileDiff("diff-new", "brand-new.ts");
+    expect(diff).not.toBeNull();
+    expect(diff!.oldContent).toBe("");
+    expect(diff!.newContent).toBe("hello\n");
+  });
+
+  test("returns empty newContent for a deleted file", async () => {
+    // Create a file on main
+    writeFileSync(join(repoDir, "doomed.ts"), "goodbye\n");
+    Bun.spawnSync(["git", "add", "doomed.ts"], { cwd: repoDir });
+    Bun.spawnSync(["git", "commit", "-m", "add doomed"], { cwd: repoDir });
+
+    const mgr = new WorktreeManager(db, wtRoot);
+    const wt = await mgr.create("diff-del", repoDir);
+    insertThread("diff-del", wt);
+
+    // Delete the file in the worktree
+    rmSync(join(wt.path, "doomed.ts"));
+
+    const diff = await mgr.getFileDiff("diff-del", "doomed.ts");
+    expect(diff).not.toBeNull();
+    expect(diff!.oldContent).toBe("goodbye\n");
+    expect(diff!.newContent).toBe("");
+  });
+
+  test("rejects path traversal attempts", async () => {
+    const mgr = new WorktreeManager(db, wtRoot);
+    const wt = await mgr.create("diff-sec", repoDir);
+    insertThread("diff-sec", wt);
+
+    const diff = await mgr.getFileDiff("diff-sec", "../../../etc/passwd");
+    expect(diff).toBeNull();
+  });
+
+  test("rejects null bytes in file path", async () => {
+    const mgr = new WorktreeManager(db, wtRoot);
+    const wt = await mgr.create("diff-null", repoDir);
+    insertThread("diff-null", wt);
+
+    const diff = await mgr.getFileDiff("diff-null", "file\0.ts");
+    expect(diff).toBeNull();
+  });
+
+  test("returns null for non-existent thread", async () => {
+    const mgr = new WorktreeManager(db, wtRoot);
+    const diff = await mgr.getFileDiff("no-such-thread", "file.ts");
+    expect(diff).toBeNull();
+  });
+
+  test("detects binary files", async () => {
+    const mgr = new WorktreeManager(db, wtRoot);
+    const wt = await mgr.create("diff-bin", repoDir);
+    insertThread("diff-bin", wt);
+
+    // Write a file with null bytes (binary)
+    const buf = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x00]);
+    const { writeFileSync: wfs } = await import("fs");
+    wfs(join(wt.path, "image.png"), buf);
+
+    const diff = await mgr.getFileDiff("diff-bin", "image.png");
+    expect(diff).not.toBeNull();
+    expect(diff!.binary).toBe(true);
+    expect(diff!.oldContent).toBe("");
+    expect(diff!.newContent).toBe("");
   });
 });

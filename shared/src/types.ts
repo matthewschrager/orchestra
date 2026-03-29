@@ -289,3 +289,11 @@ export interface WorktreeInfo {
   changedFiles: string[];
   diffStats?: { insertions: number; deletions: number };
 }
+
+export interface FileDiff {
+  filePath: string;
+  oldContent: string;
+  newContent: string;
+  binary?: boolean;
+  truncated?: boolean;
+}

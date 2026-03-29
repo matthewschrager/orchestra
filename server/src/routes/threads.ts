@@ -189,6 +189,15 @@ export function createThreadRoutes(
     }
   });
 
+  // Get file diff (relative to main branch)
+  app.get("/:id/worktree/diff", async (c) => {
+    const file = c.req.query("file");
+    if (!file) return c.json({ error: "file query param required" }, 400);
+    const diff = await worktreeManager.getFileDiff(c.req.param("id"), file);
+    if (!diff) return c.json({ error: "Not found" }, 404);
+    return c.json(diff);
+  });
+
   // Get worktree status
   app.get("/:id/worktree", async (c) => {
     const status = await worktreeManager.getStatus(c.req.param("id"));

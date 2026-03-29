@@ -99,6 +99,11 @@ export const api = {
   getWorktreeStatus: (id: string) =>
     request<import("shared").WorktreeInfo>(`/threads/${id}/worktree`),
 
+  getFileDiff: (threadId: string, filePath: string) =>
+    request<import("shared").FileDiff>(
+      `/threads/${threadId}/worktree/diff?file=${encodeURIComponent(filePath)}`,
+    ),
+
   createPR: (id: string, opts?: { title?: string; body?: string; commitMessage?: string }) =>
     request<import("shared").Thread>(`/threads/${id}/pr`, {
       method: "POST",
