@@ -74,6 +74,7 @@ orchestra/
 │       │   ├── ArchiveConfirmationModal.tsx Archive thread confirmation dialog
 │       │   ├── CleanupConfirmationModal.tsx Cleanup confirmation dialog
 │       │   ├── MergeAllPrsButton.tsx Bulk PR merge trigger
+│       │   ├── MergeAllPrsConfirmationModal.tsx Merge-all confirmation dialog
 │       │   ├── renderers/         Rich tool output renderers
 │       │   │   ├── DiffRenderer.tsx    Edit → inline diff
 │       │   │   ├── BashRenderer.tsx    Bash → inline terminal preview

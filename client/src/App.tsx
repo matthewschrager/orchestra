@@ -39,6 +39,7 @@ import { OrchestraLogo } from "./components/OrchestraLogo";
 import { MergeAllPrsButton } from "./components/MergeAllPrsButton";
 import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
 import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal";
+import { MergeAllPrsConfirmationModal } from "./components/MergeAllPrsConfirmationModal";
 import { buildInputHistory } from "./lib/inputHistory";
 import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
 import { usePrAutoRefresh } from "./hooks/usePrAutoRefresh";
@@ -276,6 +277,7 @@ function AppInner() {
   const [cleanupModal, setCleanupModal] = useState<CleanupModalState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mergingProjectId, setMergingProjectId] = useState<string | null>(null);
+  const [mergeConfirmProjectId, setMergeConfirmProjectId] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [lastTerminalMsg, setLastTerminalMsg] = useState<WSServerMessage | null>(null);
@@ -819,11 +821,18 @@ function AppInner() {
     setActiveThreadId(null); // Show empty state for this project
   };
 
-  const handleMergeAllPrs = async (projectId: string) => {
+  const handleMergeAllPrsClick = (projectId: string) => {
+    setMergeConfirmProjectId(projectId);
+  };
+
+  const handleMergeAllPrsConfirm = async () => {
+    const projectId = mergeConfirmProjectId;
+    if (!projectId) return;
     try {
       setError(null);
       setMergingProjectId(projectId);
       const thread = await api.mergeAllPrs(projectId, defaultDetectedAgent);
+      setMergeConfirmProjectId(null);
       setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
       setActiveThreadId(thread.id);
       clearUnread(thread.id);
@@ -832,6 +841,7 @@ function AppInner() {
       turnStartRef.current = Date.now();
       api.listProjects().then(setProjects).catch(console.error);
     } catch (err) {
+      setMergeConfirmProjectId(null);
       setError((err as Error).message);
     } finally {
       setMergingProjectId((current) => (current === projectId ? null : current));
@@ -974,7 +984,7 @@ function AppInner() {
           onSelectProject={setActiveProjectId}
           onSelectThread={handleSelectThread}
           onNewThread={handleNewThreadFromSidebar}
-          onMergeAllPrs={handleMergeAllPrs}
+          onMergeAllPrs={handleMergeAllPrsClick}
           onArchiveThread={handleArchiveThread}
           onRemoveProject={handleRemoveProject}
           onCleanupPushed={handleCleanupPushed}
@@ -1064,7 +1074,7 @@ function AppInner() {
                 outstandingPrCount={activeProjectOutstandingPrCount}
                 recentThreads={recentProjectThreads}
                 onSelectThread={handleSelectThread}
-                onMergeAllPrs={handleMergeAllPrs}
+                onMergeAllPrs={handleMergeAllPrsClick}
                 mergeAllLoading={mergingProjectId === activeProject.id}
               />
               <InputBar
@@ -1132,7 +1142,7 @@ function AppInner() {
                 setMobileTab("new");
               }}
               onArchiveThread={handleArchiveThread}
-              onMergeAllPrs={handleMergeAllPrs}
+              onMergeAllPrs={handleMergeAllPrsClick}
               mergingProjectId={mergingProjectId}
             />
           </div>
@@ -1185,6 +1195,22 @@ function AppInner() {
           onConfirm={handleCleanupConfirm}
         />
       )}
+
+      {mergeConfirmProjectId && (() => {
+        const proj = projects.find((p) => p.id === mergeConfirmProjectId);
+        if (!proj) return null;
+        const projThreads = threads.filter((t) => t.projectId === proj.id && !t.archivedAt);
+        const prCount = getEffectiveOutstandingPrCount(proj, projThreads);
+        return (
+          <MergeAllPrsConfirmationModal
+            projectName={proj.name}
+            prCount={prCount}
+            loading={mergingProjectId === mergeConfirmProjectId}
+            onClose={() => setMergeConfirmProjectId(null)}
+            onConfirm={handleMergeAllPrsConfirm}
+          />
+        );
+      })()}
 
       {/* Settings Panel */}
       {showSettings && (
