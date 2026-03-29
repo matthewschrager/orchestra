@@ -11,7 +11,7 @@ I wanted an agent dashboard that combined a set of features I couldn't find toge
 
 Existing tools were either not agent first, tied to a single model provider (Claude/Codex apps), Mac-only (Conductor), required per-token API billing (Cursor etc.), or lacked first-class mobile access to local sessions (Cloud Agents etc.). Orchestra fills that gap. 
 
-Have a feature idea while walking the dog? Spin up a new thread from your phone, it runs on your laptop using your existing subscriptions (no pay-by-the-token). It has access to your local environment (skills, plugins, dev environment, etc.) - no need for a cloud environment to rebuild your environment every time. Before long, you'll find yourself managing dozens of threads across multiple projects. And you can do it from anywhere.
+Have a feature idea while walking the dog? Spin up a new thread from your phone, it runs on your laptop using your existing subscriptions (no pay-by-the-token). It has access to your local environment (skills, plugins, dev environment, etc.) - no need for a cloud VM to rebuild your environment every time. Before long, you'll find yourself managing dozens of threads across multiple projects. And you can do it from anywhere.
 
 <b>Manage your agents from any model provider, using your existing subscriptions, from wherever you are.</b>
 
