@@ -60,12 +60,28 @@ describe("GET /files/serve", () => {
     rmSync(tmp, { recursive: true });
   });
 
-  test("returns 403 for path outside home directory", async () => {
+  test("returns 403 for path outside home directory and /tmp", async () => {
     const app = createApp();
     const res = await app.request("/files/serve?path=/etc/hostname.txt");
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toContain("home directory");
+  });
+
+  test("serves files from /tmp (tool artifacts)", async () => {
+    const tmpPath = "/tmp/orchestra-test-screenshot.png";
+    const pngBytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    writeFileSync(tmpPath, pngBytes);
+
+    const app = createApp();
+    const res = await app.request(`/files/serve?path=${encodeURIComponent(tmpPath)}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/png");
+
+    rmSync(tmpPath);
   });
 
   test("returns 404 for nonexistent image file", async () => {
