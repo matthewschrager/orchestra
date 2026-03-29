@@ -307,8 +307,15 @@ export function pairTools(toolMsgs: Message[]): ToolPair[] {
           matchIdx = j;
           break;
         }
-        // Stop scanning if we hit another tool_use with the same name (next invocation)
-        if (candidate.toolInput && !candidate.toolOutput && candidate.toolName === msg.toolName) {
+        // Stop scanning if we hit another tool_use with the same name (next invocation).
+        // Exception: Agent tools launch concurrently — multiple uses appear together
+        // before any results arrive. Skip the break so each use can find its result
+        // via FIFO ordering (the `consumed` set prevents double-matching).
+        if (
+          candidate.toolInput && !candidate.toolOutput &&
+          candidate.toolName === msg.toolName &&
+          msg.toolName !== "Agent"
+        ) {
           break;
         }
       }
