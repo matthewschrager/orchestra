@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.40.0] - 2026-03-29
+
+### Added
+
+- **Per-thread permission mode selection** — users can choose a permission mode when creating threads: Bypass (full auto), Auto-edit, Ask permission/Suggest, and Plan only/Read-only. Both Claude and Codex agents supported with agent-specific labels
+- **Smart auto-defaults** — worktree-isolated threads default to Bypass (damage is recoverable), non-isolated threads default to Auto-edit (safer on real branch). Toggles automatically when changing the isolate checkbox
+- **Codex permission mapping** — Codex threads map the unified PermissionMode to approvalPolicy + sandboxMode
+- **ContextPanel permission display** — shows the active permission mode label for running threads
+
+### Changed
+
+- **Permission-mode-aware canUseTool** — non-bypass modes delegate to SDK built-in permission logic via mutable ref pattern
+- **ExitPlanMode restoration** — approval restores to thread's configured permission mode instead of hardcoded bypassPermissions
+
 ## [0.1.39.0] - 2026-03-29
 
 ### Added
