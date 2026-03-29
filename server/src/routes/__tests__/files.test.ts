@@ -3,7 +3,7 @@ import { createFileRoutes } from "../files";
 import { Hono } from "hono";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { relative, resolve } from "path";
-import { homedir, tmpdir } from "os";
+import { homedir } from "os";
 
 function createApp() {
   const app = new Hono();
@@ -37,31 +37,47 @@ describe("GET /files/serve", () => {
   });
 
   test("returns 403 for non-image extension", async () => {
+    const tmp = mkdtempSync(resolve(homedir(), ".orchestra-files-test-"));
+    const tsPath = resolve(tmp, "test.ts");
+    writeFileSync(tsPath, "export const x = 1;");
     const app = createApp();
-    const res = await app.request("/files/serve?path=/tmp/test.ts");
+    const res = await app.request(`/files/serve?path=${encodeURIComponent(tsPath)}`);
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toContain("not allowed");
+    rmSync(tmp, { recursive: true });
   });
 
   test("returns 403 for SVG (XSS risk)", async () => {
+    const tmp = mkdtempSync(resolve(homedir(), ".orchestra-files-test-"));
+    const svgPath = resolve(tmp, "test.svg");
+    writeFileSync(svgPath, "<svg></svg>");
     const app = createApp();
-    const res = await app.request("/files/serve?path=/tmp/test.svg");
+    const res = await app.request(`/files/serve?path=${encodeURIComponent(svgPath)}`);
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toContain("not allowed");
+    rmSync(tmp, { recursive: true });
+  });
+
+  test("returns 403 for path outside home directory", async () => {
+    const app = createApp();
+    const res = await app.request("/files/serve?path=/etc/hostname.txt");
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain("home directory");
   });
 
   test("returns 404 for nonexistent image file", async () => {
     const app = createApp();
-    const res = await app.request("/files/serve?path=/tmp/nonexistent-image-12345.png");
+    const res = await app.request(`/files/serve?path=${encodeURIComponent(resolve(homedir(), "nonexistent-image-12345.png"))}`);
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.error).toContain("not found");
   });
 
   test("serves a valid PNG file", async () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "orchestra-files-test-"));
+    const tmp = mkdtempSync(resolve(homedir(), ".orchestra-files-test-"));
     const imgPath = resolve(tmp, "test.png");
     // 1x1 red pixel PNG
     const pngBytes = Buffer.from(
@@ -85,7 +101,7 @@ describe("GET /files/serve", () => {
   });
 
   test("serves JPEG files", async () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "orchestra-files-test-"));
+    const tmp = mkdtempSync(resolve(homedir(), ".orchestra-files-test-"));
     const imgPath = resolve(tmp, "photo.jpg");
     writeFileSync(imgPath, Buffer.from([0xff, 0xd8, 0xff])); // JPEG magic bytes
 
@@ -97,7 +113,7 @@ describe("GET /files/serve", () => {
   });
 
   test("serves WebP files", async () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "orchestra-files-test-"));
+    const tmp = mkdtempSync(resolve(homedir(), ".orchestra-files-test-"));
     const imgPath = resolve(tmp, "image.webp");
     writeFileSync(imgPath, Buffer.from("RIFF....WEBP", "ascii"));
 
@@ -109,7 +125,7 @@ describe("GET /files/serve", () => {
   });
 
   test("serves markdown documents as plain text", async () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "orchestra-files-test-"));
+    const tmp = mkdtempSync(resolve(homedir(), ".orchestra-files-test-"));
     const docPath = resolve(tmp, "PLAN.md");
     writeFileSync(docPath, "# Plan\n\nShip it.\n");
 
@@ -139,7 +155,7 @@ describe("GET /files/serve", () => {
   });
 
   test("handles URL-encoded paths", async () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "orchestra-files-test-"));
+    const tmp = mkdtempSync(resolve(homedir(), ".orchestra-files-test-"));
     const imgPath = resolve(tmp, "my screenshot.png");
     writeFileSync(imgPath, Buffer.from([0x89, 0x50, 0x4e, 0x47])); // PNG magic
 

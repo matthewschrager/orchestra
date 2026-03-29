@@ -6,7 +6,7 @@ server/static/
 *.db-shm
 .env
 .env.local
-bun.lock
+# bun.lock — DO commit the lockfile (pins dependency versions)
 .DS_Store
 .gstack/
 .orchestra-worktree/
