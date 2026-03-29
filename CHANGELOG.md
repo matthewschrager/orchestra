@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.40.1] - 2026-03-29
+
+### Fixed
+
+- **Merge all PRs modal title visibility** — added explicit `text-content-1` color to the modal heading, which was previously dark-on-dark and barely readable
+
 ## [0.1.40.0] - 2026-03-29
 
 ### Added
