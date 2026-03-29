@@ -8,6 +8,8 @@ const baseThread: Thread = {
   title: "Fix PR discovery",
   agent: "codex",
   effortLevel: null,
+  permissionMode: null,
+  model: null,
   projectId: "proj-1",
   repoPath: "/tmp/orchestra",
   worktree: "/tmp/wt-pr-discovery",

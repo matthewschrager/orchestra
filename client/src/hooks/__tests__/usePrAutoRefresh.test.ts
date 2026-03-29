@@ -11,6 +11,8 @@ const baseThread: Thread = {
   title: "Fix PR sync",
   agent: "codex",
   effortLevel: null,
+  permissionMode: null,
+  model: null,
   projectId: "proj-1",
   repoPath: "/tmp/orchestra",
   worktree: "/tmp/wt-pr-sync",

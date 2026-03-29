@@ -88,6 +88,7 @@ export function createThreadRoutes(
     const body = await c.req.json<{
       agent: string;
       effortLevel?: import("shared").EffortLevel;
+      permissionMode?: import("shared").PermissionMode;
       model?: string;
       prompt: string;
       projectId: string;
@@ -120,6 +121,7 @@ export function createThreadRoutes(
       const thread = await sessionManager.startThread({
         agent: body.agent,
         effortLevel: body.effortLevel,
+        permissionMode: body.permissionMode,
         model: body.model,
         prompt: body.prompt,
         repoPath: project.path,

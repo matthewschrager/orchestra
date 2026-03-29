@@ -13,6 +13,11 @@ import type {
 import { normalizeToolResultContent } from "./toolResultMedia";
 import type { ModelOption } from "shared";
 
+/** Mutable ref so canUseTool can read the current permission mode without closure rebinding. */
+interface PermissionModeRef {
+  current: string;
+}
+
 /** Tool names handled as plan-approval attention items.
  *  ExitPlanMode has requiresUserInteraction()=true in the CLI, which causes a Zod
  *  validation error in headless SDK mode. We deny it in canUseTool and surface it
@@ -29,7 +34,7 @@ let cachedModels: ModelOption[] | null = null;
 export function getCachedClaudeModels(): ModelOption[] | null { return cachedModels; }
 
 /**
- * Custom permission handler: denies tools that Orchestra handles externally.
+ * Factory: creates a custom permission handler bound to a mutable PermissionModeRef.
  *
  * - AskUserQuestion/AskUserTool: denied with interrupt — Orchestra surfaces them
  *   as attention items for the user to answer.
@@ -39,21 +44,23 @@ export function getCachedClaudeModels(): ModelOption[] | null { return cachedMod
  *   Orchestra surfaces a "plan approval" attention item, and on approval calls
  *   setPermissionMode() to exit plan mode at the CLI level.
  */
-const orchestraCanUseTool: CanUseTool = async (toolName, _input, _options) => {
-  if (isAskUserToolName(toolName)) {
-    if (DEBUG) console.log(`[claude] canUseTool: denying ${toolName} with interrupt`);
-    return { behavior: "deny", message: "Handled by Orchestra", interrupt: true };
-  }
-  if (PLAN_APPROVAL_TOOLS.has(toolName)) {
-    if (DEBUG) console.log(`[claude] canUseTool: denying ${toolName} — plan approval handled by Orchestra`);
-    return {
-      behavior: "deny",
-      message: "Plan submitted for user review via Orchestra. The user will approve or reject the plan. Do not retry ExitPlanMode — Orchestra will handle the transition.",
-      interrupt: true,
-    };
-  }
-  return { behavior: "allow" };
-};
+function createCanUseTool(modeRef: PermissionModeRef): CanUseTool {
+  return async (toolName, _input, _options) => {
+    if (isAskUserToolName(toolName)) {
+      if (DEBUG) console.log(`[claude] canUseTool: denying ${toolName} with interrupt (mode=${modeRef.current})`);
+      return { behavior: "deny", message: "Handled by Orchestra", interrupt: true };
+    }
+    if (PLAN_APPROVAL_TOOLS.has(toolName)) {
+      if (DEBUG) console.log(`[claude] canUseTool: denying ${toolName} — plan approval handled by Orchestra (mode=${modeRef.current})`);
+      return {
+        behavior: "deny",
+        message: "Plan submitted for user review via Orchestra. The user will approve or reject the plan. Do not retry ExitPlanMode — Orchestra will handle the transition.",
+        interrupt: true,
+      };
+    }
+    return { behavior: "allow" };
+  };
+}
 
 export class ClaudeAdapter implements AgentAdapter {
   name = "claude";
@@ -86,6 +93,8 @@ export class ClaudeAdapter implements AgentAdapter {
       ? opts.effortLevel
       : undefined;
     const model = opts.model || undefined;
+    const mode = (opts.permissionMode as "default" | "acceptEdits" | "bypassPermissions" | "plan") ?? "bypassPermissions";
+    const modeRef: PermissionModeRef = { current: mode };
 
     const iter = query({
       prompt: opts.prompt,
@@ -94,11 +103,11 @@ export class ClaudeAdapter implements AgentAdapter {
         effort,
         model,
         resume: opts.resumeSessionId,
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        permissionMode: mode,
+        allowDangerouslySkipPermissions: mode === "bypassPermissions",
         includePartialMessages: true,
         settingSources: ["user", "project", "local"],
-        canUseTool: orchestraCanUseTool,
+        canUseTool: createCanUseTool(modeRef),
         abortController,
       },
     });
@@ -119,6 +128,9 @@ export class ClaudeAdapter implements AgentAdapter {
       ? opts.effortLevel
       : undefined;
     const model = opts.model || undefined;
+    const mode = (opts.permissionMode as "default" | "acceptEdits" | "bypassPermissions" | "plan") ?? "bypassPermissions";
+    const modeRef: PermissionModeRef = { current: mode };
+    if (DEBUG) console.log(`[claude] startPersistent permissionMode=${mode} cwd=${opts.cwd}`);
     const q: Query = query({
       prompt: opts.prompt,
       options: {
@@ -126,15 +138,26 @@ export class ClaudeAdapter implements AgentAdapter {
         effort,
         model,
         resume: opts.resumeSessionId,
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        permissionMode: mode,
+        allowDangerouslySkipPermissions: mode === "bypassPermissions",
         includePartialMessages: true,
         settingSources: ["user", "project", "local"],
-        canUseTool: orchestraCanUseTool,
+        canUseTool: createCanUseTool(modeRef),
       },
     });
 
     const parser = new ClaudeParser();
+
+    // Lazy model discovery — fire-and-forget on first persistent session
+    if (!cachedModels) {
+      q.supportedModels().then((sdkModels) => {
+        cachedModels = sdkModels.map((m) => ({
+          value: m.value,
+          label: m.displayName,
+        }));
+        if (DEBUG) console.log(`[claude] Discovered ${cachedModels.length} models from SDK`);
+      }).catch(() => {});
+    }
 
     return {
       messages: q, // Query extends AsyncGenerator<SDKMessage>
@@ -161,23 +184,11 @@ export class ClaudeAdapter implements AgentAdapter {
       async setModel(newModel: string): Promise<void> {
         await q.setModel(newModel);
       },
-      async setPermissionMode(mode: string): Promise<void> {
-        await q.setPermissionMode(mode as "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk");
+      async setPermissionMode(newMode: string): Promise<void> {
+        modeRef.current = newMode;
+        await q.setPermissionMode(newMode as "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk");
       },
     };
-
-    // Lazy model discovery — fire-and-forget on first persistent session
-    if (!cachedModels) {
-      q.supportedModels().then((sdkModels) => {
-        cachedModels = sdkModels.map((m) => ({
-          value: m.value,
-          label: m.displayName,
-        }));
-        if (DEBUG) console.log(`[claude] Discovered ${cachedModels.length} models from SDK`);
-      }).catch(() => {});
-    }
-
-    return session;
   }
 
   supportsResume(): boolean {

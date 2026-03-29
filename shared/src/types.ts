@@ -1,4 +1,5 @@
 import type { EffortLevel } from "./effort";
+import type { PermissionMode } from "./permissions";
 
 // ── Project ─────────────────────────────────────────────
 
@@ -64,6 +65,7 @@ export interface Thread {
   title: string;
   agent: string;
   effortLevel: EffortLevel | null;
+  permissionMode: PermissionMode | null;
   model: string | null;
   projectId: string;
   repoPath: string;
@@ -270,6 +272,7 @@ export interface TailscaleStatus {
 export interface CreateThreadRequest {
   agent: string;
   effortLevel?: EffortLevel;
+  permissionMode?: PermissionMode;
   model?: string;
   prompt: string;
   projectId: string;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ModelOption, Thread, WorktreeInfo } from "shared";
-import { getEffortLabel } from "shared";
+import { getEffortLabel, getPermissionModeLabel } from "shared";
 import { api } from "../hooks/useApi";
 import { FilePathLink } from "./FilePathLink";
 import { PrBadge } from "./PrBadge";
@@ -195,6 +195,11 @@ export function ContextPanel({ thread, onClose, models = [] }: Props) {
             {thread.effortLevel && (
               <span className="text-content-2">
                 <span className="text-content-3">Effort:</span> {getEffortLabel(thread.agent, thread.effortLevel) ?? thread.effortLevel}
+              </span>
+            )}
+            {thread.permissionMode && (
+              <span className="text-content-2">
+                <span className="text-content-3">Permissions:</span> {getPermissionModeLabel(thread.permissionMode, thread.agent) ?? thread.permissionMode}
               </span>
             )}
           </div>
