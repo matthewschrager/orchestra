@@ -110,7 +110,18 @@ self.addEventListener("activate", (event) => {
 
 // Network-first strategy for API, cache-first for static assets
 self.addEventListener("fetch", (event) => {
+  if (event.request.method !== "GET") {
+    return;
+  }
+
   const url = new URL(event.request.url);
+
+  // Let the browser handle cross-origin requests directly. Intercepting them
+  // routes the request through service-worker fetch(), which is governed by
+  // connect-src and breaks Google Fonts under the current CSP.
+  if (url.origin !== self.location.origin) {
+    return;
+  }
 
   // Don't cache API requests or WebSocket
   if (url.pathname.startsWith("/api") || url.pathname === "/ws") {
@@ -118,6 +129,9 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request)),
+    fetch(event.request).catch(async () => {
+      const cached = await caches.match(event.request);
+      return cached || Response.error();
+    }),
   );
 });

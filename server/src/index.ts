@@ -35,6 +35,7 @@ import { createTailscaleRoutes } from "./routes/tailscale";
 import { TerminalManager } from "./terminal/manager";
 import { detectWorktree } from "./utils/git";
 import { getAllowedOrigins, getAllowedHosts, getLocalInterfaceHosts } from "./utils/origins";
+import { applySecurityHeaders } from "./utils/securityHeaders";
 import {
   DEFAULT_ORCHESTRA_PORT,
   getDefaultWorktreeDataDir,
@@ -144,16 +145,7 @@ app.use("*", cors({
 // Fix 3: Security headers (CSP, clickjacking, MIME sniffing, referrer)
 app.use("*", async (c, next) => {
   await next();
-  c.header("Content-Security-Policy",
-    "default-src 'self'; " +
-    "script-src 'self' 'unsafe-inline'; " +
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-    "font-src 'self' https://fonts.gstatic.com; " +
-    "img-src 'self' data: blob:; " +
-    "connect-src 'self' ws: wss:");
-  c.header("X-Frame-Options", "DENY");
-  c.header("X-Content-Type-Options", "nosniff");
-  c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+  applySecurityHeaders(c);
 });
 
 // Fix 2B: Host header validation (DNS rebinding protection)
