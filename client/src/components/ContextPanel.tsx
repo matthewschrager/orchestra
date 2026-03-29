@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ModelOption, Thread, WorktreeInfo } from "shared";
 import { getEffortLabel } from "shared";
 import { api } from "../hooks/useApi";
+import { FilePathLink } from "./FilePathLink";
 import { PrBadge } from "./PrBadge";
 
 interface Props {
@@ -14,6 +15,31 @@ interface Props {
 function formatPrUrl(url: string): string {
   const m = url.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
   return m ? `${m[1]}#${m[2]}` : url;
+}
+
+export function resolveChangedFilePath(worktreePath: string, changedFile: string): string {
+  if (changedFile.startsWith("/")) return changedFile;
+
+  const normalizedRoot = worktreePath.replace(/\/+$/, "") || "/";
+  const normalizedFile = changedFile.replace(/^\/+/, "");
+  return normalizedRoot === "/" ? `/${normalizedFile}` : `${normalizedRoot}/${normalizedFile}`;
+}
+
+interface ChangedFilesListProps {
+  worktreePath: string;
+  changedFiles: string[];
+}
+
+export function ChangedFilesList({ worktreePath, changedFiles }: ChangedFilesListProps) {
+  return (
+    <ul className="space-y-0.5 text-xs max-h-48 overflow-y-auto">
+      {changedFiles.map((file) => (
+        <li key={file} className="truncate">
+          <FilePathLink path={resolveChangedFilePath(worktreePath, file)} />
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function ContextPanel({ thread, onClose, models = [] }: Props) {
@@ -122,9 +148,21 @@ export function ContextPanel({ thread, onClose, models = [] }: Props) {
       <div className="flex items-center justify-between p-3 border-b border-edge-1">
         {/* Drag handle (mobile) */}
         <div className="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1 rounded-full bg-surface-4 md:hidden" />
-        <h3 className="text-xs font-semibold text-content-3 uppercase tracking-widest">
-          Context
-        </h3>
+        <div className="flex items-center gap-1.5 text-content-3">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="12" y1="3" x2="12" y2="21" strokeOpacity="0.35" />
+            <line x1="6" y1="8" x2="10" y2="8" />
+            <line x1="6" y1="12" x2="9" y2="12" />
+            <line x1="6" y1="16" x2="10" y2="16" />
+            <line x1="14" y1="8" x2="18" y2="8" />
+            <line x1="14" y1="12" x2="17" y2="12" />
+            <line x1="14" y1="16" x2="18" y2="16" />
+          </svg>
+          <h3 className="text-xs font-semibold uppercase tracking-widest">
+            Diff
+          </h3>
+        </div>
         <button onClick={onClose} className="text-content-3 hover:text-content-1 text-sm">
           Close
         </button>
@@ -207,15 +245,12 @@ export function ContextPanel({ thread, onClose, models = [] }: Props) {
         )}
 
         {/* Changed files */}
-        {worktreeInfo && worktreeInfo.changedFiles.length > 0 && (
+        {thread.worktree && worktreeInfo && worktreeInfo.changedFiles.length > 0 && (
           <Section title={`Changed files (${worktreeInfo.changedFiles.length})`}>
-            <ul className="space-y-0.5 text-xs font-mono text-content-2 max-h-48 overflow-y-auto">
-              {worktreeInfo.changedFiles.map((f) => (
-                <li key={f} className="truncate">
-                  {f}
-                </li>
-              ))}
-            </ul>
+            <ChangedFilesList
+              worktreePath={thread.worktree}
+              changedFiles={worktreeInfo.changedFiles}
+            />
           </Section>
         )}
 

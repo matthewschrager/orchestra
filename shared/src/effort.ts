@@ -35,6 +35,15 @@ export function isEffortLevelSupported(agent: string, effortLevel: string | null
   return getEffortOptions(agent).some((option) => option.value === effortLevel);
 }
 
+/** All effort levels across all agents — used in the settings UI for the default effort selector */
+export const ALL_EFFORT_OPTIONS: readonly EffortOption[] = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "minimal", label: "Minimal (Codex)" },
+  { value: "xhigh", label: "Max (Codex)" },
+];
+
 export function getEffortLabel(agent: string, effortLevel: EffortLevel | null | undefined): string | null {
   if (!effortLevel) return null;
   return getEffortOptions(agent).find((option) => option.value === effortLevel)?.label ?? null;

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import type {
   Attachment,
   AttentionResolution,
-  CleanupConfirmationCandidate,
   CleanupPushedResponse,
   EffortLevel,
   Message,
@@ -40,7 +39,7 @@ import { OrchestraLogo } from "./components/OrchestraLogo";
 import { MergeAllPrsButton } from "./components/MergeAllPrsButton";
 import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
 import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal";
-import { buildCleanupAlert } from "./lib/cleanup";
+import { MergeAllPrsConfirmationModal } from "./components/MergeAllPrsConfirmationModal";
 import { buildInputHistory } from "./lib/inputHistory";
 import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
 import { usePrAutoRefresh } from "./hooks/usePrAutoRefresh";
@@ -80,6 +79,8 @@ interface StreamingState {
   turnEnded: Set<string>;
   /** Number of messages queued during current agent turn (per thread) */
   queuedCount: Map<string, number>;
+  /** Seq numbers of user messages that were queued, keyed by threadId */
+  queuedSeqs: Map<string, Set<number>>;
 }
 
 const initialStreamingState: StreamingState = {
@@ -89,6 +90,7 @@ const initialStreamingState: StreamingState = {
   metrics: new Map(),
   turnEnded: new Set(),
   queuedCount: new Map(),
+  queuedSeqs: new Map(),
 };
 
 const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0, modelName: null };
@@ -97,7 +99,8 @@ type StreamingAction =
   | { type: "delta"; delta: StreamDelta }
   | { type: "clear_text"; threadId: string }
   | { type: "clear_tool"; threadId: string }
-  | { type: "clear_all"; threadId: string };
+  | { type: "clear_all"; threadId: string }
+  | { type: "mark_queued"; threadId: string; seq: number };
 
 function streamingReducer(state: StreamingState, action: StreamingAction): StreamingState {
   switch (action.type) {
@@ -168,10 +171,20 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
           toolInput.delete(delta.threadId);
           const turnEnded = new Set(state.turnEnded);
           turnEnded.add(delta.threadId);
-          // Reset queued count on turn end
+          // Reset queued count and queued message indicators on turn end
           const queuedCountTe = new Map(state.queuedCount);
           queuedCountTe.delete(delta.threadId);
-          return { ...state, text, tool, toolInput, turnEnded, queuedCount: queuedCountTe };
+          // Clear one queued seq for this thread (the oldest) — agent is processing it
+          const queuedSeqs = new Map(state.queuedSeqs);
+          const threadSeqs = queuedSeqs.get(delta.threadId);
+          if (threadSeqs && threadSeqs.size > 0) {
+            const nextSeqs = new Set(threadSeqs);
+            const oldest = [...nextSeqs].sort((a, b) => a - b)[0]!;
+            nextSeqs.delete(oldest);
+            if (nextSeqs.size > 0) queuedSeqs.set(delta.threadId, nextSeqs);
+            else queuedSeqs.delete(delta.threadId);
+          }
+          return { ...state, text, tool, toolInput, turnEnded, queuedCount: queuedCountTe, queuedSeqs };
         }
         case "queued_message": {
           const queuedCountQm = new Map(state.queuedCount);
@@ -203,6 +216,14 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
       toolInput.delete(action.threadId);
       return { ...state, text, tool, toolInput };
     }
+    case "mark_queued": {
+      const queuedSeqs = new Map(state.queuedSeqs);
+      const existing = queuedSeqs.get(action.threadId) ?? new Set<number>();
+      const next = new Set(existing);
+      next.add(action.seq);
+      queuedSeqs.set(action.threadId, next);
+      return { ...state, queuedSeqs };
+    }
   }
 }
 
@@ -225,11 +246,21 @@ function extractToolContextForBar(tool: string | null, input: string): string | 
 }
 
 function AppInner() {
-  interface CleanupConfirmationState {
+  type CleanupPhase = "loading" | "preview" | "executing" | "complete";
+
+  interface CleanupModalState {
     projectId: string;
-    candidates: CleanupConfirmationCandidate[];
-    cleanedCount: number;
-    skipped: CleanupPushedResponse["skipped"];
+    phase: CleanupPhase;
+    preview: {
+      willClean: CleanupPushedResponse["cleaned"];
+      needsReview: CleanupPushedResponse["needsConfirmation"];
+      skipped: CleanupPushedResponse["skipped"];
+    } | null;
+    result: {
+      cleanedCount: number;
+      skippedCount: number;
+      leftUntouched: CleanupPushedResponse["skipped"];
+    } | null;
   }
 
   const [projects, setProjects] = useState<ProjectWithStatus[]>([]);
@@ -244,14 +275,16 @@ function AppInner() {
   const [contextOpen, setContextOpen] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [cleanupConfirmation, setCleanupConfirmation] = useState<CleanupConfirmationState | null>(null);
-  const [cleanupConfirming, setCleanupConfirming] = useState(false);
+  const [cleanupModal, setCleanupModal] = useState<CleanupModalState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mergingProjectId, setMergingProjectId] = useState<string | null>(null);
+  const [mergeConfirmProjectId, setMergeConfirmProjectId] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [lastTerminalMsg, setLastTerminalMsg] = useState<WSServerMessage | null>(null);
   const [latestTodos, setLatestTodos] = useState<Map<string, TodoItem[]>>(new Map());
+  const [defaultEffortLevel, setDefaultEffortLevel] = useState<EffortLevel | "">("");
+  const [defaultAgent, setDefaultAgent] = useState("");
   const [pushBannerDismissed, setPushBannerDismissed] = useState(
     () => localStorage.getItem("orchestra_push_dismissed") === "1",
   );
@@ -329,6 +362,11 @@ function AppInner() {
         next.set(msg.threadId, [...existing, msg]);
         return next;
       });
+      // Tag user messages as queued if they were sent while agent was running
+      if (msg.role === "user" && pendingQueuedCountRef.current > 0) {
+        pendingQueuedCountRef.current--;
+        dispatchStreaming({ type: "mark_queued", threadId: msg.threadId, seq: msg.seq });
+      }
       // Clear streaming state when a persisted message arrives
       if (msg.role === "assistant") {
         dispatchStreaming({ type: "clear_text", threadId: msg.threadId });
@@ -461,7 +499,7 @@ function AppInner() {
     api.listProjects().then(setProjects).catch(console.error);
     api.listThreads().then(setThreads).catch(console.error);
     api.listAgents().then(setAgents).catch(console.error);
-    api.getSettings().then(setAppSettings).catch(console.error);
+    api.getSettings().then((s) => { setAppSettings(s); setDefaultEffortLevel(s.defaultEffortLevel); setDefaultAgent(s.defaultAgent); }).catch(console.error);
   }, []);
 
   // Fetch commands scoped to active project; refetch when project changes.
@@ -554,6 +592,9 @@ function AppInner() {
     }
   };
 
+  // Track how many of the next incoming user messages should be marked as "queued"
+  const pendingQueuedCountRef = useRef(0);
+
   const handleSendMessage = async (content: string, attachments?: Attachment[], interrupt?: boolean) => {
     if (!activeThreadId) return;
     try {
@@ -562,6 +603,9 @@ function AppInner() {
       const thread = threads.find((t) => t.id === activeThreadId);
       if (!thread || thread.status !== "running") {
         turnStartRef.current = Date.now();
+      } else {
+        // Sending while running — flag next incoming user message as queued
+        pendingQueuedCountRef.current++;
       }
       send({ type: "send_message", threadId: activeThreadId, content, attachments, interrupt: interrupt ?? false });
     } catch (err) {
@@ -672,102 +716,105 @@ function AppInner() {
     }
   };
 
+  /** Remove cleaned thread IDs from local state */
+  const applyCleanedIds = (cleanedIds: Set<string>) => {
+    if (cleanedIds.size === 0) return;
+    setThreads((prev) => prev.filter((t) => !cleanedIds.has(t.id)));
+    if (activeThreadId && cleanedIds.has(activeThreadId)) {
+      setActiveThreadId(null);
+    }
+    setMessages((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const id of cleanedIds) {
+        if (next.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    api.listProjects().then(setProjects).catch(console.error);
+  };
+
   const handleCleanupPushed = async (projectId: string) => {
+    // Open modal immediately with loading spinner
+    setCleanupModal({ projectId, phase: "loading", preview: null, result: null });
+
     try {
       setError(null);
-      const result = await api.cleanupPushedThreads(projectId);
+      const dryResult = await api.cleanupPushedThreads(projectId, { dryRun: true });
 
-      const cleanedIds = new Set(result.cleaned.map((c) => c.id));
-      if (cleanedIds.size > 0) {
-        setThreads((prev) => prev.filter((t) => !cleanedIds.has(t.id)));
-        if (activeThreadId && cleanedIds.has(activeThreadId)) {
-          setActiveThreadId(null);
+      // Guard: if user dismissed the modal while the dry-run was in flight, don't reopen
+      setCleanupModal((prev) => {
+        if (!prev || prev.phase !== "loading") return prev;
+
+        // Nothing to do at all
+        if (dryResult.cleaned.length === 0 && dryResult.needsConfirmation.length === 0 && dryResult.skipped.length === 0) {
+          setError("No threads to clean up.");
+          return null;
         }
-        setMessages((prev) => {
-          let changed = false;
-          const next = new Map(prev);
-          for (const id of cleanedIds) {
-            if (next.has(id)) {
-              next.delete(id);
-              changed = true;
-            }
-          }
-          return changed ? next : prev;
-        });
-        api.listProjects().then(setProjects).catch(console.error);
-      }
 
-      if (result.needsConfirmation.length > 0) {
-        setCleanupConfirmation({
+        return {
           projectId,
-          candidates: result.needsConfirmation,
-          cleanedCount: result.cleaned.length,
-          skipped: result.skipped,
-        });
-        return;
-      }
-
-      alert(buildCleanupAlert({
-        cleanedCount: result.cleaned.length,
-        skipped: result.skipped,
-        needsConfirmation: result.needsConfirmation,
-      }));
+          phase: "preview",
+          preview: {
+            willClean: dryResult.cleaned,
+            needsReview: dryResult.needsConfirmation,
+            skipped: dryResult.skipped,
+          },
+          result: null,
+        };
+      });
     } catch (err) {
+      setCleanupModal((prev) => prev?.phase === "loading" ? null : prev);
       setError((err as Error).message);
     }
   };
 
-  const handleCleanupConfirmationClose = () => {
-    if (!cleanupConfirmation) return;
-    alert(buildCleanupAlert({
-      cleanedCount: cleanupConfirmation.cleanedCount,
-      skipped: cleanupConfirmation.skipped,
-      needsConfirmation: cleanupConfirmation.candidates,
-    }));
-    setCleanupConfirmation(null);
-  };
+  const handleCleanupConfirm = async (confirmedThreadIds: string[]) => {
+    if (!cleanupModal?.preview) return;
 
-  const handleCleanupConfirmationSubmit = async (confirmedThreadIds: string[]) => {
-    if (!cleanupConfirmation) return;
+    // Capture the preview's thread IDs so the server only processes what the user saw
+    const scopeToThreadIds = [
+      ...cleanupModal.preview.willClean.map((t) => t.id),
+      ...cleanupModal.preview.needsReview.map((t) => t.id),
+      ...cleanupModal.preview.skipped.map((t) => t.id),
+    ];
+
+    setCleanupModal((prev) => prev ? { ...prev, phase: "executing" } : null);
 
     try {
-      setCleanupConfirming(true);
       setError(null);
-      const result = await api.cleanupPushedThreads(cleanupConfirmation.projectId, {
+      const result = await api.cleanupPushedThreads(cleanupModal.projectId, {
         confirmedThreadIds,
+        scopeToThreadIds,
       });
 
       const cleanedIds = new Set(result.cleaned.map((c) => c.id));
-      if (cleanedIds.size > 0) {
-        setThreads((prev) => prev.filter((t) => !cleanedIds.has(t.id)));
-        if (activeThreadId && cleanedIds.has(activeThreadId)) {
-          setActiveThreadId(null);
-        }
-        setMessages((prev) => {
-          let changed = false;
-          const next = new Map(prev);
-          for (const id of cleanedIds) {
-            if (next.has(id)) {
-              next.delete(id);
-              changed = true;
-            }
-          }
-          return changed ? next : prev;
-        });
-        api.listProjects().then(setProjects).catch(console.error);
-      }
+      applyCleanedIds(cleanedIds);
 
-      alert(buildCleanupAlert({
-        cleanedCount: cleanupConfirmation.cleanedCount + result.cleaned.length,
-        skipped: [...cleanupConfirmation.skipped, ...result.skipped],
-        needsConfirmation: result.needsConfirmation,
-      }));
-      setCleanupConfirmation(null);
+      // Combine skipped + unconfirmed review items for "left untouched"
+      const leftUntouched = [...result.skipped, ...result.needsConfirmation];
+
+      setCleanupModal((prev) => prev ? {
+        ...prev,
+        phase: "complete",
+        result: {
+          cleanedCount: result.cleaned.length,
+          skippedCount: leftUntouched.length,
+          leftUntouched,
+        },
+      } : null);
     } catch (err) {
+      // Revert to preview so user can retry or cancel
+      setCleanupModal((prev) => prev ? { ...prev, phase: "preview" } : null);
       setError((err as Error).message);
-    } finally {
-      setCleanupConfirming(false);
     }
+  };
+
+  const handleCleanupClose = () => {
+    setCleanupModal(null);
   };
 
   const handleNewThreadFromSidebar = (projectId: string) => {
@@ -775,11 +822,18 @@ function AppInner() {
     setActiveThreadId(null); // Show empty state for this project
   };
 
-  const handleMergeAllPrs = async (projectId: string) => {
+  const handleMergeAllPrsClick = (projectId: string) => {
+    setMergeConfirmProjectId(projectId);
+  };
+
+  const handleMergeAllPrsConfirm = async () => {
+    const projectId = mergeConfirmProjectId;
+    if (!projectId) return;
     try {
       setError(null);
       setMergingProjectId(projectId);
       const thread = await api.mergeAllPrs(projectId, defaultDetectedAgent);
+      setMergeConfirmProjectId(null);
       setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
       setActiveThreadId(thread.id);
       clearUnread(thread.id);
@@ -788,6 +842,7 @@ function AppInner() {
       turnStartRef.current = Date.now();
       api.listProjects().then(setProjects).catch(console.error);
     } catch (err) {
+      setMergeConfirmProjectId(null);
       setError((err as Error).message);
     } finally {
       setMergingProjectId((current) => (current === projectId ? null : current));
@@ -852,9 +907,19 @@ function AppInner() {
           {activeThread?.worktree && (
             <button
               onClick={() => setContextOpen(!contextOpen)}
-              className="px-3 py-1.5 hover:bg-surface-3 rounded-lg text-sm text-content-2 hover:text-content-1"
+              className="p-1.5 hover:bg-surface-3 rounded-lg text-content-2 hover:text-content-1"
+              title="Diff / context"
             >
-              Context
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <line x1="12" y1="3" x2="12" y2="21" strokeOpacity="0.35" />
+                <line x1="6" y1="8" x2="10" y2="8" />
+                <line x1="6" y1="12" x2="9" y2="12" />
+                <line x1="6" y1="16" x2="10" y2="16" />
+                <line x1="14" y1="8" x2="18" y2="8" />
+                <line x1="14" y1="12" x2="17" y2="12" />
+                <line x1="14" y1="16" x2="18" y2="16" />
+              </svg>
             </button>
           )}
           <button
@@ -920,7 +985,7 @@ function AppInner() {
           onSelectProject={setActiveProjectId}
           onSelectThread={handleSelectThread}
           onNewThread={handleNewThreadFromSidebar}
-          onMergeAllPrs={handleMergeAllPrs}
+          onMergeAllPrs={handleMergeAllPrsClick}
           onArchiveThread={handleArchiveThread}
           onRemoveProject={handleRemoveProject}
           onCleanupPushed={handleCleanupPushed}
@@ -951,6 +1016,7 @@ function AppInner() {
                 streamingTool={activeStreamingTool}
                 streamingToolInput={activeStreamingToolInput}
                 turnEnded={activeTurnEnded}
+                queuedSeqs={activeThreadId ? streaming.queuedSeqs.get(activeThreadId) : undefined}
                 onSubmitAnswers={handleSendMessage}
                 onSaveTitle={handleSaveTitle}
               />
@@ -980,6 +1046,8 @@ function AppInner() {
                 settings={appSettings}
                 history={activeInputHistory}
                 pendingQuestion={pendingQuestion}
+                defaultEffortLevel={defaultEffortLevel}
+                defaultAgent={defaultAgent}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
@@ -1008,7 +1076,7 @@ function AppInner() {
                 outstandingPrCount={activeProjectOutstandingPrCount}
                 recentThreads={recentProjectThreads}
                 onSelectThread={handleSelectThread}
-                onMergeAllPrs={handleMergeAllPrs}
+                onMergeAllPrs={handleMergeAllPrsClick}
                 mergeAllLoading={mergingProjectId === activeProject.id}
               />
               <InputBar
@@ -1018,6 +1086,8 @@ function AppInner() {
                 activeProjectName={activeProject.name}
                 commands={commands}
                 settings={appSettings}
+                defaultEffortLevel={defaultEffortLevel}
+                defaultAgent={defaultAgent}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
@@ -1076,7 +1146,7 @@ function AppInner() {
                 setMobileTab("new");
               }}
               onArchiveThread={handleArchiveThread}
-              onMergeAllPrs={handleMergeAllPrs}
+              onMergeAllPrs={handleMergeAllPrsClick}
               mergingProjectId={mergingProjectId}
             />
           </div>
@@ -1091,6 +1161,8 @@ function AppInner() {
               commands={commands}
               activeProjectId={activeProjectId}
               settings={appSettings}
+              defaultEffortLevel={defaultEffortLevel}
+              defaultAgent={defaultAgent}
               onNewThread={(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments) => {
                 handleNewThread(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments);
                 setMobileTab("sessions");
@@ -1119,20 +1191,35 @@ function AppInner() {
         />
       )}
 
-      {cleanupConfirmation && (
+      {cleanupModal && (
         <CleanupConfirmationModal
-          candidates={cleanupConfirmation.candidates}
-          autoCleanedCount={cleanupConfirmation.cleanedCount}
-          skippedCount={cleanupConfirmation.skipped.length}
-          loading={cleanupConfirming}
-          onClose={handleCleanupConfirmationClose}
-          onConfirm={handleCleanupConfirmationSubmit}
+          phase={cleanupModal.phase}
+          preview={cleanupModal.preview}
+          result={cleanupModal.result}
+          onClose={handleCleanupClose}
+          onConfirm={handleCleanupConfirm}
         />
       )}
 
+      {mergeConfirmProjectId && (() => {
+        const proj = projects.find((p) => p.id === mergeConfirmProjectId);
+        if (!proj) return null;
+        const projThreads = threads.filter((t) => t.projectId === proj.id && !t.archivedAt);
+        const prCount = getEffectiveOutstandingPrCount(proj, projThreads);
+        return (
+          <MergeAllPrsConfirmationModal
+            projectName={proj.name}
+            prCount={prCount}
+            loading={mergingProjectId === mergeConfirmProjectId}
+            onClose={() => setMergeConfirmProjectId(null)}
+            onConfirm={handleMergeAllPrsConfirm}
+          />
+        );
+      })()}
+
       {/* Settings Panel */}
       {showSettings && (
-        <SettingsPanel onClose={() => setShowSettings(false)} agents={agents} />
+        <SettingsPanel onClose={() => setShowSettings(false)} agents={agents} onDefaultEffortChange={setDefaultEffortLevel} onDefaultAgentChange={setDefaultAgent} />
       )}
     </div>
   );

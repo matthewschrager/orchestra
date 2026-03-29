@@ -117,15 +117,23 @@ describe("wrapAsciiArt", () => {
     expect(wrapAsciiArt(input)).toBe(input);
   });
 
-  test("does not wrap box-drawing inside list items", () => {
+  test("wraps box-drawing inside list items with indented fences", () => {
     const input = [
       "- item",
       "  ┌─┐",
       "  └─┘",
       "- next",
     ].join("\n");
-    // Lines after a list item (before a blank line) must not be wrapped
-    expect(wrapAsciiArt(input)).toBe(input);
+    expect(wrapAsciiArt(input)).toBe(
+      [
+        "- item",
+        "  ```text",
+        "  ┌─┐",
+        "  └─┘",
+        "  ```",
+        "- next",
+      ].join("\n"),
+    );
   });
 
   test("wraps art after blank line ends list context", () => {
@@ -378,14 +386,142 @@ describe("wrapAsciiArt", () => {
     expect(wrapAsciiArt(input)).toBe(input);
   });
 
-  test("does not wrap ASCII pipe rows inside list context", () => {
+  test("wraps ASCII pipe rows inside list context with indented fences", () => {
     const input = [
       "- item",
       "  | col1 | col2 |",
       "  | a | b |",
       "- next",
     ].join("\n");
-    expect(wrapAsciiArt(input)).toBe(input);
+    expect(wrapAsciiArt(input)).toBe(
+      [
+        "- item",
+        "  ```text",
+        "  | col1 | col2 |",
+        "  | a | b |",
+        "  ```",
+        "- next",
+      ].join("\n"),
+    );
+  });
+
+  test("wraps Claude-style diagrams inside numbered list items", () => {
+    const input = [
+      "1. Simple flowchart:",
+      "   ┌───────┐   ┌───────┐",
+      "   │ Input │──▶│ Agent │",
+      "   └───────┘   └───────┘",
+      "2. Next section:",
+      "   Done.",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(
+      [
+        "1. Simple flowchart:",
+        "   ```text",
+        "   ┌───────┐   ┌───────┐",
+        "   │ Input │──▶│ Agent │",
+        "   └───────┘   └───────┘",
+        "   ```",
+        "2. Next section:",
+        "   Done.",
+      ].join("\n"),
+    );
+  });
+
+  test("keeps connector-only rows inside the same Unicode art block", () => {
+    const input = [
+      "Simple flowchart:",
+      "┌─────────┐   ┌─────────┐   ┌─────────┐",
+      "│ Input   │──▶│ Process │──▶│ Output  │",
+      "└─────────┘   └─────────┘   └─────────┘",
+      "      │",
+      "      ▼",
+      "  ┌─────────┐",
+      "  │ Error   │",
+      "  │ Handler │",
+      "  └─────────┘",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(
+      [
+        "Simple flowchart:",
+        "```text",
+        "┌─────────┐   ┌─────────┐   ┌─────────┐",
+        "│ Input   │──▶│ Process │──▶│ Output  │",
+        "└─────────┘   └─────────┘   └─────────┘",
+        "      │",
+        "      ▼",
+        "  ┌─────────┐",
+        "  │ Error   │",
+        "  │ Handler │",
+        "  └─────────┘",
+        "```",
+      ].join("\n"),
+    );
+  });
+
+  test("continues a block through single-glyph connector rows with labels", () => {
+    const input = [
+      "┌────────────┐",
+      "│ Server     │",
+      "└─────┬──────┘",
+      "      │ stdin/stdout",
+      "      ▼",
+      "┌────────────┐",
+      "│ Claude SDK │",
+      "└────────────┘",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(
+      [
+        "```text",
+        "┌────────────┐",
+        "│ Server     │",
+        "└─────┬──────┘",
+        "      │ stdin/stdout",
+        "      ▼",
+        "┌────────────┐",
+        "│ Claude SDK │",
+        "└────────────┘",
+        "```",
+      ].join("\n"),
+    );
+  });
+
+  test("wraps diagram lead-in rows when aligned headers precede connectors", () => {
+    const input = [
+      "User        Server        Agent",
+      "│           │             │",
+      "│──── POST ────▶│         │",
+      "│           │◀── stream ──│",
+      "│◀── done ──│             │",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(
+      [
+        "```text",
+        "User        Server        Agent",
+        "│           │             │",
+        "│──── POST ────▶│         │",
+        "│           │◀── stream ──│",
+        "│◀── done ──│             │",
+        "```",
+      ].join("\n"),
+    );
+  });
+
+  test("wraps standalone arrow samplers as text blocks", () => {
+    const input = [
+      "Arrows:",
+      "← → ↑ ↓ ↖ ↗ ↙ ↘ ↔ ↕ ◀ ▶ ▲ ▼ ◁ ▷ △ ▽ ◇ ◆ ⟵ ⟶ ⟷ ⇐ ⇒ ⇔ ⇑ ⇓ ⇕",
+      "Done.",
+    ].join("\n");
+    expect(wrapAsciiArt(input)).toBe(
+      [
+        "Arrows:",
+        "```text",
+        "← → ↑ ↓ ↖ ↗ ↙ ↘ ↔ ↕ ◀ ▶ ▲ ▼ ◁ ▷ △ ▽ ◇ ◆ ⟵ ⟶ ⟷ ⇐ ⇒ ⇔ ⇑ ⇓ ⇕",
+        "```",
+        "Done.",
+      ].join("\n"),
+    );
   });
 
   // --- Adversarial review findings ---

@@ -4,6 +4,7 @@ import { SlashCommandInput } from "./SlashCommandInput";
 import { WorktreePathInput } from "./WorktreePathInput";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { api } from "../hooks/useApi";
+import { useFileAutocomplete } from "../hooks/useFileAutocomplete";
 
 interface Props {
   agents: Array<{ name: string; detected: boolean; models?: ModelOption[] }>;
@@ -14,6 +15,8 @@ interface Props {
   settings?: Settings | null;
   history?: string[];
   pendingQuestion?: boolean | null;
+  defaultEffortLevel?: EffortLevel | "";
+  defaultAgent?: string;
   onSend: (content: string, attachments?: Attachment[], interrupt?: boolean) => void;
   onNewThread: (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => void;
   onStop: () => void;
@@ -27,11 +30,12 @@ function generateDefaultWorktreeName(projectName: string | null): string {
   return `orchestra/${base}-${suffix}`;
 }
 
-export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, settings, history, pendingQuestion, onSend, onNewThread, onStop }: Props) {
+export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, settings, history, pendingQuestion, defaultEffortLevel, defaultAgent, onSend, onNewThread, onStop }: Props) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
-  const [agent, setAgent] = useState(agents.find((a) => a.detected)?.name ?? "claude");
-  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">("");
+  const resolvedDefaultAgent = (defaultAgent && agents.some((a) => a.detected && a.name === defaultAgent)) ? defaultAgent : (agents.find((a) => a.detected)?.name ?? "claude");
+  const [agent, setAgent] = useState(resolvedDefaultAgent);
+  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">(defaultEffortLevel ?? "");
   const [model, setModel] = useState<string>("");
   const [isolate, setIsolate] = useState(true);
   const [worktreeName, setWorktreeName] = useState(() => generateDefaultWorktreeName(activeProjectName));
@@ -41,6 +45,8 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const dragCounterRef = useRef(0);
+  const userChangedEffortRef = useRef(false);
+  const userChangedAgentRef = useRef(false);
 
   const isRunning = thread?.status === "running";
   const effortOptions = getEffortOptions(agent);
@@ -54,11 +60,28 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
     ? `Default (${agentModels.find((m) => m.value === settingsDefault)?.label ?? settingsDefault})`
     : "Default";
 
+  const { fileSuggestions, fileLoading, handleFileQueryChange } = useFileAutocomplete(activeProjectId);
+
+  // Sync default agent from settings (only if user hasn't manually changed it)
+  useEffect(() => {
+    if (!userChangedAgentRef.current && defaultAgent) {
+      const valid = agents.some((a) => a.detected && a.name === defaultAgent);
+      if (valid) setAgent(defaultAgent);
+    }
+  }, [defaultAgent, agents]);
+
+  // Sync default effort level from settings (only if user hasn't manually changed it)
+  useEffect(() => {
+    if (!userChangedEffortRef.current && defaultEffortLevel !== undefined) {
+      setEffortLevel(defaultEffortLevel);
+    }
+  }, [defaultEffortLevel]);
+
   useEffect(() => {
     if (effortLevel && !effortOptions.some((option) => option.value === effortLevel)) {
-      setEffortLevel("");
+      setEffortLevel(defaultEffortLevel && effortOptions.some((o) => o.value === defaultEffortLevel) ? defaultEffortLevel : "");
     }
-  }, [effortLevel, effortOptions]);
+  }, [effortLevel, effortOptions, defaultEffortLevel]);
 
   // Reset model when agent changes (if current model not in new agent's list)
   useEffect(() => {
@@ -161,7 +184,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
     [uploadFiles],
   );
 
-  const handleSubmit = () => {
+  const handleSubmit = (interrupt?: boolean) => {
     if (uploading) return;
     const text = input.trim();
     const hasAttachments = attachments.length > 0;
@@ -195,11 +218,15 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
     if (mode === "new" || !thread) {
       onNewThread(agent, effortLevel || null, model || null, text || "(see attached files)", isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, currentAttachments);
     } else {
-      onSend(text || "(see attached files)", currentAttachments);
+      onSend(text || "(see attached files)", currentAttachments, interrupt);
     }
     setInput("");
     setAttachments([]);
     setMode("reply");
+    userChangedEffortRef.current = false;
+    userChangedAgentRef.current = false;
+    setEffortLevel(defaultEffortLevel ?? "");
+    setAgent(resolvedDefaultAgent);
     if (isolate) setWorktreeName(generateDefaultWorktreeName(activeProjectName));
   };
 
@@ -285,14 +312,19 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
                 ? "Type your answer..."
                 : "Send a message..."
           }
+          fileSuggestions={fileSuggestions}
+          fileLoading={fileLoading}
+          onFileQueryChange={handleFileQueryChange}
         />
 
         {/* Send button — always visible */}
         <button
-          onClick={handleSubmit}
+          onClick={() => handleSubmit()}
           disabled={uploading || (!input.trim() && attachments.length === 0)}
           className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium shrink-0 border border-transparent"
-          title="Enter to send, Shift+Enter for newline"
+          title={isRunning
+            ? "Enter to queue message · ⌘Enter to interrupt agent"
+            : "Enter to send, Shift+Enter for newline"}
         >
           {mode === "new" && thread ? "New" : "Send"}
         </button>
@@ -330,7 +362,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
             <span className="text-content-3">Agent</span>
             <select
               value={agent}
-              onChange={(e) => setAgent(e.target.value)}
+              onChange={(e) => { userChangedAgentRef.current = true; setAgent(e.target.value); }}
               className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
               aria-label="Agent"
             >
@@ -365,7 +397,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
             <span className="text-content-3">Effort</span>
             <select
               value={effortLevel}
-              onChange={(e) => setEffortLevel(e.target.value as EffortLevel | "")}
+              onChange={(e) => { userChangedEffortRef.current = true; setEffortLevel(e.target.value as EffortLevel | ""); }}
               className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
               aria-label="Effort level"
             >

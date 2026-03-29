@@ -75,6 +75,17 @@ const MIGRATIONS = [
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  `CREATE TABLE IF NOT EXISTS message_queue (
+    id           TEXT PRIMARY KEY,
+    thread_id    TEXT NOT NULL REFERENCES threads(id),
+    content      TEXT NOT NULL,
+    attachments  TEXT,
+    interrupt    INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    delivered_at TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_queue_pending
+    ON message_queue(thread_id, delivered_at) WHERE delivered_at IS NULL`,
 ];
 
 // Column migration — safe to run multiple times
@@ -271,6 +282,7 @@ const PROJECT_COLUMNS = new Set(["name"]);
 const THREAD_COLUMNS = new Set([
   "title", "status", "worktree", "branch", "pid",
   "error_message", "pr_url", "archived_at", "session_id", "effort_level", "model",
+  "pr_status", "pr_number", "pr_status_checked_at", "last_interacted_at",
 ]);
 
 export function updateProject(db: DB, id: string, fields: Partial<ProjectRow>): void {
@@ -418,7 +430,7 @@ export function updateThreadSilent(db: DB, id: string, fields: Partial<ThreadRow
   const sets: string[] = [];
   const values: (string | number | null)[] = [];
   for (const [key, val] of Object.entries(fields)) {
-    if (key === "id") continue;
+    if (key === "id" || !THREAD_COLUMNS.has(key)) continue;
     sets.push(`${key} = ?`);
     values.push(val as string | number | null);
   }
@@ -538,6 +550,69 @@ export function attentionRowToApi(row: AttentionRow): import("shared").Attention
     expiresAt: row.expires_at,
     createdAt: row.created_at,
   };
+}
+
+// ── Message queue helpers ────────────────────────────────
+
+export interface QueueRow {
+  id: string;
+  thread_id: string;
+  content: string;
+  attachments: string | null;
+  interrupt: number;
+  created_at: string;
+  delivered_at: string | null;
+}
+
+/** Enqueue a message for later delivery to the agent. */
+export function enqueueMessage(
+  db: DB,
+  threadId: string,
+  content: string,
+  attachments?: string | null,
+  interrupt?: boolean,
+): QueueRow {
+  const id = nanoid(16);
+  db.query(
+    `INSERT INTO message_queue (id, thread_id, content, attachments, interrupt)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(id, threadId, content, attachments ?? null, interrupt ? 1 : 0);
+  return db.query("SELECT * FROM message_queue WHERE id = ?").get(id) as QueueRow;
+}
+
+/** Atomically claim and return the next pending message for a thread.
+ *  Uses UPDATE...RETURNING to prevent duplicate drains from concurrent paths. */
+export function dequeueNextMessage(db: DB, threadId: string): QueueRow | null {
+  // Bun's SQLite doesn't support RETURNING in .get(), so use two-step atomic approach:
+  // 1. Find the next pending row
+  // 2. Claim it with a WHERE delivered_at IS NULL guard (prevents races)
+  const next = db.query(
+    "SELECT id FROM message_queue WHERE thread_id = ? AND delivered_at IS NULL ORDER BY created_at ASC LIMIT 1",
+  ).get(threadId) as { id: string } | null;
+  if (!next) return null;
+
+  const result = db.query(
+    "UPDATE message_queue SET delivered_at = datetime('now') WHERE id = ? AND delivered_at IS NULL",
+  ).run(next.id);
+  if (result.changes === 0) return null; // Another path claimed it
+
+  return db.query("SELECT * FROM message_queue WHERE id = ?").get(next.id) as QueueRow;
+}
+
+/** Count pending (undelivered) messages in the queue for a thread. */
+export function countPendingQueue(db: DB, threadId: string): number {
+  const row = db.query(
+    "SELECT COUNT(*) as cnt FROM message_queue WHERE thread_id = ? AND delivered_at IS NULL",
+  ).get(threadId) as { cnt: number };
+  return row.cnt;
+}
+
+/** Remove delivered queue entries older than 1 hour (housekeeping). */
+export function cleanDeliveredQueue(db: DB): number {
+  const result = db.query(
+    "DELETE FROM message_queue WHERE delivered_at IS NOT NULL AND delivered_at < datetime('now', '-1 hour')",
+  ).run();
+  return result.changes;
 }
 
 // ── Row types (DB columns use snake_case) ───────────────

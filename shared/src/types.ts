@@ -240,6 +240,10 @@ export interface Settings {
   defaultModelClaude: string;
   /** Default model for Codex agent (empty string = SDK default) */
   defaultModelCodex: string;
+  /** Default effort level for new threads — applied when supported by the selected agent */
+  defaultEffortLevel: EffortLevel | "";
+  /** Default agent for new threads — must be a detected agent name, or empty for auto-detect */
+  defaultAgent: string;
 }
 
 // ── Tailscale Detection ─────────────────────────────────

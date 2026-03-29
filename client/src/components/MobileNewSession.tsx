@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getEffortOptions, type Attachment, type EffortLevel, type ModelOption, type ProjectWithStatus, type Settings, type SlashCommand } from "shared";
 import { api } from "../hooks/useApi";
+import { useFileAutocomplete } from "../hooks/useFileAutocomplete";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { SlashCommandInput } from "./SlashCommandInput";
 import { WorktreePathInput } from "./WorktreePathInput";
@@ -13,6 +14,8 @@ interface MobileNewSessionProps {
   commands: SlashCommand[];
   activeProjectId: string | null;
   settings?: Settings | null;
+  defaultEffortLevel?: EffortLevel | "";
+  defaultAgent?: string;
   onNewThread: (
     agent: string,
     effortLevel: EffortLevel | null,
@@ -31,13 +34,15 @@ export function MobileNewSession({
   commands,
   activeProjectId,
   settings,
+  defaultEffortLevel,
+  defaultAgent,
   onNewThread,
 }: MobileNewSessionProps) {
   const detectedAgents = agents.filter((agent) => agent.detected);
-  const defaultAgent = detectedAgents[0]?.name ?? "claude";
+  const resolvedDefaultAgent = (defaultAgent && detectedAgents.some((a) => a.name === defaultAgent)) ? defaultAgent : (detectedAgents[0]?.name ?? "claude");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(activeProjectId);
-  const [selectedAgent, setSelectedAgent] = useState(defaultAgent);
-  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">("");
+  const [selectedAgent, setSelectedAgent] = useState(resolvedDefaultAgent);
+  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">(defaultEffortLevel ?? "");
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [prompt, setPrompt] = useState("");
   const [isolate, setIsolate] = useState(true);
@@ -57,12 +62,13 @@ export function MobileNewSession({
   const defaultModelLabel = settingsDefault
     ? `Default (${agentModels.find((m) => m.value === settingsDefault)?.label ?? settingsDefault})`
     : "Default";
+  const { fileSuggestions, fileLoading, handleFileQueryChange } = useFileAutocomplete(selectedProjectId);
 
   useEffect(() => {
     if (effortLevel && !effortOptions.some((option) => option.value === effortLevel)) {
-      setEffortLevel("");
+      setEffortLevel(defaultEffortLevel && effortOptions.some((o) => o.value === defaultEffortLevel) ? defaultEffortLevel : "");
     }
-  }, [effortLevel, effortOptions]);
+  }, [effortLevel, effortOptions, defaultEffortLevel]);
 
   useEffect(() => {
     if (selectedModel && !agentModels.some((m) => m.value === selectedModel)) {
@@ -245,6 +251,9 @@ export function MobileNewSession({
                 commands={commands}
                 placeholder={`What should the agent do in ${selectedProject.name}?`}
                 rows={4}
+                fileSuggestions={fileSuggestions}
+                fileLoading={fileLoading}
+                onFileQueryChange={handleFileQueryChange}
               />
             </div>
           </div>
