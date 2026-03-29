@@ -124,6 +124,7 @@ describe("merge-all PR UI affordances", () => {
         unreadThreadIds={new Set<string>()}
         onSelectThread={() => {}}
         onNewThread={() => {}}
+        onArchiveThread={() => {}}
         onMergeAllPrs={() => {}}
         mergingProjectId={null}
       />,

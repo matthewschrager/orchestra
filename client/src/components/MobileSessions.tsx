@@ -1,5 +1,7 @@
+import { useState } from "react";
 import type { ProjectWithStatus, Thread } from "shared";
 import { getEffectiveOutstandingPrCount } from "../lib/prCounts";
+import { ArchiveConfirmationModal } from "./ArchiveConfirmationModal";
 import { MergeAllPrsButton } from "./MergeAllPrsButton";
 import { PrBadge } from "./PrBadge";
 
@@ -41,6 +43,8 @@ export function MobileSessions({
   onMergeAllPrs,
   mergingProjectId,
 }: MobileSessionsProps) {
+  const [archiveTarget, setArchiveTarget] = useState<Thread | null>(null);
+
   if (projects.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center px-6">
@@ -178,16 +182,7 @@ export function MobileSessions({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (thread.worktree) {
-                          const cleanup = confirm(
-                            `This thread has a worktree. Also delete the worktree and branch?\n\n` +
-                            `OK = archive thread + delete worktree\n` +
-                            `Cancel = archive thread only (worktree kept)`,
-                          );
-                          onArchiveThread(thread.id, { cleanupWorktree: cleanup });
-                        } else {
-                          onArchiveThread(thread.id);
-                        }
+                        setArchiveTarget(thread);
                       }}
                       className="p-2 text-content-3/40 hover:text-red-400 active:text-red-400 rounded-lg"
                       aria-label="Archive thread"
@@ -207,6 +202,18 @@ export function MobileSessions({
           </div>
         );
       })}
+      {archiveTarget && (
+        <ArchiveConfirmationModal
+          threadTitle={archiveTarget.title}
+          hasWorktree={!!archiveTarget.worktree}
+          branchName={archiveTarget.branch}
+          onConfirm={(cleanup) => {
+            onArchiveThread(archiveTarget.id, { cleanupWorktree: cleanup });
+            setArchiveTarget(null);
+          }}
+          onCancel={() => setArchiveTarget(null)}
+        />
+      )}
     </div>
   );
 }
