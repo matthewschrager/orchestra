@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.43.2] - 2026-03-29
+
+### Changed
+
+- **Expanded Remote Access documentation** — rewrote the README Remote Access section with a comparison table of all methods, detailed Tailscale setup guide (4-step flow, guided UI, tagged device fallback, troubleshooting), and dedicated subsections for Cloudflare Tunnel (QR code workflow), LAN, and SSH tunnel
+
 ## [0.1.43.1] - 2026-03-29
 
 ### Changed
