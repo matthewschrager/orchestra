@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.36.2] - 2026-03-28
+
+### Changed
+
+- **Archive thread uses a proper confirmation modal** — replaced browser-native `confirm()` dialogs with a custom `ArchiveConfirmationModal` component on both desktop and mobile; threads without worktrees get a simple Cancel/Archive confirmation, while worktree threads show two option cards ("Archive & delete worktree" vs "Archive only") with branch name badge
+
+### Fixed
+
+- **Archive modal accessibility and double-click guard** — added `role="dialog"`, `aria-modal`, focus trap (Tab stays within the dialog), and `disabled` state on confirm buttons to prevent duplicate archive requests
+
 ## [0.1.36.1] - 2026-03-28
 
 ### Changed
