@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.43.1] - 2026-03-29
+
+### Changed
+
+- **Updated README screenshots** — replaced all 4 documentation screenshots (desktop-thread, desktop-context, mobile-sessions, mobile-chat) with current UI captures reflecting the latest design changes
+
 ## [0.1.43.0] - 2026-03-29
 
 ### Changed
