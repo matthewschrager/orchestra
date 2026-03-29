@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { getEffortOptions, getPermissionModeOptions, getDefaultPermissionMode, type Attachment, type EffortLevel, type ModelOption, type PermissionMode, type Thread, type SlashCommand, type Settings } from "shared";
+import { getEffortOptions, getPermissionModeOptions, getPermissionModeLabel, getDefaultPermissionMode, type Attachment, type EffortLevel, type EffortOption, type ModelOption, type PermissionMode, type PermissionOption, type Thread, type SlashCommand, type Settings } from "shared";
 import { SlashCommandInput } from "./SlashCommandInput";
 import { WorktreePathInput } from "./WorktreePathInput";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -49,6 +49,7 @@ function usePendingField<T extends string>(
 export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, settings, history, pendingQuestion, defaultEffortLevel, defaultAgent, onSend, onNewThread, onStop }: Props) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
+  const [mobileConfigExpanded, setMobileConfigExpanded] = useState(false);
 
   // ── New-thread local state ──
   const resolvedDefaultAgent = (defaultAgent && agents.some((a) => a.detected && a.name === defaultAgent)) ? defaultAgent : (agents.find((a) => a.detected)?.name ?? "claude");
@@ -358,8 +359,47 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
         />
       )}
 
-      {/* ── Config row — always visible, left-aligned with textarea ── */}
-      <div className={`flex items-center gap-1 mb-2 flex-wrap ${thread && mode === "reply" ? "ml-20" : "ml-10"}`}>
+      {/* ── Mobile config: collapsed summary → expandable panel ── */}
+      <MobileConfigPanel
+        expanded={mobileConfigExpanded}
+        onToggle={() => setMobileConfigExpanded((v) => !v)}
+        isNewThread={isNewThread}
+        thread={thread}
+        activeAgent={activeAgent}
+        agents={agents}
+        newAgent={newAgent}
+        setNewAgent={(v) => { userChangedAgentRef.current = true; setNewAgent(v); }}
+        agentModels={agentModels}
+        displayModel={displayModel}
+        defaultLabel={defaultLabel}
+        onModelChange={(v) => isNewThread ? setNewModel(v) : handleActiveModelChange(v)}
+        modelFeedback={modelFeedback}
+        displayPermission={displayPermission}
+        permissionOptions={permissionOptions}
+        onPermissionChange={(v) => isNewThread
+          ? setNewPermissionMode(v as PermissionMode | "")
+          : handleActivePermissionChange(v)}
+        permissionFeedback={permissionFeedback}
+        displayEffort={displayEffort}
+        effortOptions={effortOptions}
+        onEffortChange={(v) => isNewThread
+          ? (() => { userChangedEffortRef.current = true; setNewEffortLevel(v as EffortLevel | ""); })()
+          : handleActiveEffortChange(v)}
+        effortFeedback={effortFeedback}
+        isolate={isolate}
+        onIsolateChange={(checked) => {
+          setIsolate(checked);
+          if (checked) setWorktreeName(generateDefaultWorktreeName(activeProjectName));
+          setNewPermissionMode(getDefaultPermissionMode(newAgent, checked));
+        }}
+        worktreeName={worktreeName}
+        setWorktreeName={setWorktreeName}
+        mode={mode}
+        setMode={setMode}
+      />
+
+      {/* ── Desktop config row — hidden on mobile ── */}
+      <div className="hidden md:flex items-center gap-1 mb-2 flex-wrap ml-10">
         {/* Back to reply (only in new-thread mode when thread exists) */}
         {isNewThread && thread && (
           <button
@@ -487,19 +527,6 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
 
       {/* ── Input area ── */}
       <div className="flex gap-2 items-end">
-        {/* New thread button */}
-        {thread && mode === "reply" && (
-          <button
-            onClick={() => setMode("new")}
-            className="p-2 hover:bg-surface-3 rounded-lg text-content-3 hover:text-accent shrink-0 self-end"
-            title="New thread"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M8 3v10M3 8h10" />
-            </svg>
-          </button>
-        )}
-
         {/* Attach file button */}
         <button
           onClick={() => fileInputRef.current?.click()}
@@ -637,5 +664,227 @@ function IconGauge() {
       <path d="M8 14A6 6 0 1 1 8 2a6 6 0 0 1 0 12z" />
       <path d="M8 5v3l2 1" />
     </svg>
+  );
+}
+
+function IconChevron({ up }: { up?: boolean }) {
+  return (
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className={`transition-transform ${up ? "rotate-180" : ""}`}>
+      <path d="M2.5 3.75l2.5 2.5 2.5-2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// ── Mobile config: collapsed summary bar → expandable 2×2 grid ──
+
+interface MobileConfigPanelProps {
+  expanded: boolean;
+  onToggle: () => void;
+  isNewThread: boolean;
+  thread: Thread | null;
+  activeAgent: string;
+  agents: Array<{ name: string; detected: boolean; models?: ModelOption[] }>;
+  newAgent: string;
+  setNewAgent: (v: string) => void;
+  agentModels: ModelOption[];
+  displayModel: string;
+  defaultLabel: string;
+  onModelChange: (v: string) => void;
+  modelFeedback: FieldFeedback | null;
+  displayPermission: string;
+  permissionOptions: readonly PermissionOption[];
+  onPermissionChange: (v: string) => void;
+  permissionFeedback: FieldFeedback | null;
+  displayEffort: string;
+  effortOptions: readonly EffortOption[];
+  onEffortChange: (v: string) => void;
+  effortFeedback: FieldFeedback | null;
+  isolate: boolean;
+  onIsolateChange: (checked: boolean) => void;
+  worktreeName: string;
+  setWorktreeName: (v: string) => void;
+  mode: "reply" | "new";
+  setMode: (m: "reply" | "new") => void;
+}
+
+function MobileConfigPanel({
+  expanded, onToggle, isNewThread, thread, activeAgent, agents,
+  newAgent, setNewAgent, agentModels, displayModel, defaultLabel,
+  onModelChange, modelFeedback, displayPermission, permissionOptions,
+  onPermissionChange, permissionFeedback, displayEffort, effortOptions,
+  onEffortChange, effortFeedback, isolate, onIsolateChange,
+  worktreeName, setWorktreeName, mode, setMode,
+}: MobileConfigPanelProps) {
+  // Derive short labels for summary
+  const modelLabel = agentModels.find((m) => m.value === displayModel)?.label ?? "Default";
+  const permLabel = getPermissionModeLabel(displayPermission || null, activeAgent) ?? "Default";
+  // Shorten "Bypass (auto-approve all)" → "Bypass", "Accept Edits" → "Accept Edits"
+  const shortPermLabel = permLabel.replace(/\s*\(.*\)/, "");
+  const effortLabel = effortOptions.find((o) => o.value === displayEffort)?.label ?? "Default";
+
+  return (
+    <div className="md:hidden mb-2">
+      {/* Back to reply (only in new-thread mode when thread exists) */}
+      {isNewThread && thread && (
+        <button
+          onClick={() => setMode("reply")}
+          className="text-[11px] text-content-3 hover:text-content-2 mb-1.5 px-1"
+        >
+          &larr; Reply
+        </button>
+      )}
+
+      {/* Collapsed: full-width summary bar */}
+      {!expanded && (
+        <button
+          onClick={onToggle}
+          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-surface-2 border border-edge-1 hover:border-edge-2 transition-colors text-left"
+          aria-label="Expand thread config"
+        >
+          <div className="flex items-center gap-1.5 text-[11px] text-content-2 min-w-0 overflow-hidden">
+            <span className={`font-medium shrink-0 ${
+              activeAgent === "codex" ? "text-cyan-400" : "text-amber-400"
+            }`}>{activeAgent}</span>
+            <span className="text-content-3">·</span>
+            <span className="truncate">{modelLabel}</span>
+            <span className="text-content-3">·</span>
+            <span className="truncate">{shortPermLabel}</span>
+            <span className="text-content-3">·</span>
+            <span className="shrink-0">{effortLabel}</span>
+          </div>
+          <span className="text-content-3 shrink-0">
+            <IconChevron />
+          </span>
+        </button>
+      )}
+
+      {/* Expanded: labeled 2×2 grid */}
+      {expanded && (
+        <div className="rounded-lg bg-surface-2 border border-edge-1 overflow-hidden animate-[slideUp_150ms_ease-out]">
+          <div className="grid grid-cols-2 gap-2 p-3">
+            {/* Agent */}
+            <MobileConfigField label="Agent" icon={<IconAgent />} feedback={null}>
+              {isNewThread ? (
+                <select
+                  value={newAgent}
+                  onChange={(e) => setNewAgent(e.target.value)}
+                  className="mobile-config-select"
+                  aria-label="Agent"
+                >
+                  {agents.filter((a) => a.detected).map((a) => (
+                    <option key={a.name} value={a.name}>{a.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className={`text-xs font-medium px-2 py-1.5 rounded-md ${
+                  activeAgent === "codex"
+                    ? "bg-cyan-400/10 text-cyan-400"
+                    : "bg-amber-400/10 text-amber-400"
+                }`}>{activeAgent}</span>
+              )}
+            </MobileConfigField>
+
+            {/* Model */}
+            {agentModels.length > 0 ? (
+              <MobileConfigField label="Model" icon={<IconModel />} feedback={modelFeedback}>
+                <select
+                  value={displayModel}
+                  onChange={(e) => onModelChange(e.target.value)}
+                  className="mobile-config-select"
+                  aria-label="Model"
+                >
+                  <option value="">{defaultLabel}</option>
+                  {agentModels.map((m) => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </select>
+              </MobileConfigField>
+            ) : <div />}
+
+            {/* Permissions */}
+            <MobileConfigField label="Permissions" icon={<IconShield />} feedback={permissionFeedback}>
+              <select
+                value={displayPermission}
+                onChange={(e) => onPermissionChange(e.target.value)}
+                className="mobile-config-select"
+                aria-label="Permission mode"
+              >
+                {permissionOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </MobileConfigField>
+
+            {/* Effort */}
+            <MobileConfigField label="Effort" icon={<IconGauge />} feedback={effortFeedback}>
+              <select
+                value={displayEffort}
+                onChange={(e) => onEffortChange(e.target.value)}
+                className="mobile-config-select"
+                aria-label="Effort level"
+              >
+                <option value="">Default</option>
+                {effortOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </MobileConfigField>
+          </div>
+
+          {/* Isolate — new thread only */}
+          {isNewThread && (
+            <div className="px-3 pb-2.5 border-t border-edge-1 pt-2.5">
+              <label className="flex items-center gap-2 text-xs text-content-3 hover:text-content-2 cursor-pointer transition-colors">
+                <input
+                  type="checkbox"
+                  checked={isolate}
+                  onChange={(e) => onIsolateChange(e.target.checked)}
+                  className="rounded"
+                />
+                Worktree isolation
+              </label>
+              {isolate && (
+                <div className="mt-2">
+                  <WorktreePathInput value={worktreeName} onChange={setWorktreeName} compact />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Collapse button */}
+          <button
+            onClick={onToggle}
+            className="w-full flex items-center justify-center gap-1 py-1.5 text-[11px] text-content-3 hover:text-content-2 border-t border-edge-1 transition-colors"
+          >
+            Collapse
+            <IconChevron up />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MobileConfigField({ label, icon, feedback, children }: {
+  label: string;
+  icon: React.ReactNode;
+  feedback: FieldFeedback | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1">
+        <span className="text-content-3">{icon}</span>
+        <span className="text-[10px] font-medium text-content-3 uppercase tracking-wide">{label}</span>
+        {feedback && (
+          <span className={`text-[9px] font-medium animate-[fade-in_150ms_ease-out] ${
+            feedback.type === "success" ? "text-emerald-400" : "text-red-400"
+          }`}>
+            {feedback.message}
+          </span>
+        )}
+      </div>
+      {children}
+    </div>
   );
 }
