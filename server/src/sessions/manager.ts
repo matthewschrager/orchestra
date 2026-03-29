@@ -223,17 +223,27 @@ export class SessionManager {
       throw new Error("Cannot change model while agent is mid-turn");
     }
 
+    if (DEBUG) console.log(`[session] changeModel thread=${threadId} model=${model} hasActive=${!!active} persistent=${active?.persistent} state=${active?.state}`);
+
     // Update DB
     updateThread(this.db, threadId, { model });
-    this.notifyThread(threadId);
 
-    // For persistent Claude sessions: call setModel() immediately
+    // For persistent Claude sessions: call setModel() immediately on the live subprocess
     if (active?.persistent && model) {
       const persistentSession = active.session as PersistentSession;
       if (persistentSession.setModel) {
+        if (DEBUG) console.log(`[session] calling setModel(${model}) on persistent session`);
         await persistentSession.setModel(model);
       }
+    } else {
+      // No active session — clear persisted session_id so the next sendMessage
+      // starts a fresh session with the new model instead of resuming the old one
+      // (resumed sessions ignore the model parameter and keep the original model)
+      updateThread(this.db, threadId, { session_id: null });
+      if (DEBUG) console.log(`[session] cleared session_id for ${threadId} — next message will start fresh with model=${model}`);
     }
+
+    this.notifyThread(threadId);
   }
 
   sendMessage(threadId: string, content: string, attachments?: Attachment[], opts?: { internal?: boolean; interrupt?: boolean }): void {
