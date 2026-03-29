@@ -277,6 +277,7 @@ const PROJECT_COLUMNS = new Set(["name"]);
 const THREAD_COLUMNS = new Set([
   "title", "status", "worktree", "branch", "pid",
   "error_message", "pr_url", "archived_at", "session_id", "effort_level",
+  "pr_status", "pr_number", "pr_status_checked_at", "last_interacted_at",
 ]);
 
 export function updateProject(db: DB, id: string, fields: Partial<ProjectRow>): void {
@@ -424,7 +425,7 @@ export function updateThreadSilent(db: DB, id: string, fields: Partial<ThreadRow
   const sets: string[] = [];
   const values: (string | number | null)[] = [];
   for (const [key, val] of Object.entries(fields)) {
-    if (key === "id") continue;
+    if (key === "id" || !THREAD_COLUMNS.has(key)) continue;
     sets.push(`${key} = ?`);
     values.push(val as string | number | null);
   }

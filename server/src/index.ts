@@ -173,6 +173,9 @@ app.use("*", createHostValidationMiddleware({
 }));
 
 // Fix 2A: Origin validation for state-changing requests (CSRF protection)
+// Also requires JSON Content-Type on state-changing requests as CSRF defense-in-depth
+// (HTML forms cannot send application/json, so this blocks form-based CSRF even when
+// the Origin header is absent).
 app.use("/api/*", async (c, next) => {
   if (["POST", "PATCH", "PUT", "DELETE"].includes(c.req.method)) {
     const origin = c.req.header("origin");
@@ -181,6 +184,12 @@ app.use("/api/*", async (c, next) => {
       if (!allowed.includes(origin)) {
         return c.json({ error: "Forbidden" }, 403);
       }
+    }
+    // CSRF defense-in-depth: require JSON content type on state-changing requests.
+    // Exempt multipart/form-data for file uploads (uploads still require auth).
+    const contentType = c.req.header("content-type") || "";
+    if (!contentType.includes("application/json") && !contentType.includes("multipart/form-data")) {
+      return c.json({ error: "Content-Type must be application/json" }, 415);
     }
   }
   await next();

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.37.0] - 2026-03-28
+
+### Fixed
+
+- **Security: file serve directory boundary** — `/api/files/serve` now restricts to `$HOME` with `realpathSync()` symlink resolution, matching the `filesystem.ts` pattern (previously served any absolute path with allowed extension)
+- **Security: SQL column allowlist** — `updateThreadSilent()` now uses the same `THREAD_COLUMNS` allowlist as `updateThread()`, closing a defense-in-depth gap; added `pr_status`, `pr_number`, `pr_status_checked_at`, `last_interacted_at` to the allowlist
+- **Security: CSRF defense-in-depth** — state-changing API requests now require `Content-Type: application/json` (or `multipart/form-data` for uploads), blocking HTML form-based CSRF even when the `Origin` header is absent
+
+### Changed
+
+- **Lockfile committed** — removed `bun.lock` from `.gitignore` so dependency versions are pinned across environments
+- **Pinned `@types/bun`** — changed from `"latest"` to `"^1"` to prevent unpinned resolution
+
 ## [0.1.36.3] - 2026-03-28
 
 ### Added

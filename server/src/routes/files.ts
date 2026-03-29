@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { extname } from "path";
+import { realpathSync } from "fs";
 import { homedir } from "os";
 
 /** Image extensions safe for inline rendering (SVG excluded — XSS risk via script tags) */
@@ -63,6 +64,14 @@ export function createFileRoutes() {
       return c.json({ error: "Path traversal not allowed" }, 400);
     }
 
+    // Restrict to home directory — fast prefix check on raw path before I/O.
+    // After file existence is confirmed, realpathSync resolves symlinks for the
+    // definitive boundary check (matching filesystem.ts pattern).
+    const HOME = homedir();
+    if (filePath !== HOME && !filePath.startsWith(HOME + "/")) {
+      return c.json({ error: "Path must be under home directory" }, 403);
+    }
+
     // Extension allowlist
     const ext = extname(filePath).toLowerCase();
     if (!ALLOWED_EXTENSIONS.has(ext)) {
@@ -73,6 +82,17 @@ export function createFileRoutes() {
     const file = Bun.file(filePath);
     if (!(await file.exists())) {
       return c.json({ error: "File not found" }, 404);
+    }
+
+    // Resolve symlinks and enforce $HOME boundary (catches symlink escapes)
+    let realPath: string;
+    try {
+      realPath = realpathSync(filePath);
+    } catch {
+      return c.json({ error: "Cannot resolve path" }, 400);
+    }
+    if (realPath !== HOME && !realPath.startsWith(HOME + "/")) {
+      return c.json({ error: "Path must be under home directory" }, 403);
     }
 
     const contentType = contentTypeFor(filePath, file.type);
