@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.44.0] - 2026-03-29
+
+### Fixed
+
+- **Terminal input batching** — accumulate keystrokes in a 16ms buffer (~1 animation frame) and flush as a single WebSocket message, preventing "rate limit exceeded" errors during fast typing in the integrated terminal
+- **Control character bypass** — Ctrl+C, Ctrl+D, escape sequences (arrow keys, etc.) now bypass the input buffer and send immediately, preserving time-sensitive signal delivery while still batching printable keystrokes
+
+### Added
+
+- **Terminal input buffer tests** — 14 new tests covering batching, timer lifecycle, cleanup, control character bypass, and edge cases (no terminal, disconnected terminal, empty input, ordering preservation)
+
 ## [0.1.43.2] - 2026-03-29
 
 ### Changed
