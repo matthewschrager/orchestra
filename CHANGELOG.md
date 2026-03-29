@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.43.0] - 2026-03-29
+
+### Changed
+
+- **Effort dropdown icon** — replaced the clock/gauge icon with a brain icon (Lucide brain paths), matching the industry-standard visual metaphor for AI thinking effort
+- **Auto-sizing config dropdowns** — desktop config chip selects now dynamically resize to fit the currently selected option text via canvas measurement in `useLayoutEffect`, eliminating wasted horizontal space when short options like "Low" or "Default" are selected
+- **Cursor-positioned slash command autocomplete** — the `/command` dropdown now appears at the cursor's horizontal position in the textarea rather than anchored to the left edge, using a hidden mirror-div technique to measure caret pixel offset with right-edge clamping
+
 ## [0.1.42.2] - 2026-03-29
 
 ### Fixed

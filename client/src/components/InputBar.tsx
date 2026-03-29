@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
 import { getEffortOptions, getPermissionModeOptions, getPermissionModeLabel, getDefaultPermissionMode, type Attachment, type EffortLevel, type EffortOption, type ModelOption, type PermissionMode, type PermissionOption, type Thread, type SlashCommand, type Settings } from "shared";
 import { SlashCommandInput } from "./SlashCommandInput";
 import { WorktreePathInput } from "./WorktreePathInput";
@@ -483,7 +483,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
         <ConfigDivider />
 
         {/* Effort dropdown */}
-        <ConfigChip icon={<IconGauge />} feedback={effortFeedback} title="Effort">
+        <ConfigChip icon={<IconBrain />} feedback={effortFeedback} title="Effort">
           <select
             value={displayEffort}
             onChange={(e) => isNewThread
@@ -605,8 +605,24 @@ function ConfigChip({ icon, feedback, title, children }: {
   title: string;
   children: React.ReactNode;
 }) {
+  const chipRef = useRef<HTMLSpanElement>(null);
+
+  // Auto-size contained <select> to fit its currently selected option text
+  useLayoutEffect(() => {
+    const select = chipRef.current?.querySelector("select");
+    if (!select) return;
+    const text = select.options[select.selectedIndex]?.text ?? "";
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.font = getComputedStyle(select).font;
+    const textWidth = Math.ceil(ctx.measureText(text).width);
+    select.style.width = `${textWidth + 18}px`; // 18px = left pad + chevron space
+  });
+
   return (
     <span
+      ref={chipRef}
       className="relative inline-flex items-center gap-0.5 rounded-md hover:bg-surface-2 transition-colors group"
       title={title}
     >
@@ -658,11 +674,17 @@ function IconShield() {
   );
 }
 
-function IconGauge() {
+function IconBrain() {
   return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M8 14A6 6 0 1 1 8 2a6 6 0 0 1 0 12z" />
-      <path d="M8 5v3l2 1" />
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 5v13" />
+      <path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5" />
+      <path d="M17.997 5.125a4 4 0 0 1 2.526 5.77" />
+      <path d="M6.003 5.125a4 4 0 0 0-2.526 5.77" />
+      <path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4" />
+      <path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517" />
+      <path d="M18 18a4 4 0 0 0 2-7.464" />
+      <path d="M6 18a4 4 0 0 1-2-7.464" />
     </svg>
   );
 }
@@ -816,7 +838,7 @@ function MobileConfigPanel({
             </MobileConfigField>
 
             {/* Effort */}
-            <MobileConfigField label="Effort" icon={<IconGauge />} feedback={effortFeedback}>
+            <MobileConfigField label="Effort" icon={<IconBrain />} feedback={effortFeedback}>
               <select
                 value={displayEffort}
                 onChange={(e) => onEffortChange(e.target.value)}
