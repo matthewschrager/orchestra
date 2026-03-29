@@ -359,12 +359,12 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
       )}
 
       {/* ── Config row — always visible ── */}
-      <div className="flex items-center gap-2 mb-2 flex-wrap">
+      <div className="flex items-center gap-1 mb-2 flex-wrap">
         {/* Back to reply (only in new-thread mode when thread exists) */}
         {isNewThread && thread && (
           <button
             onClick={() => setMode("reply")}
-            className="text-xs text-content-3 hover:text-content-2"
+            className="text-[11px] text-content-3 hover:text-content-2 mr-1"
           >
             &larr; Reply
           </button>
@@ -372,12 +372,11 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
 
         {/* Agent — dropdown for new thread, badge for active */}
         {isNewThread ? (
-          <label className="flex items-center gap-1.5 text-xs text-content-2">
-            <span className="text-content-3">Agent</span>
+          <ConfigChip icon={<IconAgent />} title="Agent">
             <select
               value={newAgent}
               onChange={(e) => { userChangedAgentRef.current = true; setNewAgent(e.target.value); }}
-              className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
+              className="config-select"
               aria-label="Agent"
             >
               {agents
@@ -388,24 +387,27 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
                   </option>
                 ))}
             </select>
-          </label>
+          </ConfigChip>
         ) : (
-          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+          <span className={`text-[11px] font-medium pl-1.5 pr-2 py-0.5 rounded-md inline-flex items-center gap-1 ${
             activeAgent === "codex"
               ? "bg-cyan-400/10 text-cyan-400"
               : "bg-amber-400/10 text-amber-400"
-          }`}>
+          }`} title="Agent (read-only)">
+            <IconAgent />
             {activeAgent}
           </span>
         )}
 
+        <ConfigDivider />
+
         {/* Model dropdown */}
         {agentModels.length > 0 && (
-          <ConfigField feedback={modelFeedback}>
+          <ConfigChip icon={<IconModel />} feedback={modelFeedback} title="Model">
             <select
               value={displayModel}
               onChange={(e) => isNewThread ? setNewModel(e.target.value) : handleActiveModelChange(e.target.value)}
-              className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
+              className="config-select"
               aria-label="Model"
             >
               <option value="">{defaultLabel}</option>
@@ -415,17 +417,19 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
                 </option>
               ))}
             </select>
-          </ConfigField>
+          </ConfigChip>
         )}
 
+        <ConfigDivider />
+
         {/* Permissions dropdown */}
-        <ConfigField feedback={permissionFeedback}>
+        <ConfigChip icon={<IconShield />} feedback={permissionFeedback} title="Permissions">
           <select
             value={displayPermission}
             onChange={(e) => isNewThread
               ? setNewPermissionMode(e.target.value as PermissionMode | "")
               : handleActivePermissionChange(e.target.value)}
-            className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
+            className="config-select"
             aria-label="Permission mode"
           >
             {permissionOptions.map((option) => (
@@ -434,16 +438,18 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
               </option>
             ))}
           </select>
-        </ConfigField>
+        </ConfigChip>
+
+        <ConfigDivider />
 
         {/* Effort dropdown */}
-        <ConfigField feedback={effortFeedback}>
+        <ConfigChip icon={<IconGauge />} feedback={effortFeedback} title="Effort">
           <select
             value={displayEffort}
             onChange={(e) => isNewThread
               ? (() => { userChangedEffortRef.current = true; setNewEffortLevel(e.target.value as EffortLevel | ""); })()
               : handleActiveEffortChange(e.target.value)}
-            className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
+            className="config-select"
             aria-label="Effort level"
           >
             <option value="">Default</option>
@@ -453,12 +459,13 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
               </option>
             ))}
           </select>
-        </ConfigField>
+        </ConfigChip>
 
         {/* Isolate checkbox — new-thread only */}
         {isNewThread && (
           <>
-            <label className="flex items-center gap-1.5 text-xs text-content-2 cursor-pointer">
+            <ConfigDivider />
+            <label className="flex items-center gap-1.5 text-[11px] text-content-3 hover:text-content-2 cursor-pointer transition-colors px-1">
               <input
                 type="checkbox"
                 checked={isolate}
@@ -469,7 +476,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
                 }}
                 className="rounded"
               />
-              Isolate to worktree
+              Worktree
             </label>
             {isolate && (
               <WorktreePathInput value={worktreeName} onChange={setWorktreeName} compact />
@@ -563,19 +570,72 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
   );
 }
 
-// ── Config field wrapper with inline feedback ──
+// ── Config chip: icon + select + feedback indicator ──
 
-function ConfigField({ feedback, children }: { feedback: FieldFeedback | null; children: React.ReactNode }) {
+function ConfigChip({ icon, feedback, title, children }: {
+  icon: React.ReactNode;
+  feedback?: FieldFeedback | null;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <span className="relative inline-flex items-center gap-1.5 text-xs text-content-2">
+    <span
+      className="relative inline-flex items-center gap-0.5 rounded-md hover:bg-surface-2 transition-colors group"
+      title={title}
+    >
+      <span className="text-content-3 group-hover:text-content-2 transition-colors pl-1.5 shrink-0 pointer-events-none">
+        {icon}
+      </span>
       {children}
+      {/* Feedback dot + text */}
       {feedback && (
-        <span className={`text-[10px] ${
+        <span className={`text-[9px] font-medium pr-1 shrink-0 animate-[fade-in_150ms_ease-out] ${
           feedback.type === "success" ? "text-emerald-400" : "text-red-400"
         }`}>
           {feedback.message}
         </span>
       )}
     </span>
+  );
+}
+
+function ConfigDivider() {
+  return <span className="w-px h-3.5 bg-edge-1 shrink-0 mx-0.5" />;
+}
+
+// ── Config icons (12px, stroke-based, matching app icon style) ──
+
+function IconAgent() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="5" r="3" />
+      <path d="M3 14c0-2.8 2.2-5 5-5s5 2.2 5 5" />
+    </svg>
+  );
+}
+
+function IconModel() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="2" width="12" height="12" rx="2" />
+      <path d="M5 5h2v2H5zM9 5h2v2H9zM5 9h2v2H5zM9 9h2v2H9z" />
+    </svg>
+  );
+}
+
+function IconShield() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 1.5L2.5 4v4c0 3.5 2.5 5.5 5.5 6.5 3-1 5.5-3 5.5-6.5V4L8 1.5z" />
+    </svg>
+  );
+}
+
+function IconGauge() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 14A6 6 0 1 1 8 2a6 6 0 0 1 0 12z" />
+      <path d="M8 5v3l2 1" />
+    </svg>
   );
 }
