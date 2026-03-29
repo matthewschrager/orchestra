@@ -358,8 +358,8 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
         />
       )}
 
-      {/* ── Config row — always visible ── */}
-      <div className="flex items-center gap-1 mb-2 flex-wrap">
+      {/* ── Config row — always visible, left-aligned with textarea ── */}
+      <div className={`flex items-center gap-1 mb-2 flex-wrap ${thread && mode === "reply" ? "ml-20" : "ml-10"}`}>
         {/* Back to reply (only in new-thread mode when thread exists) */}
         {isNewThread && thread && (
           <button
