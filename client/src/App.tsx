@@ -60,7 +60,7 @@ export function App() {
   }, []);
 
   if (needsAuth === null) {
-    return <div className="h-screen flex items-center justify-center bg-base text-content-2">Loading...</div>;
+    return <div className="h-dvh flex items-center justify-center bg-base text-content-2">Loading...</div>;
   }
   if (needsAuth) {
     return <AuthGate onAuthenticated={() => setNeedsAuth(false)} />;
@@ -856,7 +856,7 @@ function AppInner() {
   const activelyWorking = isRunning && !activeTurnEnded;
 
   return (
-    <div className="h-screen flex flex-col bg-base text-content-1 overflow-hidden">
+    <div className="h-dvh flex flex-col bg-base text-content-1 overflow-hidden">
       {/* Top bar — frosted glass */}
       <header className="flex items-center justify-between px-4 py-2.5 bg-base/80 backdrop-blur-xl border-b border-edge-1 shrink-0 z-30">
         <div className="flex items-center gap-2.5 min-w-0">

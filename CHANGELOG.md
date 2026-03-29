@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.42.1] - 2026-03-29
+
+### Fixed
+
+- **Mobile viewport overflow** — replaced `h-screen` (`100vh`) with `h-dvh` (`100dvh`) on the root layout, loading screen, and auth gate so the input bar is visible without scrolling on mobile browsers where the URL bar makes `100vh` taller than the actual visible viewport
+
 ## [0.1.42.0] - 2026-03-29
 
 ### Changed
