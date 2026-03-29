@@ -3,19 +3,22 @@ export interface ModelOption {
   label: string;
 }
 
+// Claude fallback defaults — replaced by SDK supportedModels() after first session
 const CLAUDE_MODEL_OPTIONS: readonly ModelOption[] = [
-  { value: "claude-sonnet-4-6", label: "Sonnet" },
-  { value: "claude-opus-4-6", label: "Opus" },
-  { value: "claude-haiku-3-5", label: "Haiku" },
+  { value: "claude-opus-4-6", label: "Opus 4.6" },
+  { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+  { value: "claude-opus-4-5", label: "Opus 4.5" },
+  { value: "claude-sonnet-4-5", label: "Sonnet 4.5" },
+  { value: "claude-haiku-3-5", label: "Haiku 3.5" },
 ];
 
+// Codex hardcoded — no SDK discovery API
 const CODEX_MODEL_OPTIONS: readonly ModelOption[] = [
   { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
   { value: "gpt-5.2-codex", label: "GPT-5.2 Codex" },
   { value: "gpt-5.4", label: "GPT-5.4" },
+  { value: "gpt-5.4-pro", label: "GPT-5.4 Pro" },
   { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-  { value: "o3", label: "o3" },
-  { value: "o4-mini", label: "o4 Mini" },
 ];
 
 export function getModelOptions(agent: string): readonly ModelOption[] {
