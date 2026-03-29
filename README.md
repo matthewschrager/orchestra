@@ -1,6 +1,6 @@
 # Orchestra
 
-I wanted an agent dashboard that combined five things I couldn't find together:
+I wanted an agent dashboard that combined a set of things I couldn't find together:
 
 - **Project-organized agent sessions** — threads grouped by repo, not scattered across terminal tabs
 - **Mobile access to local sessions** — monitor and steer agents from your phone while they run on your laptop
