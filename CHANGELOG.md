@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.38.0] - 2026-03-28
+
+### Fixed
+
+- **Subagent cards stuck "running" forever** — when Claude launches multiple subagents in parallel, `pairTools()` would break scanning at the second Agent tool_use, preventing all but the last subagent from pairing with its result; the fix skips the same-name break condition for Agent tools, using FIFO ordering via the `consumed` set instead
+
 ## [0.1.37.0] - 2026-03-28
 
 ### Fixed
