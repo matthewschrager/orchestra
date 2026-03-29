@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { isEffortLevelSupported, isPermissionModeSupported } from "shared";
 import type { DB, ThreadRow } from "../db";
 import {
   getMessages,
@@ -279,14 +280,12 @@ export function createThreadRoutes(
     }
 
     if (permissionMode !== undefined && permissionMode !== null) {
-      const { isPermissionModeSupported } = await import("shared");
       if (!isPermissionModeSupported(thread.agent, permissionMode)) {
         return c.json({ error: `Permission mode "${permissionMode}" is not supported for ${thread.agent}` }, 400);
       }
     }
 
     if (effortLevel !== undefined && effortLevel !== null) {
-      const { isEffortLevelSupported } = await import("shared");
       if (!isEffortLevelSupported(thread.agent, effortLevel)) {
         return c.json({ error: `Effort level "${effortLevel}" is not supported for ${thread.agent}` }, 400);
       }
