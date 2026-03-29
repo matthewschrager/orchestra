@@ -379,11 +379,6 @@ body.panel-resizing {
   user-select: none;
   cursor: col-resize;
 }
-body.panel-resizing-ns {
-  user-select: none;
-  cursor: ns-resize;
-}
-
 /* ── File Diff Panel (ContextPanel accordion) ──────── */
 
 .file-diff-panel .renderer-block {
