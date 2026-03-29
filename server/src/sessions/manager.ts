@@ -255,6 +255,45 @@ export class SessionManager {
     this.notifyThread(threadId);
   }
 
+  /** Change the permission mode for a thread. For Claude persistent sessions, calls setPermissionMode()
+   *  immediately when idle. When mid-turn, updates DB only — deferred until next idle point.
+   *  For non-persistent (Codex), updates DB only — next startTurn picks up the new mode. */
+  async changePermissionMode(threadId: string, permissionMode: string | null): Promise<void> {
+    if (DEBUG) console.log(`[session] changePermissionMode thread=${threadId} mode=${permissionMode}`);
+
+    // Update DB
+    updateThread(this.db, threadId, { permission_mode: permissionMode });
+
+    // For persistent Claude sessions: call setPermissionMode() if not mid-turn
+    const active = this.sessions.get(threadId);
+    if (active?.persistent && permissionMode && active.state !== "thinking") {
+      const persistentSession = active.session as PersistentSession;
+      if (persistentSession.setPermissionMode) {
+        try {
+          await persistentSession.setPermissionMode(permissionMode);
+          if (DEBUG) console.log(`[session] setPermissionMode("${permissionMode}") applied immediately`);
+        } catch (err) {
+          console.error(`[session] setPermissionMode failed for thread ${threadId}:`, err);
+          // DB is already updated — next turn will pick it up
+        }
+      }
+    }
+
+    this.notifyThread(threadId);
+  }
+
+  /** Change the effort level for a thread. Updates DB only — effort is baked into the Query
+   *  constructor for persistent sessions, so it takes effect on session restart.
+   *  For non-persistent sessions, next startTurn picks it up. */
+  async changeEffortLevel(threadId: string, effortLevel: string | null): Promise<void> {
+    if (DEBUG) console.log(`[session] changeEffortLevel thread=${threadId} effort=${effortLevel}`);
+
+    // Update DB only — no live SDK call (effort is fixed at Query construction)
+    updateThread(this.db, threadId, { effort_level: effortLevel });
+
+    this.notifyThread(threadId);
+  }
+
   sendMessage(threadId: string, content: string, attachments?: Attachment[], opts?: { internal?: boolean; interrupt?: boolean }): void {
     if (DEBUG) console.log(`[session] sendMessage thread=${threadId} content=${content.slice(0, 60)} interrupt=${!!opts?.interrupt}`);
     const thread = getThread(this.db, threadId) as ThreadRow | null;

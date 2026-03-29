@@ -1104,7 +1104,6 @@ function AppInner() {
           <ContextPanel
             thread={activeThread}
             onClose={() => setContextOpen(false)}
-            models={agents.find((a) => a.name === activeThread.agent)?.models}
           />
         )}
 

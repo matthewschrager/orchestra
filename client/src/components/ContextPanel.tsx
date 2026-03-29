@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ModelOption, Thread, WorktreeInfo } from "shared";
+import type { Thread, WorktreeInfo } from "shared";
 import { getEffortLabel, getPermissionModeLabel } from "shared";
 import { api } from "../hooks/useApi";
 import { FilePathLink } from "./FilePathLink";
@@ -8,7 +8,6 @@ import { PrBadge } from "./PrBadge";
 interface Props {
   thread: Thread;
   onClose: () => void;
-  models?: ModelOption[];
 }
 
 /** "https://github.com/owner/repo/pull/123" → "owner/repo#123" */
@@ -42,39 +41,12 @@ export function ChangedFilesList({ worktreePath, changedFiles }: ChangedFilesLis
   );
 }
 
-export function ContextPanel({ thread, onClose, models = [] }: Props) {
+export function ContextPanel({ thread, onClose }: Props) {
   const [worktreeInfo, setWorktreeInfo] = useState<WorktreeInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [prLoading, setPrLoading] = useState(false);
   const [prRefreshing, setPrRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [modelChanging, setModelChanging] = useState(false);
-  const [modelConfirmation, setModelConfirmation] = useState<string | null>(null);
-  // Local override to prevent dropdown snap-back while waiting for WS broadcast
-  const [pendingModel, setPendingModel] = useState<string | null>(null);
-
-  const isRunning = thread.status === "running";
-  // Use pending value during change, then clear when thread prop updates
-  const displayModel = pendingModel !== null ? pendingModel : (thread.model ?? "");
-  useEffect(() => { setPendingModel(null); }, [thread.model]);
-
-  const handleModelChange = async (newModel: string) => {
-    setPendingModel(newModel);
-    setModelChanging(true);
-    setError(null);
-    setModelConfirmation(null);
-    try {
-      await api.updateThread(thread.id, { model: newModel || null });
-      const label = models.find((m) => m.value === newModel)?.label ?? newModel;
-      setModelConfirmation(`Model changed to ${label || "Default"}. Takes effect on next turn.`);
-      setTimeout(() => setModelConfirmation(null), 4000);
-    } catch (err) {
-      setPendingModel(null); // Revert on error
-      setError((err as Error).message);
-    } finally {
-      setModelChanging(false);
-    }
-  };
 
   useEffect(() => {
     if (!thread.worktree) return;
@@ -169,43 +141,14 @@ export function ContextPanel({ thread, onClose, models = [] }: Props) {
       </div>
 
       <div className="p-3 space-y-4">
-        {/* Session info — Agent, Model, Effort */}
+        {/* Session summary — read-only cross-reference (config is editable in InputBar) */}
         <Section title="Session">
-          <div className="flex flex-wrap gap-3 text-xs">
-            <span className="text-content-2">
-              <span className="text-content-3">Agent:</span> {thread.agent}
-            </span>
-            {models.length > 0 && (
-              <span className="text-content-2">
-                <span className="text-content-3">Model:</span>{" "}
-                <select
-                  value={displayModel}
-                  onChange={(e) => handleModelChange(e.target.value)}
-                  disabled={modelChanging || isRunning}
-                  className="text-xs bg-surface-2 border border-edge-2 rounded px-1.5 py-0.5 text-content-2 disabled:opacity-50"
-                  aria-label="Model"
-                >
-                  <option value="">Default</option>
-                  {models.map((m) => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
-                  ))}
-                </select>
-              </span>
-            )}
-            {thread.effortLevel && (
-              <span className="text-content-2">
-                <span className="text-content-3">Effort:</span> {getEffortLabel(thread.agent, thread.effortLevel) ?? thread.effortLevel}
-              </span>
-            )}
-            {thread.permissionMode && (
-              <span className="text-content-2">
-                <span className="text-content-3">Permissions:</span> {getPermissionModeLabel(thread.permissionMode, thread.agent) ?? thread.permissionMode}
-              </span>
-            )}
+          <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-content-3 font-mono">
+            <span>{thread.agent}</span>
+            {thread.model && <><span className="text-content-3/50">/</span><span>{thread.model}</span></>}
+            {thread.permissionMode && <><span className="text-content-3/50">/</span><span>{getPermissionModeLabel(thread.permissionMode, thread.agent) ?? thread.permissionMode}</span></>}
+            {thread.effortLevel && <><span className="text-content-3/50">/</span><span>{getEffortLabel(thread.agent, thread.effortLevel) ?? thread.effortLevel}</span></>}
           </div>
-          {modelConfirmation && (
-            <div className="mt-1.5 text-xs text-emerald-400">{modelConfirmation}</div>
-          )}
         </Section>
 
         {/* Branch info */}
