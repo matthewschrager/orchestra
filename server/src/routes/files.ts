@@ -64,12 +64,15 @@ export function createFileRoutes() {
       return c.json({ error: "Path traversal not allowed" }, 400);
     }
 
-    // Restrict to home directory — fast prefix check on raw path before I/O.
+    // Restrict to home directory + /tmp — fast prefix check on raw path before I/O.
+    // /tmp is allowed for ephemeral tool artifacts (e.g. browse screenshots).
     // After file existence is confirmed, realpathSync resolves symlinks for the
     // definitive boundary check (matching filesystem.ts pattern).
     const HOME = homedir();
-    if (filePath !== HOME && !filePath.startsWith(HOME + "/")) {
-      return c.json({ error: "Path must be under home directory" }, 403);
+    const inHome = filePath === HOME || filePath.startsWith(HOME + "/");
+    const inTmp = filePath.startsWith("/tmp/");
+    if (!inHome && !inTmp) {
+      return c.json({ error: "Path must be under home directory or /tmp" }, 403);
     }
 
     // Extension allowlist
@@ -84,15 +87,17 @@ export function createFileRoutes() {
       return c.json({ error: "File not found" }, 404);
     }
 
-    // Resolve symlinks and enforce $HOME boundary (catches symlink escapes)
+    // Resolve symlinks and enforce boundary (catches symlink escapes)
     let realPath: string;
     try {
       realPath = realpathSync(filePath);
     } catch {
       return c.json({ error: "Cannot resolve path" }, 400);
     }
-    if (realPath !== HOME && !realPath.startsWith(HOME + "/")) {
-      return c.json({ error: "Path must be under home directory" }, 403);
+    const realInHome = realPath === HOME || realPath.startsWith(HOME + "/");
+    const realInTmp = realPath.startsWith("/tmp/");
+    if (!realInHome && !realInTmp) {
+      return c.json({ error: "Path must be under home directory or /tmp" }, 403);
     }
 
     const contentType = contentTypeFor(filePath, file.type);

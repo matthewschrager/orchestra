@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Dark color scheme — tells the browser to render native controls
+   (select dropdowns, scrollbars, checkboxes) in dark mode */
+:root {
+  color-scheme: dark;
+}
+
 @theme {
   --font-sans: 'Outfit', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
@@ -62,6 +68,12 @@
   color: var(--color-content-1);
 }
 .config-select:focus {
+  color: var(--color-content-1);
+}
+
+/* Ensure dropdown options are legible in dark theme across all browsers */
+select option {
+  background: var(--color-surface-3);
   color: var(--color-content-1);
 }
 
