@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface Props {
   threadTitle: string;
@@ -16,6 +16,17 @@ export function ArchiveConfirmationModal({
   onCancel,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleConfirm = useCallback(
+    (cleanup: boolean) => {
+      if (submitting) return;
+      setSubmitting(true);
+      onConfirm(cleanup);
+    },
+    [submitting, onConfirm],
+  );
 
   useEffect(() => {
     cancelRef.current?.focus();
@@ -23,7 +34,26 @@ export function ArchiveConfirmationModal({
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape") {
+        onCancel();
+        return;
+      }
+      // Focus trap: keep Tab within the dialog
+      if (e.key === "Tab" && dialogRef.current) {
+        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -37,6 +67,10 @@ export function ArchiveConfirmationModal({
       onClick={onCancel}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Archive thread confirmation"
         className="bg-surface-2 border border-edge-2 rounded-2xl p-6 w-full max-w-md shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
@@ -67,8 +101,9 @@ export function ArchiveConfirmationModal({
 
             {/* Option: archive + cleanup */}
             <button
-              onClick={() => onConfirm(true)}
-              className="w-full text-left p-3 rounded-lg border border-edge-2 hover:border-red-500/50 hover:bg-red-500/5 transition-colors group"
+              onClick={() => handleConfirm(true)}
+              disabled={submitting}
+              className="w-full text-left p-3 rounded-lg border border-edge-2 hover:border-red-500/50 hover:bg-red-500/5 transition-colors group disabled:opacity-40"
             >
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-sm font-medium text-content-1 group-hover:text-red-400">
@@ -82,8 +117,9 @@ export function ArchiveConfirmationModal({
 
             {/* Option: archive only */}
             <button
-              onClick={() => onConfirm(false)}
-              className="w-full text-left p-3 rounded-lg border border-edge-2 hover:border-accent/50 hover:bg-accent/5 transition-colors group"
+              onClick={() => handleConfirm(false)}
+              disabled={submitting}
+              className="w-full text-left p-3 rounded-lg border border-edge-2 hover:border-accent/50 hover:bg-accent/5 transition-colors group disabled:opacity-40"
             >
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-sm font-medium text-content-1 group-hover:text-accent">
@@ -112,8 +148,9 @@ export function ArchiveConfirmationModal({
           </button>
           {!hasWorktree && (
             <button
-              onClick={() => onConfirm(false)}
-              className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-500/90 hover:bg-red-400 transition-colors"
+              onClick={() => handleConfirm(false)}
+              disabled={submitting}
+              className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-500/90 hover:bg-red-400 transition-colors disabled:opacity-40"
             >
               Archive
             </button>
