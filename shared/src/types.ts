@@ -64,6 +64,7 @@ export interface Thread {
   title: string;
   agent: string;
   effortLevel: EffortLevel | null;
+  model: string | null;
   projectId: string;
   repoPath: string;
   worktree: string | null;
@@ -235,6 +236,10 @@ export interface Settings {
   inactivityTimeoutMinutes: number;
   /** Display-only remote URL (Tailscale HTTPS, VPN, tunnel, etc.) — shown in Settings panel */
   remoteUrl: string;
+  /** Default model for Claude agent (empty string = SDK default) */
+  defaultModelClaude: string;
+  /** Default model for Codex agent (empty string = SDK default) */
+  defaultModelCodex: string;
 }
 
 // ── Tailscale Detection ─────────────────────────────────
@@ -261,6 +266,7 @@ export interface TailscaleStatus {
 export interface CreateThreadRequest {
   agent: string;
   effortLevel?: EffortLevel;
+  model?: string;
   prompt: string;
   projectId: string;
   title?: string;

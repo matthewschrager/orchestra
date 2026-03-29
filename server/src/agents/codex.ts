@@ -58,6 +58,7 @@ export class CodexAdapter implements AgentAdapter {
       const codex = new Codex();
 
       const threadOpts = {
+        model: opts.model || undefined,
         modelReasoningEffort: opts.effortLevel,
         sandboxMode: "danger-full-access" as const,
         workingDirectory: opts.cwd,

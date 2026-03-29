@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getEffortOptions, type Attachment, type EffortLevel, type ProjectWithStatus, type SlashCommand } from "shared";
+import { getEffortOptions, type Attachment, type EffortLevel, type ModelOption, type ProjectWithStatus, type Settings, type SlashCommand } from "shared";
 import { api } from "../hooks/useApi";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { SlashCommandInput } from "./SlashCommandInput";
@@ -9,12 +9,14 @@ const MAX_ATTACHMENTS = 10;
 
 interface MobileNewSessionProps {
   projects: ProjectWithStatus[];
-  agents: Array<{ name: string; detected: boolean }>;
+  agents: Array<{ name: string; detected: boolean; models?: ModelOption[] }>;
   commands: SlashCommand[];
   activeProjectId: string | null;
+  settings?: Settings | null;
   onNewThread: (
     agent: string,
     effortLevel: EffortLevel | null,
+    model: string | null,
     prompt: string,
     isolate: boolean,
     projectId: string,
@@ -28,6 +30,7 @@ export function MobileNewSession({
   agents,
   commands,
   activeProjectId,
+  settings,
   onNewThread,
 }: MobileNewSessionProps) {
   const detectedAgents = agents.filter((agent) => agent.detected);
@@ -35,6 +38,7 @@ export function MobileNewSession({
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(activeProjectId);
   const [selectedAgent, setSelectedAgent] = useState(defaultAgent);
   const [effortLevel, setEffortLevel] = useState<EffortLevel | "">("");
+  const [selectedModel, setSelectedModel] = useState<string>("");
   const [prompt, setPrompt] = useState("");
   const [isolate, setIsolate] = useState(true);
   const [worktreeName, setWorktreeName] = useState(() => {
@@ -48,12 +52,23 @@ export function MobileNewSession({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
   const effortOptions = getEffortOptions(selectedAgent);
+  const agentModels = agents.find((a) => a.name === selectedAgent)?.models ?? [];
+  const settingsDefault = selectedAgent === "claude" ? settings?.defaultModelClaude : selectedAgent === "codex" ? settings?.defaultModelCodex : "";
+  const defaultModelLabel = settingsDefault
+    ? `Default (${agentModels.find((m) => m.value === settingsDefault)?.label ?? settingsDefault})`
+    : "Default";
 
   useEffect(() => {
     if (effortLevel && !effortOptions.some((option) => option.value === effortLevel)) {
       setEffortLevel("");
     }
   }, [effortLevel, effortOptions]);
+
+  useEffect(() => {
+    if (selectedModel && !agentModels.some((m) => m.value === selectedModel)) {
+      setSelectedModel("");
+    }
+  }, [selectedAgent, selectedModel, agentModels]);
 
   const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -130,6 +145,7 @@ export function MobileNewSession({
     onNewThread(
       selectedAgent,
       effortLevel || null,
+      selectedModel || null,
       prompt.trim() || "(see attached files)",
       isolate,
       selectedProjectId,
@@ -233,7 +249,7 @@ export function MobileNewSession({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 mt-3">
+          <div className="grid grid-cols-3 gap-3 mt-3">
             <div>
               <label className="text-xs font-medium text-content-3 uppercase tracking-wider mb-1.5 block">
                 Agent
@@ -251,6 +267,26 @@ export function MobileNewSession({
                 ))}
               </select>
             </div>
+            {agentModels.length > 0 && (
+              <div>
+                <label className="text-xs font-medium text-content-3 uppercase tracking-wider mb-1.5 block">
+                  Model
+                </label>
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="w-full min-h-[44px] bg-surface-1 border border-edge-2 rounded-lg px-3 py-2 text-sm text-content-2 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                  aria-label="Model"
+                >
+                  <option value="">{defaultModelLabel}</option>
+                  {agentModels.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="text-xs font-medium text-content-3 uppercase tracking-wider mb-1.5 block">
                 Effort

@@ -111,7 +111,7 @@ export const api = {
   refreshPrStatus: (id: string) =>
     request<import("shared").Thread>(`/threads/${id}/refresh-pr`, { method: "POST" }),
 
-  updateThread: (id: string, fields: { title?: string }) =>
+  updateThread: (id: string, fields: { title?: string; model?: string | null }) =>
     request<import("shared").Thread>(`/threads/${id}`, {
       method: "PATCH",
       body: JSON.stringify(fields),

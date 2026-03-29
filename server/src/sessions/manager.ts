@@ -94,6 +94,7 @@ export class SessionManager {
   async startThread(opts: {
     agent: string;
     effortLevel?: EffortLevel;
+    model?: string;
     prompt: string;
     repoPath: string;
     projectId: string;
@@ -108,6 +109,7 @@ export class SessionManager {
       throw new Error(`Effort level "${opts.effortLevel}" is not supported for ${opts.agent}`);
     }
     const effortLevel = opts.effortLevel ?? null;
+    const model = opts.model ?? null;
 
     const threadId = nanoid(12);
     const title = opts.title || opts.prompt.slice(0, 80);
@@ -125,10 +127,10 @@ export class SessionManager {
     // Insert thread record
     this.db
       .query(
-        `INSERT INTO threads (id, title, agent, effort_level, repo_path, project_id, worktree, branch, status, last_interacted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', datetime('now'))`,
+        `INSERT INTO threads (id, title, agent, effort_level, model, repo_path, project_id, worktree, branch, status, last_interacted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', datetime('now'))`,
       )
-      .run(threadId, title, opts.agent, effortLevel, opts.repoPath, opts.projectId, worktree, branch);
+      .run(threadId, title, opts.agent, effortLevel, model, opts.repoPath, opts.projectId, worktree, branch);
 
     // Validate and build prompt with attachment references
     const validAttachments = this.validateAttachments(opts.attachments);
@@ -148,9 +150,9 @@ export class SessionManager {
 
     // Start agent session — use persistent mode when supported
     if (adapter.supportsPersistent?.()) {
-      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, null, effortLevel);
+      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, null, effortLevel, model);
     } else {
-      this.startTurn(threadId, adapter, cwd, agentPrompt, null, effortLevel);
+      this.startTurn(threadId, adapter, cwd, agentPrompt, null, effortLevel, model);
     }
 
     const thread = getThread(this.db, threadId)!;
@@ -213,6 +215,27 @@ export class SessionManager {
     }
   }
 
+  /** Change the model for a thread. For Claude persistent sessions, calls setModel() immediately.
+   *  For non-persistent (Codex), updates DB only — next startTurn picks up the new model. */
+  async changeModel(threadId: string, model: string | null): Promise<void> {
+    const active = this.sessions.get(threadId);
+    if (active && active.state === "thinking") {
+      throw new Error("Cannot change model while agent is mid-turn");
+    }
+
+    // Update DB
+    updateThread(this.db, threadId, { model });
+    this.notifyThread(threadId);
+
+    // For persistent Claude sessions: call setModel() immediately
+    if (active?.persistent && model) {
+      const persistentSession = active.session as PersistentSession;
+      if (persistentSession.setModel) {
+        await persistentSession.setModel(model);
+      }
+    }
+  }
+
   sendMessage(threadId: string, content: string, attachments?: Attachment[], opts?: { internal?: boolean; interrupt?: boolean }): void {
     if (DEBUG) console.log(`[session] sendMessage thread=${threadId} content=${content.slice(0, 60)} interrupt=${!!opts?.interrupt}`);
     const thread = getThread(this.db, threadId) as ThreadRow | null;
@@ -221,6 +244,7 @@ export class SessionManager {
     const adapter = this.registry.get(thread.agent);
     if (!adapter) throw new Error(`Unknown agent: ${thread.agent}`);
     const effortLevel = isEffortLevelSupported(thread.agent, thread.effort_level) ? thread.effort_level : null;
+    const model = thread.model ?? null;
 
     const existing = this.sessions.get(threadId);
 
@@ -330,7 +354,7 @@ export class SessionManager {
         // No session_id — can't inject. Fall back to restart.
         console.warn(`[session] No sessionId for persistent inject on ${threadId}, falling back to restart`);
         this.teardownSession(threadId);
-        this.startTurn(threadId, adapter, cwd, agentPrompt, null, effortLevel);
+        this.startTurn(threadId, adapter, cwd, agentPrompt, null, effortLevel, model);
         return;
       }
 
@@ -378,9 +402,9 @@ export class SessionManager {
     updateThread(this.db, threadId, { status: "running", error_message: null });
     this.notifyThread(threadId);
     if (adapter.supportsPersistent?.()) {
-      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, sessionId, effortLevel);
+      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, sessionId, effortLevel, model);
     } else {
-      this.startTurn(threadId, adapter, cwd, agentPrompt, sessionId, effortLevel);
+      this.startTurn(threadId, adapter, cwd, agentPrompt, sessionId, effortLevel, model);
     }
   }
 
@@ -519,11 +543,13 @@ export class SessionManager {
     prompt: string,
     resumeSessionId: string | null,
     effortLevel: EffortLevel | null,
+    model?: string | null,
   ): void {
     if (DEBUG) console.log(`[session] startTurn thread=${threadId} resume=${resumeSessionId ?? "new"} cwd=${cwd}`);
     const session = adapter.start({
       cwd,
       effortLevel: effortLevel ?? undefined,
+      model: model ?? undefined,
       prompt,
       resumeSessionId: resumeSessionId ?? undefined,
     });
@@ -569,6 +595,7 @@ export class SessionManager {
     prompt: string,
     resumeSessionId: string | null,
     effortLevel: EffortLevel | null,
+    model?: string | null,
     restartCount: number = 0,
   ): void {
     if (DEBUG) console.log(`[session] startPersistentSession thread=${threadId} resume=${resumeSessionId ?? "new"} cwd=${cwd} restarts=${restartCount}`);
@@ -581,6 +608,7 @@ export class SessionManager {
     const session = adapter.startPersistent({
       cwd,
       effortLevel: effortLevel ?? undefined,
+      model: model ?? undefined,
       prompt,
       resumeSessionId: resumeSessionId ?? undefined,
     });
@@ -870,9 +898,9 @@ export class SessionManager {
     updateThread(this.db, threadId, { status: "running", error_message: null });
     this.notifyThread(threadId);
     if (adapter.supportsPersistent?.()) {
-      this.startPersistentSession(threadId, adapter, cwd, prompt, sessionId, this.getThreadEffortLevel(threadId), restartCount);
+      this.startPersistentSession(threadId, adapter, cwd, prompt, sessionId, this.getThreadEffortLevel(threadId), this.getThreadModel(threadId), restartCount);
     } else {
-      this.startTurn(threadId, adapter, cwd, prompt, sessionId, this.getThreadEffortLevel(threadId));
+      this.startTurn(threadId, adapter, cwd, prompt, sessionId, this.getThreadEffortLevel(threadId), this.getThreadModel(threadId));
     }
   }
 
@@ -880,6 +908,11 @@ export class SessionManager {
     const thread = getThread(this.db, threadId);
     if (!thread) return null;
     return isEffortLevelSupported(thread.agent, thread.effort_level) ? thread.effort_level : null;
+  }
+
+  private getThreadModel(threadId: string): string | null {
+    const thread = getThread(this.db, threadId);
+    return thread?.model ?? null;
   }
 
   private persistMessage(

@@ -11,6 +11,7 @@ import type {
   StartOpts,
 } from "./types";
 import { normalizeToolResultContent } from "./toolResultMedia";
+import type { ModelOption } from "shared";
 
 /** Tool names handled as plan-approval attention items.
  *  ExitPlanMode has requiresUserInteraction()=true in the CLI, which causes a Zod
@@ -22,6 +23,10 @@ const PLAN_APPROVAL_TOOLS = new Set(["ExitPlanMode"]);
 const ORCHESTRA_HANDLED_TOOLS = new Set([...ASK_USER_TOOL_NAME_ALIASES, ...PLAN_APPROVAL_TOOLS]);
 
 const DEBUG = process.env.ORCHESTRA_DEBUG === "1";
+
+// ── Lazy model discovery cache ─────────────────────────────
+let cachedModels: ModelOption[] | null = null;
+export function getCachedClaudeModels(): ModelOption[] | null { return cachedModels; }
 
 /**
  * Custom permission handler: denies tools that Orchestra handles externally.
@@ -80,12 +85,14 @@ export class ClaudeAdapter implements AgentAdapter {
     const effort = opts.effortLevel === "low" || opts.effortLevel === "medium" || opts.effortLevel === "high"
       ? opts.effortLevel
       : undefined;
+    const model = opts.model || undefined;
 
     const iter = query({
       prompt: opts.prompt,
       options: {
         cwd: opts.cwd,
         effort,
+        model,
         resume: opts.resumeSessionId,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
@@ -111,11 +118,13 @@ export class ClaudeAdapter implements AgentAdapter {
     const effort = opts.effortLevel === "low" || opts.effortLevel === "medium" || opts.effortLevel === "high"
       ? opts.effortLevel
       : undefined;
+    const model = opts.model || undefined;
     const q: Query = query({
       prompt: opts.prompt,
       options: {
         cwd: opts.cwd,
         effort,
+        model,
         resume: opts.resumeSessionId,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
@@ -149,10 +158,26 @@ export class ClaudeAdapter implements AgentAdapter {
           })(),
         );
       },
+      async setModel(newModel: string): Promise<void> {
+        await q.setModel(newModel);
+      },
       async setPermissionMode(mode: string): Promise<void> {
         await q.setPermissionMode(mode as "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk");
       },
     };
+
+    // Lazy model discovery — fire-and-forget on first persistent session
+    if (!cachedModels) {
+      q.supportedModels().then((sdkModels) => {
+        cachedModels = sdkModels.map((m) => ({
+          value: m.value,
+          label: m.displayName,
+        }));
+        if (DEBUG) console.log(`[claude] Discovered ${cachedModels.length} models from SDK`);
+      }).catch(() => {});
+    }
+
+    return session;
   }
 
   supportsResume(): boolean {

@@ -127,6 +127,11 @@ const COLUMN_MIGRATIONS = [
     column: "pr_status_checked_at",
     sql: `ALTER TABLE threads ADD COLUMN pr_status_checked_at TEXT`,
   },
+  {
+    table: "threads",
+    column: "model",
+    sql: `ALTER TABLE threads ADD COLUMN model TEXT`,
+  },
 ];
 
 const INDEX_MIGRATIONS = [
@@ -265,7 +270,7 @@ export function deleteProject(db: DB, id: string): void {
 const PROJECT_COLUMNS = new Set(["name"]);
 const THREAD_COLUMNS = new Set([
   "title", "status", "worktree", "branch", "pid",
-  "error_message", "pr_url", "archived_at", "session_id", "effort_level",
+  "error_message", "pr_url", "archived_at", "session_id", "effort_level", "model",
 ]);
 
 export function updateProject(db: DB, id: string, fields: Partial<ProjectRow>): void {
@@ -542,6 +547,7 @@ export interface ThreadRow {
   title: string;
   agent: string;
   effort_level: string | null;
+  model: string | null;
   project_id: string;
   repo_path: string;
   worktree: string | null;
@@ -581,6 +587,7 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
     title: row.title,
     agent: row.agent,
     effortLevel: row.effort_level as import("shared").EffortLevel | null,
+    model: row.model ?? null,
     projectId: row.project_id,
     repoPath: row.repo_path,
     worktree: row.worktree,

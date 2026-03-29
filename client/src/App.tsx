@@ -237,7 +237,8 @@ function AppInner() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Map<string, Message[]>>(new Map());
-  const [agents, setAgents] = useState<Array<{ name: string; detected: boolean; version: string | null }>>([]);
+  const [agents, setAgents] = useState<Array<{ name: string; detected: boolean; version: string | null; models?: import("shared").ModelOption[] }>>([]);
+  const [appSettings, setAppSettings] = useState<import("shared").Settings | null>(null);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
@@ -460,6 +461,7 @@ function AppInner() {
     api.listProjects().then(setProjects).catch(console.error);
     api.listThreads().then(setThreads).catch(console.error);
     api.listAgents().then(setAgents).catch(console.error);
+    api.getSettings().then(setAppSettings).catch(console.error);
   }, []);
 
   // Fetch commands scoped to active project; refetch when project changes.
@@ -529,7 +531,7 @@ function AppInner() {
 
   // ── Actions ───────────────────────────────────────────
 
-  const handleNewThread = async (agent: string, effortLevel: EffortLevel | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => {
+  const handleNewThread = async (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => {
     const pid = projectId || activeProjectId;
     if (!pid) {
       setError("Select a project first");
@@ -537,7 +539,7 @@ function AppInner() {
     }
     try {
       setError(null);
-      const thread = await api.createThread({ agent, effortLevel: effortLevel ?? undefined, prompt, projectId: pid, isolate, worktreeName, attachments });
+      const thread = await api.createThread({ agent, effortLevel: effortLevel ?? undefined, model: model ?? undefined, prompt, projectId: pid, isolate, worktreeName, attachments });
       // Guard against duplicate: WS broadcast from server may arrive before this HTTP response
       setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
       setActiveThreadId(thread.id);
@@ -975,6 +977,7 @@ function AppInner() {
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject?.name ?? null}
                 commands={commands}
+                settings={appSettings}
                 history={activeInputHistory}
                 pendingQuestion={pendingQuestion}
                 onSend={handleSendMessage}
@@ -1014,6 +1017,7 @@ function AppInner() {
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject.name}
                 commands={commands}
+                settings={appSettings}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
@@ -1029,6 +1033,7 @@ function AppInner() {
           <ContextPanel
             thread={activeThread}
             onClose={() => setContextOpen(false)}
+            models={agents.find((a) => a.name === activeThread.agent)?.models}
           />
         )}
 
@@ -1085,8 +1090,9 @@ function AppInner() {
               agents={agents}
               commands={commands}
               activeProjectId={activeProjectId}
-              onNewThread={(agent, effortLevel, prompt, isolate, projectId, worktreeName, attachments) => {
-                handleNewThread(agent, effortLevel, prompt, isolate, projectId, worktreeName, attachments);
+              settings={appSettings}
+              onNewThread={(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments) => {
+                handleNewThread(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments);
                 setMobileTab("sessions");
               }}
             />
@@ -1126,7 +1132,7 @@ function AppInner() {
 
       {/* Settings Panel */}
       {showSettings && (
-        <SettingsPanel onClose={() => setShowSettings(false)} />
+        <SettingsPanel onClose={() => setShowSettings(false)} agents={agents} />
       )}
     </div>
   );

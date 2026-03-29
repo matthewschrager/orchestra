@@ -88,6 +88,7 @@ export function createThreadRoutes(
     const body = await c.req.json<{
       agent: string;
       effortLevel?: import("shared").EffortLevel;
+      model?: string;
       prompt: string;
       projectId: string;
       title?: string;
@@ -119,6 +120,7 @@ export function createThreadRoutes(
       const thread = await sessionManager.startThread({
         agent: body.agent,
         effortLevel: body.effortLevel,
+        model: body.model,
         prompt: body.prompt,
         repoPath: project.path,
         projectId: body.projectId,
@@ -255,14 +257,35 @@ export function createThreadRoutes(
     return c.json(threadRowToApi(updated));
   });
 
-  // Update thread title
+  // Update thread title or model
   app.patch("/:id", async (c) => {
-    const { title } = await c.req.json<{ title?: string }>();
+    const { title, model } = await c.req.json<{ title?: string; model?: string | null }>();
+    const threadId = c.req.param("id");
+
     if (title) {
-      updateThread(db, c.req.param("id"), { title });
-      sessionManager.notifyThread(c.req.param("id"));
+      updateThread(db, threadId, { title });
+      sessionManager.notifyThread(threadId);
     }
-    const thread = getThread(db, c.req.param("id"));
+
+    if (model !== undefined) {
+      // Validate model format: max 100 chars, alphanumeric + hyphens + dots
+      if (model !== null && model !== "") {
+        if (model.length > 100 || !/^[a-zA-Z0-9.\-]+$/.test(model)) {
+          return c.json({ error: "Invalid model format" }, 400);
+        }
+      }
+      try {
+        await sessionManager.changeModel(threadId, model || null);
+      } catch (err) {
+        const message = (err as Error).message;
+        if (message.includes("mid-turn")) {
+          return c.json({ error: message }, 409);
+        }
+        return c.json({ error: message }, 400);
+      }
+    }
+
+    const thread = getThread(db, threadId);
     if (!thread) return c.json({ error: "Not found" }, 404);
     return c.json(threadRowToApi(thread));
   });
