@@ -5,6 +5,8 @@
 ### Fixed
 
 - **Merge all PRs modal title visibility** — added explicit `text-content-1` color to the modal heading, which was previously dark-on-dark and barely readable
+- **Dropdown contrast in dark theme** — added `color-scheme: dark` to root and explicit dark `select option` styling so native dropdown popups render with dark backgrounds and light text instead of unreadable gray-on-white
+- **Inline image rendering from /tmp** — file serve route now allows `/tmp/` paths (in addition to `$HOME`) so tool artifacts like browse screenshots render inline instead of showing "Binary file"
 
 ### Changed
 
