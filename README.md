@@ -6,7 +6,7 @@ I wanted an agent dashboard that combined a set of features I couldn't find toge
 - **Mobile access to local sessions** — Monitor and steer agents from your phone while they run on your laptop
 - **Model agnostic** — Bring your own agent, not locked to one provider
 - **Parallel development** — One-click worktree isolation, convenience functions to manage many worktrees simultaneously
-- **Use your existing subscriptions** — Runs local agents to leverage flat-rate plans (like Claude Pro/Max) rather than paying per token via API
+- **Use existing subscriptions** — Runs local agents to leverage flat-rate plans (like Claude Pro/Max) rather than paying per token via API
 - **Cross-platform** - Accessible from Windows, Mac, Linux, etc.
 
 Existing tools were either not agent first, tied to a single model provider (Claude/Codex apps), Mac-only (Conductor), required per-token API billing (Cursor etc.), or lacked first-class mobile access to local sessions (Cloud Agents etc.). Orchestra fills that gap. 
@@ -33,7 +33,7 @@ Have a feature idea while walking the dog? Spin up a new thread from your phone,
 - **Thread-based UX** — Manage agent conversations as threads with streaming output, inline previews, collapsible tool blocks, and rich diffs
 - **Remote/mobile access** — Use from your phone while agents run on your laptop, with push notifications for attention events
 - **Worktree isolation** — One-click per-thread worktree isolation, with convenience functions for managing many worktrees simultaneously
-- **Parallel Dev Made Easy** — One-click to merge all outstanding PRs (you'll have lots due to easy worktree isolation), one-click to delete all threads with merged PRs, etc. 
+- **Parallel Dev Made Easy** — Isolated worktrees by default, one-click to merge all outstanding PRs, one-click to delete all threads with merged PRs, etc. 
 - **Multi-agent** — Bring your own CLIs; Claude Code and Codex adapters included, easy to add more
 - **Integrated terminal** — xterm.js terminal per thread, backed by a real PTY on the server
 - **Token auth** — Secure remote access with bearer token auth
