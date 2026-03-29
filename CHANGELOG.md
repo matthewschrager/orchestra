@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.42.2] - 2026-03-29
+
+### Fixed
+
+- **canUseTool permission responses now pass CLI Zod validation** — the SDK's CLI subprocess requires `updatedInput` in allow responses, but Orchestra was returning `{ behavior: "allow" }` without it; the Zod validation failure was caught and converted to a blanket deny, breaking all tool usage in non-bypass permission modes
+
+### Added
+
+- **Regression tests for canUseTool contract** — 33 tests covering allow/deny paths across all permission modes, validated against a reconstructed copy of the CLI's actual Zod schema; includes a negative test proving the original bug would be caught
+
 ## [0.1.42.1] - 2026-03-29
 
 ### Fixed

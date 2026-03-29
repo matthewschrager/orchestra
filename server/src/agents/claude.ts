@@ -45,7 +45,7 @@ export function getCachedClaudeModels(): ModelOption[] | null { return cachedMod
  *   setPermissionMode() to exit plan mode at the CLI level.
  */
 function createCanUseTool(modeRef: PermissionModeRef): CanUseTool {
-  return async (toolName, _input, _options) => {
+  return async (toolName, input, _options) => {
     if (isAskUserToolName(toolName)) {
       if (DEBUG) console.log(`[claude] canUseTool: denying ${toolName} with interrupt (mode=${modeRef.current})`);
       return { behavior: "deny", message: "Handled by Orchestra", interrupt: true };
@@ -58,7 +58,9 @@ function createCanUseTool(modeRef: PermissionModeRef): CanUseTool {
         interrupt: true,
       };
     }
-    return { behavior: "allow" };
+    // updatedInput is required by the CLI's Zod validation schema even though the
+    // SDK TypeScript types mark it optional. Pass through the original input.
+    return { behavior: "allow", updatedInput: input };
   };
 }
 
@@ -779,4 +781,4 @@ function safeParseObject(value: string): Record<string, unknown> | undefined {
 }
 
 // Export helpers for tests
-export { serializeToolInput, finalizeToolInput, safeParseObject, ClaudeParser };
+export { createCanUseTool, serializeToolInput, finalizeToolInput, safeParseObject, ClaudeParser };
