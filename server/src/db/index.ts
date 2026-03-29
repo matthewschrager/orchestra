@@ -143,6 +143,11 @@ const COLUMN_MIGRATIONS = [
     column: "model",
     sql: `ALTER TABLE threads ADD COLUMN model TEXT`,
   },
+  {
+    table: "threads",
+    column: "permission_mode",
+    sql: `ALTER TABLE threads ADD COLUMN permission_mode TEXT`,
+  },
 ];
 
 const INDEX_MIGRATIONS = [
@@ -281,7 +286,7 @@ export function deleteProject(db: DB, id: string): void {
 const PROJECT_COLUMNS = new Set(["name"]);
 const THREAD_COLUMNS = new Set([
   "title", "status", "worktree", "branch", "pid",
-  "error_message", "pr_url", "archived_at", "session_id", "effort_level", "model",
+  "error_message", "pr_url", "archived_at", "session_id", "effort_level", "permission_mode", "model",
   "pr_status", "pr_number", "pr_status_checked_at", "last_interacted_at",
 ]);
 
@@ -622,6 +627,7 @@ export interface ThreadRow {
   title: string;
   agent: string;
   effort_level: string | null;
+  permission_mode: string | null;
   model: string | null;
   project_id: string;
   repo_path: string;
@@ -662,6 +668,7 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
     title: row.title,
     agent: row.agent,
     effortLevel: row.effort_level as import("shared").EffortLevel | null,
+    permissionMode: row.permission_mode as import("shared").PermissionMode | null,
     model: row.model ?? null,
     projectId: row.project_id,
     repoPath: row.repo_path,

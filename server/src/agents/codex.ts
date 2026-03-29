@@ -14,6 +14,7 @@ import type {
   StartOpts,
 } from "./types";
 import { gitSpawnSync } from "../utils/git";
+import { toCodexPermissionConfig, type PermissionMode } from "shared";
 
 export class CodexAdapter implements AgentAdapter {
   name = "codex";
@@ -57,12 +58,13 @@ export class CodexAdapter implements AgentAdapter {
       const { Codex } = await import("@openai/codex-sdk");
       const codex = new Codex();
 
+      const codexPerms = toCodexPermissionConfig(opts.permissionMode as PermissionMode | undefined);
       const threadOpts = {
         model: opts.model || undefined,
         modelReasoningEffort: opts.effortLevel,
-        sandboxMode: "danger-full-access" as const,
+        sandboxMode: codexPerms.sandboxMode as "danger-full-access" | "container-only",
         workingDirectory: opts.cwd,
-        approvalPolicy: "never" as const,
+        approvalPolicy: codexPerms.approvalPolicy as "never" | "unless-allow-listed" | "on-failure",
       };
 
       const thread = opts.resumeSessionId

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { getEffortOptions, type Attachment, type EffortLevel, type ModelOption, type Thread, type SlashCommand, type Settings } from "shared";
+import { getEffortOptions, getPermissionModeOptions, getDefaultPermissionMode, type Attachment, type EffortLevel, type ModelOption, type PermissionMode, type Thread, type SlashCommand, type Settings } from "shared";
 import { SlashCommandInput } from "./SlashCommandInput";
 import { WorktreePathInput } from "./WorktreePathInput";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -18,7 +18,7 @@ interface Props {
   defaultEffortLevel?: EffortLevel | "";
   defaultAgent?: string;
   onSend: (content: string, attachments?: Attachment[], interrupt?: boolean) => void;
-  onNewThread: (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => void;
+  onNewThread: (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[], permissionMode?: PermissionMode | null) => void;
   onStop: () => void;
 }
 
@@ -36,6 +36,9 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
   const resolvedDefaultAgent = (defaultAgent && agents.some((a) => a.detected && a.name === defaultAgent)) ? defaultAgent : (agents.find((a) => a.detected)?.name ?? "claude");
   const [agent, setAgent] = useState(resolvedDefaultAgent);
   const [effortLevel, setEffortLevel] = useState<EffortLevel | "">(defaultEffortLevel ?? "");
+  const [permissionMode, setPermissionMode] = useState<PermissionMode | "">(
+    () => getDefaultPermissionMode(resolvedDefaultAgent, true),
+  );
   const [model, setModel] = useState<string>("");
   const [isolate, setIsolate] = useState(true);
   const [worktreeName, setWorktreeName] = useState(() => generateDefaultWorktreeName(activeProjectName));
@@ -50,6 +53,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
 
   const isRunning = thread?.status === "running";
   const effortOptions = getEffortOptions(agent);
+  const permissionOptions = getPermissionModeOptions(agent);
   const agentModels = agents.find((a) => a.name === agent)?.models ?? [];
 
   // Get settings default for current agent
@@ -82,6 +86,11 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
       setEffortLevel(defaultEffortLevel && effortOptions.some((o) => o.value === defaultEffortLevel) ? defaultEffortLevel : "");
     }
   }, [effortLevel, effortOptions, defaultEffortLevel]);
+
+  // Reset permission mode when agent changes
+  useEffect(() => {
+    setPermissionMode(getDefaultPermissionMode(agent, isolate));
+  }, [agent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset model when agent changes (if current model not in new agent's list)
   useEffect(() => {
@@ -199,7 +208,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
       if (cmd === "/new") {
         const prompt = args || "";
         if (prompt) {
-          onNewThread(agent, effortLevel || null, model || null, prompt, isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined);
+          onNewThread(agent, effortLevel || null, model || null, prompt, isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, undefined, permissionMode || null);
         } else {
           setMode("new");
         }
@@ -216,7 +225,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
     const currentAttachments = hasAttachments ? attachments : undefined;
 
     if (mode === "new" || !thread) {
-      onNewThread(agent, effortLevel || null, model || null, text || "(see attached files)", isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, currentAttachments);
+      onNewThread(agent, effortLevel || null, model || null, text || "(see attached files)", isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, currentAttachments, permissionMode || null);
     } else {
       onSend(text || "(see attached files)", currentAttachments, interrupt);
     }
@@ -394,6 +403,21 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
             </label>
           )}
           <label className="flex items-center gap-1.5 text-xs text-content-2">
+            <span className="text-content-3">Permissions</span>
+            <select
+              value={permissionMode}
+              onChange={(e) => setPermissionMode(e.target.value as PermissionMode | "")}
+              className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
+              aria-label="Permission mode"
+            >
+              {permissionOptions.map((option) => (
+                <option key={option.value} value={option.value} title={option.description}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-content-2">
             <span className="text-content-3">Effort</span>
             <select
               value={effortLevel}
@@ -416,6 +440,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
               onChange={(e) => {
                 setIsolate(e.target.checked);
                 if (e.target.checked) setWorktreeName(generateDefaultWorktreeName(activeProjectName));
+                setPermissionMode(getDefaultPermissionMode(agent, e.target.checked));
               }}
               className="rounded"
             />

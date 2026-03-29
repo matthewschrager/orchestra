@@ -3,6 +3,7 @@ import type { AttentionKind, EffortLevel, StreamDelta } from "shared";
 export interface StartOpts {
   cwd: string;
   effortLevel?: EffortLevel;
+  permissionMode?: string;
   model?: string;
   prompt: string;
   resumeSessionId?: string;

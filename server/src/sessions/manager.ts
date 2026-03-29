@@ -20,8 +20,8 @@ import {
 import type { AgentRegistry } from "../agents/registry";
 import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage, PersistentSession } from "../agents/types";
 import type { WorktreeManager } from "../worktrees/manager";
-import { isEffortLevelSupported } from "shared";
-import type { Attachment, AttentionItem, AttentionResolution, EffortLevel, StreamDelta } from "shared";
+import { isEffortLevelSupported, isPermissionModeSupported } from "shared";
+import type { Attachment, AttentionItem, AttentionResolution, EffortLevel, PermissionMode, StreamDelta } from "shared";
 import { resolveAttachmentPaths } from "../routes/uploads";
 import { generateTitle } from "../titles/generator";
 import { detectWorktree } from "../utils/git";
@@ -98,6 +98,7 @@ export class SessionManager {
   async startThread(opts: {
     agent: string;
     effortLevel?: EffortLevel;
+    permissionMode?: PermissionMode;
     model?: string;
     prompt: string;
     repoPath: string;
@@ -112,7 +113,11 @@ export class SessionManager {
     if (opts.effortLevel && !isEffortLevelSupported(opts.agent, opts.effortLevel)) {
       throw new Error(`Effort level "${opts.effortLevel}" is not supported for ${opts.agent}`);
     }
+    if (opts.permissionMode && !isPermissionModeSupported(opts.agent, opts.permissionMode)) {
+      throw new Error(`Permission mode "${opts.permissionMode}" is not supported for ${opts.agent}`);
+    }
     const effortLevel = opts.effortLevel ?? null;
+    const permissionMode = opts.permissionMode ?? null;
     const model = opts.model ?? null;
 
     const threadId = nanoid(12);
@@ -131,10 +136,10 @@ export class SessionManager {
     // Insert thread record
     this.db
       .query(
-        `INSERT INTO threads (id, title, agent, effort_level, model, repo_path, project_id, worktree, branch, status, last_interacted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', datetime('now'))`,
+        `INSERT INTO threads (id, title, agent, effort_level, permission_mode, model, repo_path, project_id, worktree, branch, status, last_interacted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', datetime('now'))`,
       )
-      .run(threadId, title, opts.agent, effortLevel, model, opts.repoPath, opts.projectId, worktree, branch);
+      .run(threadId, title, opts.agent, effortLevel, permissionMode, model, opts.repoPath, opts.projectId, worktree, branch);
 
     // Validate and build prompt with attachment references
     const validAttachments = this.validateAttachments(opts.attachments);
@@ -154,9 +159,9 @@ export class SessionManager {
 
     // Start agent session — use persistent mode when supported
     if (adapter.supportsPersistent?.()) {
-      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, null, effortLevel, model);
+      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, null, effortLevel, model, 0, permissionMode);
     } else {
-      this.startTurn(threadId, adapter, cwd, agentPrompt, null, effortLevel, model);
+      this.startTurn(threadId, adapter, cwd, agentPrompt, null, effortLevel, model, permissionMode);
     }
 
     const thread = getThread(this.db, threadId)!;
@@ -258,6 +263,7 @@ export class SessionManager {
     const adapter = this.registry.get(thread.agent);
     if (!adapter) throw new Error(`Unknown agent: ${thread.agent}`);
     const effortLevel = isEffortLevelSupported(thread.agent, thread.effort_level) ? thread.effort_level : null;
+    const permissionMode = this.getThreadPermissionMode(threadId);
     const model = thread.model ?? null;
 
     const existing = this.sessions.get(threadId);
@@ -385,7 +391,7 @@ export class SessionManager {
         // No session_id — can't inject. Fall back to restart.
         console.warn(`[session] No sessionId for persistent inject on ${threadId}, falling back to restart`);
         this.teardownSession(threadId);
-        this.startTurn(threadId, adapter, cwd, agentPrompt, null, effortLevel, model);
+        this.startTurn(threadId, adapter, cwd, agentPrompt, null, effortLevel, model, permissionMode);
         return;
       }
 
@@ -433,9 +439,9 @@ export class SessionManager {
     updateThread(this.db, threadId, { status: "running", error_message: null });
     this.notifyThread(threadId);
     if (adapter.supportsPersistent?.()) {
-      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, sessionId, effortLevel, model);
+      this.startPersistentSession(threadId, adapter, cwd, agentPrompt, sessionId, effortLevel, model, 0, permissionMode);
     } else {
-      this.startTurn(threadId, adapter, cwd, agentPrompt, sessionId, effortLevel, model);
+      this.startTurn(threadId, adapter, cwd, agentPrompt, sessionId, effortLevel, model, permissionMode);
     }
   }
 
@@ -580,11 +586,13 @@ export class SessionManager {
     resumeSessionId: string | null,
     effortLevel: EffortLevel | null,
     model?: string | null,
+    permissionMode?: string | null,
   ): void {
-    if (DEBUG) console.log(`[session] startTurn thread=${threadId} resume=${resumeSessionId ?? "new"} cwd=${cwd}`);
+    if (DEBUG) console.log(`[session] startTurn thread=${threadId} resume=${resumeSessionId ?? "new"} cwd=${cwd} permissionMode=${permissionMode ?? "default"}`);
     const session = adapter.start({
       cwd,
       effortLevel: effortLevel ?? undefined,
+      permissionMode: permissionMode ?? undefined,
       model: model ?? undefined,
       prompt,
       resumeSessionId: resumeSessionId ?? undefined,
@@ -633,8 +641,9 @@ export class SessionManager {
     effortLevel: EffortLevel | null,
     model?: string | null,
     restartCount: number = 0,
+    permissionMode?: string | null,
   ): void {
-    if (DEBUG) console.log(`[session] startPersistentSession thread=${threadId} resume=${resumeSessionId ?? "new"} cwd=${cwd} restarts=${restartCount}`);
+    if (DEBUG) console.log(`[session] startPersistentSession thread=${threadId} resume=${resumeSessionId ?? "new"} cwd=${cwd} restarts=${restartCount} permissionMode=${permissionMode ?? "default"}`);
 
     // Fix #11: Validate startPersistent exists before calling
     if (!adapter.startPersistent) {
@@ -644,6 +653,7 @@ export class SessionManager {
     const session = adapter.startPersistent({
       cwd,
       effortLevel: effortLevel ?? undefined,
+      permissionMode: permissionMode ?? undefined,
       model: model ?? undefined,
       prompt,
       resumeSessionId: resumeSessionId ?? undefined,
@@ -886,15 +896,16 @@ export class SessionManager {
           const drainCwd = freshThread ? (freshThread.worktree || freshThread.repo_path) : activeSession.cwd;
           const drainEffort = freshThread && isEffortLevelSupported(freshThread.agent, freshThread.effort_level)
             ? freshThread.effort_level : null;
+          const drainPermMode = freshThread ? this.getThreadPermissionMode(threadId) : null;
           const drainSessionId = activeSession.sessionId ?? this.getPersistedSessionId(threadId) ?? null;
 
           if (drainAdapter) {
             updateThread(this.db, threadId, { status: "running", error_message: null });
             this.notifyThread(threadId);
             if (drainAdapter.supportsPersistent?.()) {
-              this.startPersistentSession(threadId, drainAdapter, drainCwd, nextQueued.content, drainSessionId, drainEffort);
+              this.startPersistentSession(threadId, drainAdapter, drainCwd, nextQueued.content, drainSessionId, drainEffort, undefined, 0, drainPermMode);
             } else {
-              this.startTurn(threadId, drainAdapter, drainCwd, nextQueued.content, drainSessionId, drainEffort);
+              this.startTurn(threadId, drainAdapter, drainCwd, nextQueued.content, drainSessionId, drainEffort, undefined, drainPermMode);
             }
           } else {
             // Adapter disappeared? Shouldn't happen, but handle gracefully
@@ -987,9 +998,9 @@ export class SessionManager {
     updateThread(this.db, threadId, { status: "running", error_message: null });
     this.notifyThread(threadId);
     if (adapter.supportsPersistent?.()) {
-      this.startPersistentSession(threadId, adapter, cwd, prompt, sessionId, this.getThreadEffortLevel(threadId), this.getThreadModel(threadId), restartCount);
+      this.startPersistentSession(threadId, adapter, cwd, prompt, sessionId, this.getThreadEffortLevel(threadId), this.getThreadModel(threadId), restartCount, this.getThreadPermissionMode(threadId));
     } else {
-      this.startTurn(threadId, adapter, cwd, prompt, sessionId, this.getThreadEffortLevel(threadId), this.getThreadModel(threadId));
+      this.startTurn(threadId, adapter, cwd, prompt, sessionId, this.getThreadEffortLevel(threadId), this.getThreadModel(threadId), this.getThreadPermissionMode(threadId));
     }
   }
 
@@ -1002,6 +1013,12 @@ export class SessionManager {
   private getThreadModel(threadId: string): string | null {
     const thread = getThread(this.db, threadId);
     return thread?.model ?? null;
+  }
+
+  private getThreadPermissionMode(threadId: string): string | null {
+    const thread = getThread(this.db, threadId);
+    if (!thread) return null;
+    return isPermissionModeSupported(thread.agent, thread.permission_mode) ? thread.permission_mode : null;
   }
 
   private persistMessage(
@@ -1079,12 +1096,15 @@ export class SessionManager {
     const activeSession = this.sessions.get(threadId);
 
     if (isApproved && activeSession?.persistent) {
-      // Exit plan mode at the CLI level before telling the agent to proceed
+      // Exit plan mode at the CLI level before telling the agent to proceed.
+      // Restore the thread's configured permission mode (or bypassPermissions if it was plan mode).
+      const configuredMode = this.getThreadPermissionMode(threadId);
+      const targetMode = configuredMode === "plan" ? "bypassPermissions" : (configuredMode || "bypassPermissions");
       const persistentSession = activeSession.session as PersistentSession;
       if (persistentSession.setPermissionMode) {
         try {
-          await persistentSession.setPermissionMode("bypassPermissions");
-          if (DEBUG) console.log(`[session] Thread ${threadId} — setPermissionMode("bypassPermissions") for ExitPlanMode approval`);
+          await persistentSession.setPermissionMode(targetMode);
+          if (DEBUG) console.log(`[session] Thread ${threadId} — setPermissionMode("${targetMode}") for ExitPlanMode approval`);
         } catch (err) {
           console.error(`[session] Thread ${threadId} — failed to setPermissionMode:`, err);
           // Continue anyway — the message alone may be enough if plan mode is model-level only

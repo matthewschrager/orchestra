@@ -12,10 +12,10 @@ function createTestDb(): Database {
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(`CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY, title TEXT NOT NULL, agent TEXT NOT NULL,
-    effort_level TEXT, repo_path TEXT NOT NULL, project_id TEXT, worktree TEXT, branch TEXT,
+    effort_level TEXT, permission_mode TEXT, repo_path TEXT NOT NULL, project_id TEXT, worktree TEXT, branch TEXT,
     pr_url TEXT, pr_status TEXT, pr_number INTEGER, pr_status_checked_at TEXT,
     pid INTEGER, status TEXT NOT NULL DEFAULT 'pending', session_id TEXT,
-    archived_at TEXT, error_message TEXT,
+    archived_at TEXT, error_message TEXT, model TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     last_interacted_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -30,15 +30,16 @@ function insertThread(
 ) {
   db.query(
     `INSERT INTO threads (
-      id, title, agent, effort_level, repo_path, project_id, worktree, branch,
+      id, title, agent, effort_level, permission_mode, repo_path, project_id, worktree, branch,
       pr_url, pr_status, pr_number, pr_status_checked_at, pid, status, session_id,
-      archived_at, error_message
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      archived_at, error_message, model
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     overrides.title ?? "Test thread",
     overrides.agent ?? "claude",
     overrides.effort_level ?? null,
+    overrides.permission_mode ?? null,
     overrides.repo_path ?? "/tmp/repo",
     overrides.project_id ?? "proj-1",
     overrides.worktree ?? null,
@@ -52,6 +53,7 @@ function insertThread(
     overrides.session_id ?? null,
     overrides.archived_at ?? null,
     overrides.error_message ?? null,
+    overrides.model ?? null,
   );
 }
 

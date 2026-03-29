@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getEffortOptions, type Attachment, type EffortLevel, type ModelOption, type ProjectWithStatus, type Settings, type SlashCommand } from "shared";
+import { getEffortOptions, getPermissionModeOptions, getDefaultPermissionMode, type Attachment, type EffortLevel, type ModelOption, type PermissionMode, type ProjectWithStatus, type Settings, type SlashCommand } from "shared";
 import { api } from "../hooks/useApi";
 import { useFileAutocomplete } from "../hooks/useFileAutocomplete";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -25,6 +25,7 @@ interface MobileNewSessionProps {
     projectId: string,
     worktreeName?: string,
     attachments?: Attachment[],
+    permissionMode?: PermissionMode | null,
   ) => void;
 }
 
@@ -43,6 +44,9 @@ export function MobileNewSession({
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(activeProjectId);
   const [selectedAgent, setSelectedAgent] = useState(resolvedDefaultAgent);
   const [effortLevel, setEffortLevel] = useState<EffortLevel | "">(defaultEffortLevel ?? "");
+  const [permissionMode, setPermissionMode] = useState<PermissionMode | "">(
+    () => getDefaultPermissionMode(resolvedDefaultAgent, true),
+  );
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [prompt, setPrompt] = useState("");
   const [isolate, setIsolate] = useState(true);
@@ -57,6 +61,7 @@ export function MobileNewSession({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
   const effortOptions = getEffortOptions(selectedAgent);
+  const permissionOptions = getPermissionModeOptions(selectedAgent);
   const agentModels = agents.find((a) => a.name === selectedAgent)?.models ?? [];
   const settingsDefault = selectedAgent === "claude" ? settings?.defaultModelClaude : selectedAgent === "codex" ? settings?.defaultModelCodex : "";
   const defaultModelLabel = settingsDefault
@@ -69,6 +74,10 @@ export function MobileNewSession({
       setEffortLevel(defaultEffortLevel && effortOptions.some((o) => o.value === defaultEffortLevel) ? defaultEffortLevel : "");
     }
   }, [effortLevel, effortOptions, defaultEffortLevel]);
+
+  useEffect(() => {
+    setPermissionMode(getDefaultPermissionMode(selectedAgent, isolate));
+  }, [selectedAgent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (selectedModel && !agentModels.some((m) => m.value === selectedModel)) {
@@ -157,6 +166,7 @@ export function MobileNewSession({
       selectedProjectId,
       isolate ? worktreeName : undefined,
       currentAttachments,
+      permissionMode || null,
     );
     setPrompt("");
     setAttachments([]);
@@ -258,7 +268,7 @@ export function MobileNewSession({
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3 mt-3">
+          <div className="grid grid-cols-2 gap-3 mt-3">
             <div>
               <label className="text-xs font-medium text-content-3 uppercase tracking-wider mb-1.5 block">
                 Agent
@@ -272,6 +282,23 @@ export function MobileNewSession({
                 {detectedAgents.map((agent) => (
                   <option key={agent.name} value={agent.name}>
                     {agent.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-content-3 uppercase tracking-wider mb-1.5 block">
+                Permissions
+              </label>
+              <select
+                value={permissionMode}
+                onChange={(e) => setPermissionMode(e.target.value as PermissionMode | "")}
+                className="w-full min-h-[44px] bg-surface-1 border border-edge-2 rounded-lg px-3 py-2 text-sm text-content-2 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                aria-label="Permission mode"
+              >
+                {permissionOptions.map((option) => (
+                  <option key={option.value} value={option.value} title={option.description}>
+                    {option.label}
                   </option>
                 ))}
               </select>
@@ -324,6 +351,7 @@ export function MobileNewSession({
                   checked={isolate}
                   onChange={(e) => {
                     setIsolate(e.target.checked);
+                    setPermissionMode(getDefaultPermissionMode(selectedAgent, e.target.checked));
                     if (e.target.checked) {
                       const suffix = Math.random().toString(36).slice(2, 13);
                       setWorktreeName(`orchestra/${selectedProject?.name ?? "project"}-${suffix}`);

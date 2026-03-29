@@ -5,6 +5,7 @@ import type {
   CleanupPushedResponse,
   EffortLevel,
   Message,
+  PermissionMode,
   ProjectWithStatus,
   SlashCommand,
   StreamDelta,
@@ -569,7 +570,7 @@ function AppInner() {
 
   // ── Actions ───────────────────────────────────────────
 
-  const handleNewThread = async (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => {
+  const handleNewThread = async (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[], permissionMode?: PermissionMode | null) => {
     const pid = projectId || activeProjectId;
     if (!pid) {
       setError("Select a project first");
@@ -577,7 +578,7 @@ function AppInner() {
     }
     try {
       setError(null);
-      const thread = await api.createThread({ agent, effortLevel: effortLevel ?? undefined, model: model ?? undefined, prompt, projectId: pid, isolate, worktreeName, attachments });
+      const thread = await api.createThread({ agent, effortLevel: effortLevel ?? undefined, permissionMode: permissionMode ?? undefined, model: model ?? undefined, prompt, projectId: pid, isolate, worktreeName, attachments });
       // Guard against duplicate: WS broadcast from server may arrive before this HTTP response
       setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
       setActiveThreadId(thread.id);
