@@ -71,6 +71,7 @@ orchestra/
 │       │   ├── WorktreePathInput.tsx Worktree root path selector
 │       │   ├── OrchestraLogo.tsx   SVG logo component
 │       │   ├── TodoItemList.tsx    Shared todo item list (card, inline, pinned)
+│       │   ├── ArchiveConfirmationModal.tsx Archive thread confirmation dialog
 │       │   ├── CleanupConfirmationModal.tsx Cleanup confirmation dialog
 │       │   ├── MergeAllPrsButton.tsx Bulk PR merge trigger
 │       │   ├── MergeAllPrsConfirmationModal.tsx Merge-all confirmation dialog

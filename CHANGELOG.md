@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.36.0] - 2026-03-28
+## [0.1.36.3] - 2026-03-28
 
 ### Added
 
@@ -9,6 +9,39 @@
 ### Fixed
 
 - **Modal keyboard accessibility** — the confirmation overlay auto-focuses on mount so the Escape key works immediately without requiring a click into the dialog
+
+## [0.1.36.2] - 2026-03-28
+
+### Changed
+
+- **Archive thread uses a proper confirmation modal** — replaced browser-native `confirm()` dialogs with a custom `ArchiveConfirmationModal` component on both desktop and mobile; threads without worktrees get a simple Cancel/Archive confirmation, while worktree threads show two option cards ("Archive & delete worktree" vs "Archive only") with branch name badge
+
+### Fixed
+
+- **Archive modal accessibility and double-click guard** — added `role="dialog"`, `aria-modal`, focus trap (Tab stays within the dialog), and `disabled` state on confirm buttons to prevent duplicate archive requests
+
+## [0.1.36.1] - 2026-03-28
+
+### Changed
+
+- **Context panel toggle uses diff icon instead of text label** — replaced the "Context" text button in the header bar with a split-pane diff icon (side-by-side code lines), matching the Lucide/Codex visual language; panel header now shows the icon alongside "Diff" label
+- **Images always visible in collapsed tool groups** — when multiple tool calls are grouped (e.g., "Read 3 files ▸"), image-bearing tools now surface below the group header even when the group is collapsed, so screenshots and images are always discoverable without clicking through
+- **Auto-expand for metadata images** — tool results with `metadata.images` (screenshots from browse tools, MCP tools, etc.) now auto-expand in the chat view, matching the existing auto-expand behavior for Edit diffs and Read image files
+
+### Added
+
+- **`pairHasImages` helper with tests** — new exported utility detects images from both metadata and Read-of-image-file paths; 10 unit tests covering all branches
+
+## [0.1.36.0] - 2026-03-28
+
+### Fixed
+
+- **ASCII art diagrams now stay intact across connector rows and lead-in headers** — Unicode diagrams with connector-only lines, aligned lead-in labels, and arrow samplers are wrapped as single text blocks so Claude and Codex layouts keep their alignment in the thread view
+- **Unlabeled fenced code blocks now render as block code** — plain triple-backtick responses from Claude now flow through the block-code renderer instead of collapsing into inline code, so fenced ASCII art stays monospaced
+
+### Added
+
+- **Regression coverage for the new ASCII rendering edge cases** — added tests for connector-only rows, aligned lead-in headers, arrow-only samplers, and unlabeled fenced code blocks
 
 ## [0.1.35.6] - 2026-03-28
 
