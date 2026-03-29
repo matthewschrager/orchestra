@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.42.0] - 2026-03-29
+
+### Changed
+
+- **Mobile config panel redesign** — replaced the cluttered inline config chips (agent, model, permissions, effort) with a collapsible summary bar on mobile; collapsed state shows a full-width `claude · Default · Bypass · Default` summary, tap to expand into a clean labeled 2×2 grid with touch-friendly 36px-min selects
+- **Removed new-thread "+" button from input area** — redundant with the existing "New" tab and sidebar options; simplifies the input row on both mobile and desktop
+- **Desktop config row alignment** — fixed left margin (`ml-10`) to align with the textarea now that the "+" button is removed
+
+### Added
+
+- **Mobile-specific config select styling** — new `.mobile-config-select` CSS class with dark surface background, rounded corners, and custom chevron for the expanded panel dropdowns
+- **`slideUp` animation** — subtle expand animation for the mobile config panel
+
 ## [0.1.41.0] - 2026-03-29
 
 ### Fixed

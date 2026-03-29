@@ -45,6 +45,11 @@
   to { opacity: 1; transform: translateX(0); }
 }
 
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* ── Config select (icon-driven toolbar selects) ──── */
 
 .config-select {
@@ -68,6 +73,32 @@
   color: var(--color-content-1);
 }
 .config-select:focus {
+  color: var(--color-content-1);
+}
+
+/* ── Mobile config select (expanded panel dropdowns) ──── */
+
+.mobile-config-select {
+  appearance: none;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-edge-1);
+  border-radius: 8px;
+  color: var(--color-content-1);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 7px 28px 7px 10px;
+  cursor: pointer;
+  outline: none;
+  width: 100%;
+  min-height: 36px;
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='10' viewBox='0 0 10 10' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2.5 3.75l2.5 2.5 2.5-2.5' stroke='%235c5856' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.mobile-config-select:hover,
+.mobile-config-select:focus {
+  border-color: var(--color-edge-2);
   color: var(--color-content-1);
 }
 
