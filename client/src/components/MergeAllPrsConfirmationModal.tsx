@@ -84,7 +84,7 @@ export function MergeAllPrsConfirmationModal({
                 </svg>
               </div>
               <div>
-                <h3 className="text-base font-semibold">Merge all PRs</h3>
+                <h3 className="text-base font-semibold text-content-1">Merge all PRs</h3>
                 <p className="text-xs text-content-3 mt-0.5 font-mono">{projectName}</p>
               </div>
             </div>
