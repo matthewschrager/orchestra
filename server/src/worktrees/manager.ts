@@ -1,5 +1,5 @@
-import { join, basename } from "path";
-import { existsSync } from "fs";
+import { join, basename, resolve } from "path";
+import { existsSync, readFileSync } from "fs";
 import type { DB, ThreadRow } from "../db";
 import { getThread, updateThread } from "../db";
 import { gitSpawn } from "../utils/git";
@@ -126,6 +126,83 @@ export class WorktreeManager {
     }
 
     return { aheadBehind: { ahead, behind }, changedFiles, diffStats };
+  }
+
+  /** Max file size (per side) for diff responses */
+  private static readonly MAX_DIFF_FILE_SIZE = 200 * 1024;
+
+  /**
+   * Get old/new file content for a single changed file, suitable for
+   * client-side diff computation. Old content comes from the main branch;
+   * new content comes from the working tree.
+   */
+  async getFileDiff(
+    threadId: string,
+    filePath: string,
+  ): Promise<{
+    filePath: string;
+    oldContent: string;
+    newContent: string;
+    binary?: boolean;
+    truncated?: boolean;
+  } | null> {
+    const thread = getThread(this.db, threadId) as ThreadRow | null;
+    if (!thread?.worktree) return null;
+    if (!existsSync(thread.worktree)) return null;
+
+    // Security: reject null bytes and validate path stays within worktree
+    if (!filePath || filePath.includes("\0")) return null;
+    const resolvedWorktree = resolve(thread.worktree);
+    const resolvedFile = resolve(resolvedWorktree, filePath);
+    if (!resolvedFile.startsWith(resolvedWorktree + "/")) return null;
+
+    const mainBranch = await this.detectMainBranch(thread.worktree);
+
+    // Old content from main branch (empty for new files)
+    let oldContent = "";
+    const oldProc = gitSpawn(
+      ["show", `${mainBranch}:${filePath}`],
+      { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
+    );
+    const oldText = await new Response(oldProc.stdout).text();
+    await oldProc.exited;
+    if (oldProc.exitCode === 0) {
+      oldContent = oldText;
+    }
+
+    // New content from working tree (empty for deleted files)
+    let newContent = "";
+    if (existsSync(resolvedFile)) {
+      newContent = readFileSync(resolvedFile, "utf-8");
+    }
+
+    // Binary detection: null bytes in first 8KB
+    const hasBinaryContent = (s: string): boolean => {
+      const limit = Math.min(s.length, 8192);
+      for (let i = 0; i < limit; i++) {
+        if (s.charCodeAt(i) === 0) return true;
+      }
+      return false;
+    };
+    if (hasBinaryContent(oldContent) || hasBinaryContent(newContent)) {
+      return { filePath, oldContent: "", newContent: "", binary: true };
+    }
+
+    // Size cap
+    const max = WorktreeManager.MAX_DIFF_FILE_SIZE;
+    let truncated = false;
+    if (oldContent.length > max || newContent.length > max) {
+      truncated = true;
+      if (oldContent.length > max) oldContent = oldContent.slice(0, max);
+      if (newContent.length > max) newContent = newContent.slice(0, max);
+    }
+
+    return {
+      filePath,
+      oldContent,
+      newContent,
+      truncated: truncated || undefined,
+    };
   }
 
   async createPR(
