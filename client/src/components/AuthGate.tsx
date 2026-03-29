@@ -33,7 +33,7 @@ export function AuthGate({ onAuthenticated }: Props) {
   };
 
   return (
-    <div className="h-screen flex items-center justify-center bg-base text-content-1 p-4 relative">
+    <div className="h-dvh flex items-center justify-center bg-base text-content-1 p-4 relative">
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(207,138,78,0.04)_0%,_transparent_70%)] pointer-events-none" />
       <div className="w-full max-w-sm space-y-5 relative">
         <div className="text-center">
