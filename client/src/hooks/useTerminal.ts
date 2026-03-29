@@ -100,6 +100,26 @@ export function useTerminal(opts: {
   const sendInput = useCallback(
     (data: string) => {
       if (!terminalIdRef.current) return;
+
+      // Control characters (Ctrl+C, Ctrl+D, etc.) and escape sequences must be
+      // sent immediately — they are time-sensitive signals that shouldn't be delayed.
+      const isControl = data.length === 1 && data.charCodeAt(0) < 32;
+      const isEscape = data.length > 0 && data.charCodeAt(0) === 0x1b;
+      if (isControl || isEscape) {
+        // Flush any pending buffer first so ordering is preserved
+        if (inputBufferRef.current) {
+          const buffered = inputBufferRef.current;
+          inputBufferRef.current = "";
+          if (flushTimerRef.current) {
+            clearTimeout(flushTimerRef.current);
+            flushTimerRef.current = null;
+          }
+          opts.send({ type: "terminal_input", terminalId: terminalIdRef.current, data: buffered });
+        }
+        opts.send({ type: "terminal_input", terminalId: terminalIdRef.current, data });
+        return;
+      }
+
       inputBufferRef.current += data;
       if (!flushTimerRef.current) {
         flushTimerRef.current = setTimeout(() => {
