@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { isEffortLevelSupported, isPermissionModeSupported } from "shared";
 import type { DB, ThreadRow } from "../db";
 import {
   getMessages,
@@ -259,23 +260,44 @@ export function createThreadRoutes(
     return c.json(threadRowToApi(updated));
   });
 
-  // Update thread title or model
+  // Update thread title, model, permissionMode, or effortLevel
   app.patch("/:id", async (c) => {
-    const { title, model } = await c.req.json<{ title?: string; model?: string | null }>();
+    const { title, model, permissionMode, effortLevel } = await c.req.json<{
+      title?: string;
+      model?: string | null;
+      permissionMode?: import("shared").PermissionMode | null;
+      effortLevel?: import("shared").EffortLevel | null;
+    }>();
     const threadId = c.req.param("id");
+    const thread = getThread(db, threadId);
+    if (!thread) return c.json({ error: "Not found" }, 404);
 
+    // ── Validate ALL fields before any writes ──
+    if (model !== undefined && model !== null && model !== "") {
+      if (model.length > 100 || !/^[a-zA-Z0-9.\-]+$/.test(model)) {
+        return c.json({ error: "Invalid model format" }, 400);
+      }
+    }
+
+    if (permissionMode !== undefined && permissionMode !== null) {
+      if (!isPermissionModeSupported(thread.agent, permissionMode)) {
+        return c.json({ error: `Permission mode "${permissionMode}" is not supported for ${thread.agent}` }, 400);
+      }
+    }
+
+    if (effortLevel !== undefined && effortLevel !== null) {
+      if (!isEffortLevelSupported(thread.agent, effortLevel)) {
+        return c.json({ error: `Effort level "${effortLevel}" is not supported for ${thread.agent}` }, 400);
+      }
+    }
+
+    // ── Apply changes (session manager owns DB writes for model/permission/effort) ──
     if (title) {
       updateThread(db, threadId, { title });
       sessionManager.notifyThread(threadId);
     }
 
     if (model !== undefined) {
-      // Validate model format: max 100 chars, alphanumeric + hyphens + dots
-      if (model !== null && model !== "") {
-        if (model.length > 100 || !/^[a-zA-Z0-9.\-]+$/.test(model)) {
-          return c.json({ error: "Invalid model format" }, 400);
-        }
-      }
       try {
         await sessionManager.changeModel(threadId, model || null);
       } catch (err) {
@@ -287,9 +309,25 @@ export function createThreadRoutes(
       }
     }
 
-    const thread = getThread(db, threadId);
-    if (!thread) return c.json({ error: "Not found" }, 404);
-    return c.json(threadRowToApi(thread));
+    if (permissionMode !== undefined) {
+      try {
+        await sessionManager.changePermissionMode(threadId, permissionMode || null);
+      } catch (err) {
+        return c.json({ error: (err as Error).message }, 400);
+      }
+    }
+
+    if (effortLevel !== undefined) {
+      try {
+        await sessionManager.changeEffortLevel(threadId, effortLevel || null);
+      } catch (err) {
+        return c.json({ error: (err as Error).message }, 400);
+      }
+    }
+
+    const updated = getThread(db, threadId);
+    if (!updated) return c.json({ error: "Not found" }, 404);
+    return c.json(threadRowToApi(updated));
   });
 
   // Archive (soft-delete) thread

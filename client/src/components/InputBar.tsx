@@ -30,75 +30,159 @@ function generateDefaultWorktreeName(projectName: string | null): string {
   return `orchestra/${base}-${suffix}`;
 }
 
+// ── Inline feedback message per config field ──
+
+interface FieldFeedback {
+  message: string;
+  type: "success" | "error";
+}
+
+function usePendingField<T extends string>(
+  threadValue: T | null | undefined,
+): [T | null, (v: T | null) => void] {
+  const [pending, setPending] = useState<T | null>(null);
+  // Clear pending when thread prop updates (WS broadcast arrived)
+  useEffect(() => { setPending(null); }, [threadValue]);
+  return [pending, setPending];
+}
+
 export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, settings, history, pendingQuestion, defaultEffortLevel, defaultAgent, onSend, onNewThread, onStop }: Props) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
+
+  // ── New-thread local state ──
   const resolvedDefaultAgent = (defaultAgent && agents.some((a) => a.detected && a.name === defaultAgent)) ? defaultAgent : (agents.find((a) => a.detected)?.name ?? "claude");
-  const [agent, setAgent] = useState(resolvedDefaultAgent);
-  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">(defaultEffortLevel ?? "");
-  const [permissionMode, setPermissionMode] = useState<PermissionMode | "">(
+  const [newAgent, setNewAgent] = useState(resolvedDefaultAgent);
+  const [newEffortLevel, setNewEffortLevel] = useState<EffortLevel | "">(defaultEffortLevel ?? "");
+  const [newPermissionMode, setNewPermissionMode] = useState<PermissionMode | "">(
     () => getDefaultPermissionMode(resolvedDefaultAgent, true),
   );
-  const [model, setModel] = useState<string>("");
+  const [newModel, setNewModel] = useState<string>("");
   const [isolate, setIsolate] = useState(true);
   const [worktreeName, setWorktreeName] = useState(() => generateDefaultWorktreeName(activeProjectName));
+  const userChangedEffortRef = useRef(false);
+  const userChangedAgentRef = useRef(false);
+
+  // ── Active-thread pending state (optimistic updates) ──
+  const [pendingModel, setPendingModel] = usePendingField(thread?.model);
+  const [pendingPermission, setPendingPermission] = usePendingField(thread?.permissionMode);
+  const [pendingEffort, setPendingEffort] = usePendingField(thread?.effortLevel);
+
+  // ── Per-field inline feedback ──
+  const [modelFeedback, setModelFeedback] = useState<FieldFeedback | null>(null);
+  const [permissionFeedback, setPermissionFeedback] = useState<FieldFeedback | null>(null);
+  const [effortFeedback, setEffortFeedback] = useState<FieldFeedback | null>(null);
+
+  // ── File attachments ──
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const dragCounterRef = useRef(0);
-  const userChangedEffortRef = useRef(false);
-  const userChangedAgentRef = useRef(false);
 
+  // ── Derived values ──
+  const isNewThread = mode === "new" || !thread;
   const isRunning = thread?.status === "running";
-  const effortOptions = getEffortOptions(agent);
-  const permissionOptions = getPermissionModeOptions(agent);
-  const agentModels = agents.find((a) => a.name === agent)?.models ?? [];
+  const activeAgent = isNewThread ? newAgent : thread?.agent ?? "claude";
+  const effortOptions = getEffortOptions(activeAgent);
+  const permissionOptions = getPermissionModeOptions(activeAgent);
+  const agentModels = agents.find((a) => a.name === activeAgent)?.models ?? [];
 
-  // Get settings default for current agent
-  const settingsDefault = agent === "claude" ? settings?.defaultModelClaude : agent === "codex" ? settings?.defaultModelCodex : "";
+  // Display values for active thread (pending overrides thread prop)
+  const displayModel = isNewThread ? newModel : (pendingModel ?? thread?.model ?? "");
+  const displayPermission = isNewThread ? newPermissionMode : (pendingPermission ?? thread?.permissionMode ?? "");
+  const displayEffort = isNewThread ? newEffortLevel : (pendingEffort ?? thread?.effortLevel ?? "");
 
-  // "Default" label adapts: show resolved name if settings default is set
+  // Settings default for model label
+  const settingsDefault = activeAgent === "claude" ? settings?.defaultModelClaude : activeAgent === "codex" ? settings?.defaultModelCodex : "";
   const defaultLabel = settingsDefault
     ? `Default (${agentModels.find((m) => m.value === settingsDefault)?.label ?? settingsDefault})`
     : "Default";
 
   const { fileSuggestions, fileLoading, handleFileQueryChange } = useFileAutocomplete(activeProjectId);
 
-  // Sync default agent from settings (only if user hasn't manually changed it)
+  // ── New-thread syncs ──
   useEffect(() => {
     if (!userChangedAgentRef.current && defaultAgent) {
       const valid = agents.some((a) => a.detected && a.name === defaultAgent);
-      if (valid) setAgent(defaultAgent);
+      if (valid) setNewAgent(defaultAgent);
     }
   }, [defaultAgent, agents]);
 
-  // Sync default effort level from settings (only if user hasn't manually changed it)
   useEffect(() => {
     if (!userChangedEffortRef.current && defaultEffortLevel !== undefined) {
-      setEffortLevel(defaultEffortLevel);
+      setNewEffortLevel(defaultEffortLevel);
     }
   }, [defaultEffortLevel]);
 
   useEffect(() => {
-    if (effortLevel && !effortOptions.some((option) => option.value === effortLevel)) {
-      setEffortLevel(defaultEffortLevel && effortOptions.some((o) => o.value === defaultEffortLevel) ? defaultEffortLevel : "");
+    if (newEffortLevel && !effortOptions.some((option) => option.value === newEffortLevel)) {
+      setNewEffortLevel(defaultEffortLevel && effortOptions.some((o) => o.value === defaultEffortLevel) ? defaultEffortLevel : "");
     }
-  }, [effortLevel, effortOptions, defaultEffortLevel]);
+  }, [newEffortLevel, effortOptions, defaultEffortLevel]);
 
-  // Reset permission mode when agent changes
   useEffect(() => {
-    setPermissionMode(getDefaultPermissionMode(agent, isolate));
-  }, [agent]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (isNewThread) setNewPermissionMode(getDefaultPermissionMode(newAgent, isolate));
+  }, [newAgent, isNewThread]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset model when agent changes (if current model not in new agent's list)
   useEffect(() => {
-    if (model && !agentModels.some((m) => m.value === model)) {
-      setModel("");
+    if (newModel && !agentModels.some((m) => m.value === newModel)) {
+      setNewModel("");
     }
-  }, [agent, model, agentModels]);
+  }, [newAgent, newModel, agentModels]);
 
+  // ── Active thread config change handlers ──
+  const showFeedback = (setter: typeof setModelFeedback, feedback: FieldFeedback) => {
+    setter(feedback);
+    setTimeout(() => setter(null), feedback.type === "error" ? 4000 : 3000);
+  };
+
+  const handleActiveModelChange = async (value: string) => {
+    if (!thread) return;
+    setPendingModel(value as typeof pendingModel);
+    try {
+      await api.updateThread(thread.id, { model: value || null });
+      showFeedback(setModelFeedback, { message: "Next turn", type: "success" });
+    } catch (err) {
+      setPendingModel(null);
+      const msg = (err as Error).message;
+      showFeedback(setModelFeedback, {
+        message: msg.includes("mid-turn") ? "Wait for idle" : "Failed to update",
+        type: "error",
+      });
+    }
+  };
+
+  const handleActivePermissionChange = async (value: string) => {
+    if (!thread) return;
+    setPendingPermission(value as typeof pendingPermission);
+    try {
+      await api.updateThread(thread.id, { permissionMode: (value || null) as PermissionMode | null });
+      const isIdle = thread.status !== "running";
+      showFeedback(setPermissionFeedback, {
+        message: isIdle ? "Active now" : "Next turn",
+        type: "success",
+      });
+    } catch (err) {
+      setPendingPermission(null);
+      showFeedback(setPermissionFeedback, { message: "Failed to update", type: "error" });
+    }
+  };
+
+  const handleActiveEffortChange = async (value: string) => {
+    if (!thread) return;
+    setPendingEffort(value as typeof pendingEffort);
+    try {
+      await api.updateThread(thread.id, { effortLevel: (value || null) as EffortLevel | null });
+      showFeedback(setEffortFeedback, { message: "Next session", type: "success" });
+    } catch (err) {
+      setPendingEffort(null);
+      showFeedback(setEffortFeedback, { message: "Failed to update", type: "error" });
+    }
+  };
+
+  // ── File upload handlers ──
   const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
     setUploading(true);
@@ -187,12 +271,12 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(e.target.files || []);
       uploadFiles(files);
-      // Reset so same file can be selected again
       e.target.value = "";
     },
     [uploadFiles],
   );
 
+  // ── Submit handler ──
   const handleSubmit = (interrupt?: boolean) => {
     if (uploading) return;
     const text = input.trim();
@@ -208,7 +292,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
       if (cmd === "/new") {
         const prompt = args || "";
         if (prompt) {
-          onNewThread(agent, effortLevel || null, model || null, prompt, isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, undefined, permissionMode || null);
+          onNewThread(newAgent, newEffortLevel || null, newModel || null, prompt, isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, undefined, newPermissionMode || null);
         } else {
           setMode("new");
         }
@@ -224,21 +308,23 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
 
     const currentAttachments = hasAttachments ? attachments : undefined;
 
-    if (mode === "new" || !thread) {
-      onNewThread(agent, effortLevel || null, model || null, text || "(see attached files)", isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, currentAttachments, permissionMode || null);
+    if (isNewThread) {
+      onNewThread(newAgent, newEffortLevel || null, newModel || null, text || "(see attached files)", isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, currentAttachments, newPermissionMode || null);
     } else {
       onSend(text || "(see attached files)", currentAttachments, interrupt);
     }
     setInput("");
     setAttachments([]);
     setMode("reply");
+    // Reset new-thread state (not active-thread config — that persists via DB)
     userChangedEffortRef.current = false;
     userChangedAgentRef.current = false;
-    setEffortLevel(defaultEffortLevel ?? "");
-    setAgent(resolvedDefaultAgent);
+    setNewEffortLevel(defaultEffortLevel ?? "");
+    setNewAgent(resolvedDefaultAgent);
     if (isolate) setWorktreeName(generateDefaultWorktreeName(activeProjectName));
   };
 
+  // ── Render ──
   return (
     <div
       className={`border-t bg-surface-1 p-3 shrink-0 relative z-10 transition-colors ${
@@ -272,7 +358,134 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
         />
       )}
 
-      {/* Input area */}
+      {/* ── Config row — always visible ── */}
+      <div className="flex items-center gap-1 mb-2 flex-wrap">
+        {/* Back to reply (only in new-thread mode when thread exists) */}
+        {isNewThread && thread && (
+          <button
+            onClick={() => setMode("reply")}
+            className="text-[11px] text-content-3 hover:text-content-2 mr-1"
+          >
+            &larr; Reply
+          </button>
+        )}
+
+        {/* Agent — dropdown for new thread, badge for active */}
+        {isNewThread ? (
+          <ConfigChip icon={<IconAgent />} title="Agent">
+            <select
+              value={newAgent}
+              onChange={(e) => { userChangedAgentRef.current = true; setNewAgent(e.target.value); }}
+              className="config-select"
+              aria-label="Agent"
+            >
+              {agents
+                .filter((a) => a.detected)
+                .map((a) => (
+                  <option key={a.name} value={a.name}>
+                    {a.name}
+                  </option>
+                ))}
+            </select>
+          </ConfigChip>
+        ) : (
+          <span className={`text-[11px] font-medium pl-1.5 pr-2 py-0.5 rounded-md inline-flex items-center gap-1 ${
+            activeAgent === "codex"
+              ? "bg-cyan-400/10 text-cyan-400"
+              : "bg-amber-400/10 text-amber-400"
+          }`} title="Agent (read-only)">
+            <IconAgent />
+            {activeAgent}
+          </span>
+        )}
+
+        <ConfigDivider />
+
+        {/* Model dropdown */}
+        {agentModels.length > 0 && (
+          <ConfigChip icon={<IconModel />} feedback={modelFeedback} title="Model">
+            <select
+              value={displayModel}
+              onChange={(e) => isNewThread ? setNewModel(e.target.value) : handleActiveModelChange(e.target.value)}
+              className="config-select"
+              aria-label="Model"
+            >
+              <option value="">{defaultLabel}</option>
+              {agentModels.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </ConfigChip>
+        )}
+
+        <ConfigDivider />
+
+        {/* Permissions dropdown */}
+        <ConfigChip icon={<IconShield />} feedback={permissionFeedback} title="Permissions">
+          <select
+            value={displayPermission}
+            onChange={(e) => isNewThread
+              ? setNewPermissionMode(e.target.value as PermissionMode | "")
+              : handleActivePermissionChange(e.target.value)}
+            className="config-select"
+            aria-label="Permission mode"
+          >
+            {permissionOptions.map((option) => (
+              <option key={option.value} value={option.value} title={option.description}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </ConfigChip>
+
+        <ConfigDivider />
+
+        {/* Effort dropdown */}
+        <ConfigChip icon={<IconGauge />} feedback={effortFeedback} title="Effort">
+          <select
+            value={displayEffort}
+            onChange={(e) => isNewThread
+              ? (() => { userChangedEffortRef.current = true; setNewEffortLevel(e.target.value as EffortLevel | ""); })()
+              : handleActiveEffortChange(e.target.value)}
+            className="config-select"
+            aria-label="Effort level"
+          >
+            <option value="">Default</option>
+            {effortOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </ConfigChip>
+
+        {/* Isolate checkbox — new-thread only */}
+        {isNewThread && (
+          <>
+            <ConfigDivider />
+            <label className="flex items-center gap-1.5 text-[11px] text-content-3 hover:text-content-2 cursor-pointer transition-colors px-1">
+              <input
+                type="checkbox"
+                checked={isolate}
+                onChange={(e) => {
+                  setIsolate(e.target.checked);
+                  if (e.target.checked) setWorktreeName(generateDefaultWorktreeName(activeProjectName));
+                  setNewPermissionMode(getDefaultPermissionMode(newAgent, e.target.checked));
+                }}
+                className="rounded"
+              />
+              Worktree
+            </label>
+            {isolate && (
+              <WorktreePathInput value={worktreeName} onChange={setWorktreeName} compact />
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── Input area ── */}
       <div className="flex gap-2 items-end">
         {/* New thread button */}
         {thread && mode === "reply" && (
@@ -315,7 +528,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
           commands={commands}
           history={history}
           placeholder={
-            mode === "new" || !thread
+            isNewThread
               ? "Describe what you want to build..."
               : pendingQuestion
                 ? "Type your answer..."
@@ -326,7 +539,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
           onFileQueryChange={handleFileQueryChange}
         />
 
-        {/* Send button — always visible */}
+        {/* Send button */}
         <button
           onClick={() => handleSubmit()}
           disabled={uploading || (!input.trim() && attachments.length === 0)}
@@ -338,7 +551,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
           {mode === "new" && thread ? "New" : "Send"}
         </button>
 
-        {/* Stop button — shown alongside Send when agent is running */}
+        {/* Stop button */}
         {isRunning && (
           <button
             onClick={onStop}
@@ -346,111 +559,83 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
             aria-label="Stop agent"
             title="Stop running"
           >
-            {/* Pulse ring */}
             <span className="absolute inset-0 rounded-lg border border-accent/40 animate-[stop-pulse_2s_ease-in-out_infinite]" />
-            {/* Stop icon — rounded square */}
             <svg width="16" height="16" viewBox="0 0 16 16" className="relative text-accent group-hover:text-accent-light transition-colors">
               <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor" />
             </svg>
           </button>
         )}
       </div>
-
-      {/* Thread options — always visible in new-thread mode */}
-      {(mode === "new" || !thread) && (
-        <div className="flex items-center gap-3 mt-2 flex-wrap">
-          {thread && (
-            <button
-              onClick={() => setMode("reply")}
-              className="text-xs text-content-3 hover:text-content-2"
-            >
-              &larr; Back to reply
-            </button>
-          )}
-          <label className="flex items-center gap-1.5 text-xs text-content-2">
-            <span className="text-content-3">Agent</span>
-            <select
-              value={agent}
-              onChange={(e) => { userChangedAgentRef.current = true; setAgent(e.target.value); }}
-              className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
-              aria-label="Agent"
-            >
-              {agents
-                .filter((a) => a.detected)
-                .map((a) => (
-                  <option key={a.name} value={a.name}>
-                    {a.name}
-                  </option>
-                ))}
-            </select>
-          </label>
-          {agentModels.length > 0 && (
-            <label className="flex items-center gap-1.5 text-xs text-content-2">
-              <span className="text-content-3">Model</span>
-              <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
-                aria-label="Model"
-              >
-                <option value="">{defaultLabel}</option>
-                {agentModels.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <label className="flex items-center gap-1.5 text-xs text-content-2">
-            <span className="text-content-3">Permissions</span>
-            <select
-              value={permissionMode}
-              onChange={(e) => setPermissionMode(e.target.value as PermissionMode | "")}
-              className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
-              aria-label="Permission mode"
-            >
-              {permissionOptions.map((option) => (
-                <option key={option.value} value={option.value} title={option.description}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex items-center gap-1.5 text-xs text-content-2">
-            <span className="text-content-3">Effort</span>
-            <select
-              value={effortLevel}
-              onChange={(e) => { userChangedEffortRef.current = true; setEffortLevel(e.target.value as EffortLevel | ""); }}
-              className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
-              aria-label="Effort level"
-            >
-              <option value="">Default</option>
-              {effortOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex items-center gap-1.5 text-xs text-content-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={isolate}
-              onChange={(e) => {
-                setIsolate(e.target.checked);
-                if (e.target.checked) setWorktreeName(generateDefaultWorktreeName(activeProjectName));
-                setPermissionMode(getDefaultPermissionMode(agent, e.target.checked));
-              }}
-              className="rounded"
-            />
-            Isolate to worktree
-          </label>
-          {isolate && (
-            <WorktreePathInput value={worktreeName} onChange={setWorktreeName} compact />
-          )}
-        </div>
-      )}
     </div>
+  );
+}
+
+// ── Config chip: icon + select + feedback indicator ──
+
+function ConfigChip({ icon, feedback, title, children }: {
+  icon: React.ReactNode;
+  feedback?: FieldFeedback | null;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      className="relative inline-flex items-center gap-0.5 rounded-md hover:bg-surface-2 transition-colors group"
+      title={title}
+    >
+      <span className="text-content-3 group-hover:text-content-2 transition-colors pl-1.5 shrink-0 pointer-events-none">
+        {icon}
+      </span>
+      {children}
+      {/* Feedback dot + text */}
+      {feedback && (
+        <span className={`text-[9px] font-medium pr-1 shrink-0 animate-[fade-in_150ms_ease-out] ${
+          feedback.type === "success" ? "text-emerald-400" : "text-red-400"
+        }`}>
+          {feedback.message}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function ConfigDivider() {
+  return <span className="w-px h-3.5 bg-edge-1 shrink-0 mx-0.5" />;
+}
+
+// ── Config icons (12px, stroke-based, matching app icon style) ──
+
+function IconAgent() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="5" r="3" />
+      <path d="M3 14c0-2.8 2.2-5 5-5s5 2.2 5 5" />
+    </svg>
+  );
+}
+
+function IconModel() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="2" width="12" height="12" rx="2" />
+      <path d="M5 5h2v2H5zM9 5h2v2H9zM5 9h2v2H5zM9 9h2v2H9z" />
+    </svg>
+  );
+}
+
+function IconShield() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 1.5L2.5 4v4c0 3.5 2.5 5.5 5.5 6.5 3-1 5.5-3 5.5-6.5V4L8 1.5z" />
+    </svg>
+  );
+}
+
+function IconGauge() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 14A6 6 0 1 1 8 2a6 6 0 0 1 0 12z" />
+      <path d="M8 5v3l2 1" />
+    </svg>
   );
 }
