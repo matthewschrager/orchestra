@@ -32,6 +32,23 @@ export function useTerminal(opts: {
   const threadIdRef = useRef(opts.threadId);
   threadIdRef.current = opts.threadId;
 
+  // Batch terminal input: accumulate keystrokes and flush once per frame (~16ms).
+  // This prevents hitting the WS rate limit (60/10s) during fast typing while
+  // remaining imperceptible to the user.
+  const inputBufferRef = useRef("");
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Flush and clean up input buffer on unmount or thread change
+  useEffect(() => {
+    return () => {
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      inputBufferRef.current = "";
+    };
+  }, [opts.threadId]);
+
   // Request terminal creation when visible + thread changes
   useEffect(() => {
     if (!opts.visible || !opts.threadId) return;
@@ -82,8 +99,17 @@ export function useTerminal(opts: {
 
   const sendInput = useCallback(
     (data: string) => {
-      if (terminalIdRef.current) {
-        opts.send({ type: "terminal_input", terminalId: terminalIdRef.current, data });
+      if (!terminalIdRef.current) return;
+      inputBufferRef.current += data;
+      if (!flushTimerRef.current) {
+        flushTimerRef.current = setTimeout(() => {
+          const buffered = inputBufferRef.current;
+          inputBufferRef.current = "";
+          flushTimerRef.current = null;
+          if (buffered && terminalIdRef.current) {
+            opts.send({ type: "terminal_input", terminalId: terminalIdRef.current, data: buffered });
+          }
+        }, 16); // ~1 frame — imperceptible, batches rapid keystrokes
       }
     },
     [opts.send],
