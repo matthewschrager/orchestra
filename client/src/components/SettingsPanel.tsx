@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
-import { ALL_EFFORT_OPTIONS, type EffortLevel, type Settings } from "shared";
+import { ALL_EFFORT_OPTIONS, type EffortLevel, type ModelOption, type Settings } from "shared";
 import { api } from "../hooks/useApi";
 import { RemoteAccessSettings } from "./RemoteAccessSettings";
 
 interface Props {
   onClose: () => void;
+  agents?: Array<{ name: string; detected: boolean; models?: ModelOption[] }>;
   onDefaultEffortChange?: (level: EffortLevel | "") => void;
   onDefaultAgentChange?: (agent: string) => void;
 }
 
-export function SettingsPanel({ onClose, onDefaultEffortChange, onDefaultAgentChange }: Props) {
+export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onDefaultAgentChange }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [worktreeRoot, setWorktreeRoot] = useState("");
   const [inactivityTimeout, setInactivityTimeout] = useState("30");
+  const [defaultModelClaude, setDefaultModelClaude] = useState("");
+  const [defaultModelCodex, setDefaultModelCodex] = useState("");
   const [defaultEffortLevel, setDefaultEffortLevel] = useState<EffortLevel | "">("");
   const [defaultAgent, setDefaultAgent] = useState("");
   const [detectedAgents, setDetectedAgents] = useState<Array<{ name: string; detected: boolean }>>([]);
@@ -20,11 +23,16 @@ export function SettingsPanel({ onClose, onDefaultEffortChange, onDefaultAgentCh
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  const claudeModels = agents.find((a) => a.name === "claude")?.models ?? [];
+  const codexModels = agents.find((a) => a.name === "codex")?.models ?? [];
+
   useEffect(() => {
     api.getSettings().then((s) => {
       setSettings(s);
       setWorktreeRoot(s.worktreeRoot);
       setInactivityTimeout(String(s.inactivityTimeoutMinutes));
+      setDefaultModelClaude(s.defaultModelClaude || "");
+      setDefaultModelCodex(s.defaultModelCodex || "");
       setDefaultEffortLevel(s.defaultEffortLevel);
       setDefaultAgent(s.defaultAgent);
     }).catch((err) => setError((err as Error).message));
@@ -45,6 +53,12 @@ export function SettingsPanel({ onClose, onDefaultEffortChange, onDefaultAgentCh
       if (Number.isFinite(timeoutNum) && timeoutNum >= 1 && timeoutNum !== settings?.inactivityTimeoutMinutes) {
         patch.inactivityTimeoutMinutes = timeoutNum;
       }
+      if (defaultModelClaude !== (settings?.defaultModelClaude || "")) {
+        patch.defaultModelClaude = defaultModelClaude;
+      }
+      if (defaultModelCodex !== (settings?.defaultModelCodex || "")) {
+        patch.defaultModelCodex = defaultModelCodex;
+      }
       if (defaultEffortLevel !== settings?.defaultEffortLevel) {
         patch.defaultEffortLevel = defaultEffortLevel;
       }
@@ -55,6 +69,8 @@ export function SettingsPanel({ onClose, onDefaultEffortChange, onDefaultAgentCh
       setSettings(updated);
       setWorktreeRoot(updated.worktreeRoot);
       setInactivityTimeout(String(updated.inactivityTimeoutMinutes));
+      setDefaultModelClaude(updated.defaultModelClaude || "");
+      setDefaultModelCodex(updated.defaultModelCodex || "");
       setDefaultEffortLevel(updated.defaultEffortLevel);
       setDefaultAgent(updated.defaultAgent);
       onDefaultEffortChange?.(updated.defaultEffortLevel);
@@ -66,11 +82,13 @@ export function SettingsPanel({ onClose, onDefaultEffortChange, onDefaultAgentCh
     } finally {
       setSaving(false);
     }
-  }, [worktreeRoot, inactivityTimeout, defaultEffortLevel, defaultAgent, settings, onDefaultEffortChange, onDefaultAgentChange]);
+  }, [worktreeRoot, inactivityTimeout, defaultModelClaude, defaultModelCodex, defaultEffortLevel, defaultAgent, settings, onDefaultEffortChange, onDefaultAgentChange]);
 
   const isDirty = settings !== null && (
     worktreeRoot.trim() !== settings.worktreeRoot ||
     (Number.isFinite(Number(inactivityTimeout)) && Number(inactivityTimeout) >= 1 && Number(inactivityTimeout) !== settings.inactivityTimeoutMinutes) ||
+    defaultModelClaude !== (settings.defaultModelClaude || "") ||
+    defaultModelCodex !== (settings.defaultModelCodex || "") ||
     defaultEffortLevel !== settings.defaultEffortLevel ||
     defaultAgent !== settings.defaultAgent
   );
@@ -103,6 +121,8 @@ export function SettingsPanel({ onClose, onDefaultEffortChange, onDefaultAgentCh
                   setSettings(s);
                   setWorktreeRoot(s.worktreeRoot);
                   setInactivityTimeout(String(s.inactivityTimeoutMinutes));
+                  setDefaultModelClaude(s.defaultModelClaude || "");
+                  setDefaultModelCodex(s.defaultModelCodex || "");
                   setDefaultEffortLevel(s.defaultEffortLevel);
                   setDefaultAgent(s.defaultAgent);
                 }).catch((err) => setError((err as Error).message));
@@ -159,6 +179,50 @@ export function SettingsPanel({ onClose, onDefaultEffortChange, onDefaultAgentCh
                 }}
               />
             </div>
+
+            {/* Default Models */}
+            {(claudeModels.length > 0 || codexModels.length > 0) && (
+              <div>
+                <label className="block text-sm font-medium text-content-2 mb-1.5">
+                  Default model
+                </label>
+                <p className="text-xs text-content-3 mb-2">
+                  New threads will use this model by default. You can override per-thread.
+                </p>
+                <div className="space-y-2">
+                  {claudeModels.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-content-3 w-14">Claude</span>
+                      <select
+                        value={defaultModelClaude}
+                        onChange={(e) => setDefaultModelClaude(e.target.value)}
+                        className="flex-1 bg-surface-1 border border-edge-2 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                      >
+                        <option value="">Default (SDK default)</option>
+                        {claudeModels.map((m) => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {codexModels.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-content-3 w-14">Codex</span>
+                      <select
+                        value={defaultModelCodex}
+                        onChange={(e) => setDefaultModelCodex(e.target.value)}
+                        className="flex-1 bg-surface-1 border border-edge-2 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                      >
+                        <option value="">Default (SDK default)</option>
+                        {codexModels.map((m) => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Default Agent */}
             {detectedAgents.length > 1 && (

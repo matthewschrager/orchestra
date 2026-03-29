@@ -21,6 +21,8 @@ function resolveSettings(db: DB): Settings {
       ? timeoutParsed
       : DEFAULT_INACTIVITY_TIMEOUT_MINUTES,
     remoteUrl: raw.remoteUrl || "",
+    defaultModelClaude: raw.defaultModelClaude || "",
+    defaultModelCodex: raw.defaultModelCodex || "",
     defaultEffortLevel: (VALID_EFFORT_LEVELS.includes(raw.defaultEffortLevel ?? "") ? raw.defaultEffortLevel as EffortLevel : "") as EffortLevel | "",
     defaultAgent: raw.defaultAgent || "",
   };
@@ -92,6 +94,26 @@ export function createSettingsRoutes(db: DB, worktreeManager: WorktreeManager) {
       validatedRemoteUrl = trimmed;
     }
 
+    // Validate default model settings (format only — model list is dynamic)
+    const MODEL_RE = /^[a-zA-Z0-9.\-]*$/;
+    let validatedDefaultModelClaude: string | undefined;
+    if (body.defaultModelClaude !== undefined) {
+      const val = String(body.defaultModelClaude).trim();
+      if (val.length > 100 || !MODEL_RE.test(val)) {
+        return c.json({ error: "defaultModelClaude must be a valid model ID (alphanumeric, dots, hyphens, max 100 chars)" }, 400);
+      }
+      validatedDefaultModelClaude = val;
+    }
+
+    let validatedDefaultModelCodex: string | undefined;
+    if (body.defaultModelCodex !== undefined) {
+      const val = String(body.defaultModelCodex).trim();
+      if (val.length > 100 || !MODEL_RE.test(val)) {
+        return c.json({ error: "defaultModelCodex must be a valid model ID (alphanumeric, dots, hyphens, max 100 chars)" }, 400);
+      }
+      validatedDefaultModelCodex = val;
+    }
+
     let validatedDefaultEffortLevel: string | undefined;
     if (body.defaultEffortLevel !== undefined) {
       const val = body.defaultEffortLevel;
@@ -122,6 +144,12 @@ export function createSettingsRoutes(db: DB, worktreeManager: WorktreeManager) {
     }
     if (validatedRemoteUrl !== undefined) {
       setSetting(db, "remoteUrl", validatedRemoteUrl);
+    }
+    if (validatedDefaultModelClaude !== undefined) {
+      setSetting(db, "defaultModelClaude", validatedDefaultModelClaude);
+    }
+    if (validatedDefaultModelCodex !== undefined) {
+      setSetting(db, "defaultModelCodex", validatedDefaultModelCodex);
     }
     if (validatedDefaultEffortLevel !== undefined) {
       setSetting(db, "defaultEffortLevel", validatedDefaultEffortLevel);

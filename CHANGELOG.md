@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.39.0] - 2026-03-29
+
+### Added
+
+- **Per-provider model selection** — users can now pick specific models (Opus 4.6, Sonnet 4.6, Haiku 3.5 for Claude; GPT-5.3 Codex, GPT-5.4, GPT-5.4 Pro/Mini for Codex) via dropdowns in InputBar, MobileNewSession, and ContextPanel
+- **Settings default model** — `defaultModelClaude` and `defaultModelCodex` in Settings panel pre-select the user's preferred model on new threads
+- **Mid-session model switching** — change model on a running thread via ContextPanel dropdown; Claude uses `q.setModel()` for immediate effect, Codex defers to next turn
+- **Lazy model discovery** — Claude adapter calls `supportedModels()` on first persistent session and caches the result, replacing hardcoded defaults with the SDK's actual model list
+
+### Fixed
+
+- **Model change on resumed sessions** — when changing model with no active subprocess, the persisted `session_id` is cleared so the next message starts a fresh session with the new model instead of resuming the old one (which would ignore the model parameter)
+
 ## [0.1.38.0] - 2026-03-28
 
 ### Fixed

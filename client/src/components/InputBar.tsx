@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { getEffortOptions, type Attachment, type EffortLevel, type Thread, type SlashCommand } from "shared";
+import { getEffortOptions, type Attachment, type EffortLevel, type ModelOption, type Thread, type SlashCommand, type Settings } from "shared";
 import { SlashCommandInput } from "./SlashCommandInput";
 import { WorktreePathInput } from "./WorktreePathInput";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -7,17 +7,18 @@ import { api } from "../hooks/useApi";
 import { useFileAutocomplete } from "../hooks/useFileAutocomplete";
 
 interface Props {
-  agents: Array<{ name: string; detected: boolean }>;
+  agents: Array<{ name: string; detected: boolean; models?: ModelOption[] }>;
   thread: Thread | null;
   activeProjectId: string | null;
   activeProjectName: string | null;
   commands: SlashCommand[];
+  settings?: Settings | null;
   history?: string[];
   pendingQuestion?: boolean | null;
   defaultEffortLevel?: EffortLevel | "";
   defaultAgent?: string;
   onSend: (content: string, attachments?: Attachment[], interrupt?: boolean) => void;
-  onNewThread: (agent: string, effortLevel: EffortLevel | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => void;
+  onNewThread: (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[]) => void;
   onStop: () => void;
 }
 
@@ -29,12 +30,13 @@ function generateDefaultWorktreeName(projectName: string | null): string {
   return `orchestra/${base}-${suffix}`;
 }
 
-export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, history, pendingQuestion, defaultEffortLevel, defaultAgent, onSend, onNewThread, onStop }: Props) {
+export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, settings, history, pendingQuestion, defaultEffortLevel, defaultAgent, onSend, onNewThread, onStop }: Props) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
   const resolvedDefaultAgent = (defaultAgent && agents.some((a) => a.detected && a.name === defaultAgent)) ? defaultAgent : (agents.find((a) => a.detected)?.name ?? "claude");
   const [agent, setAgent] = useState(resolvedDefaultAgent);
   const [effortLevel, setEffortLevel] = useState<EffortLevel | "">(defaultEffortLevel ?? "");
+  const [model, setModel] = useState<string>("");
   const [isolate, setIsolate] = useState(true);
   const [worktreeName, setWorktreeName] = useState(() => generateDefaultWorktreeName(activeProjectName));
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -48,6 +50,16 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
 
   const isRunning = thread?.status === "running";
   const effortOptions = getEffortOptions(agent);
+  const agentModels = agents.find((a) => a.name === agent)?.models ?? [];
+
+  // Get settings default for current agent
+  const settingsDefault = agent === "claude" ? settings?.defaultModelClaude : agent === "codex" ? settings?.defaultModelCodex : "";
+
+  // "Default" label adapts: show resolved name if settings default is set
+  const defaultLabel = settingsDefault
+    ? `Default (${agentModels.find((m) => m.value === settingsDefault)?.label ?? settingsDefault})`
+    : "Default";
+
   const { fileSuggestions, fileLoading, handleFileQueryChange } = useFileAutocomplete(activeProjectId);
 
   // Sync default agent from settings (only if user hasn't manually changed it)
@@ -70,6 +82,13 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
       setEffortLevel(defaultEffortLevel && effortOptions.some((o) => o.value === defaultEffortLevel) ? defaultEffortLevel : "");
     }
   }, [effortLevel, effortOptions, defaultEffortLevel]);
+
+  // Reset model when agent changes (if current model not in new agent's list)
+  useEffect(() => {
+    if (model && !agentModels.some((m) => m.value === model)) {
+      setModel("");
+    }
+  }, [agent, model, agentModels]);
 
   const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -180,7 +199,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
       if (cmd === "/new") {
         const prompt = args || "";
         if (prompt) {
-          onNewThread(agent, effortLevel || null, prompt, isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined);
+          onNewThread(agent, effortLevel || null, model || null, prompt, isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined);
         } else {
           setMode("new");
         }
@@ -197,7 +216,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
     const currentAttachments = hasAttachments ? attachments : undefined;
 
     if (mode === "new" || !thread) {
-      onNewThread(agent, effortLevel || null, text || "(see attached files)", isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, currentAttachments);
+      onNewThread(agent, effortLevel || null, model || null, text || "(see attached files)", isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, currentAttachments);
     } else {
       onSend(text || "(see attached files)", currentAttachments, interrupt);
     }
@@ -356,6 +375,24 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
                 ))}
             </select>
           </label>
+          {agentModels.length > 0 && (
+            <label className="flex items-center gap-1.5 text-xs text-content-2">
+              <span className="text-content-3">Model</span>
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                className="text-xs bg-surface-2 border border-edge-2 rounded-lg px-2 py-1.5 text-content-2"
+                aria-label="Model"
+              >
+                <option value="">{defaultLabel}</option>
+                {agentModels.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="flex items-center gap-1.5 text-xs text-content-2">
             <span className="text-content-3">Effort</span>
             <select

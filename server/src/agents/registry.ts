@@ -1,6 +1,7 @@
 import type { AgentAdapter } from "./types";
-import { ClaudeAdapter } from "./claude";
+import { ClaudeAdapter, getCachedClaudeModels } from "./claude";
 import { CodexAdapter } from "./codex";
+import { getModelOptions, type ModelOption } from "shared";
 
 export class AgentRegistry {
   private adapters: Map<string, AgentAdapter> = new Map();
@@ -22,12 +23,15 @@ export class AgentRegistry {
     return Array.from(this.adapters.values());
   }
 
-  async detectAll(): Promise<Array<{ name: string; detected: boolean; version: string | null }>> {
+  async detectAll(): Promise<Array<{ name: string; detected: boolean; version: string | null; models: ModelOption[] }>> {
     const results = await Promise.all(
       this.list().map(async (a) => ({
         name: a.name,
         detected: await a.detect(),
         version: await a.getVersion(),
+        models: a.name === "claude"
+          ? (getCachedClaudeModels() ?? [...getModelOptions("claude")])
+          : [...getModelOptions(a.name)],
       })),
     );
     return results;

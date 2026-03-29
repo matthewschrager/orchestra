@@ -3,6 +3,7 @@ import type { AttentionKind, EffortLevel, StreamDelta } from "shared";
 export interface StartOpts {
   cwd: string;
   effortLevel?: EffortLevel;
+  model?: string;
   prompt: string;
   resumeSessionId?: string;
 }
@@ -27,6 +28,9 @@ export interface PersistentSession extends AgentSession {
   close(): void;
   /** Reset parser turn-level state (tool dedup sets, active blocks) between turns */
   resetTurnState(): void;
+  /** Change the model used for subsequent responses.
+   *  Optional — only available on adapters backed by the Claude Agent SDK Query object. */
+  setModel?(model: string): Promise<void>;
   /** Change the CLI subprocess permission mode (e.g., exit plan mode after user approval).
    *  Optional — only available on adapters backed by the Claude Agent SDK Query object. */
   setPermissionMode?(mode: string): Promise<void>;
