@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.41.0] - 2026-03-29
+
+### Fixed
+
+- **Shiki WebAssembly no longer trips the app CSP** — extracted the security-header policy into a shared helper and added the narrow `wasm-unsafe-eval` allowance so browser-side syntax highlighting can compile its bundled Wasm without re-enabling general `unsafe-eval`
+- **Service worker no longer breaks Google Fonts under CSP** — cross-origin requests now bypass the offline fetch handler instead of being re-fetched under `connect-src`, and same-origin cache misses now return a real `Response` instead of crashing the service worker with `Failed to convert value to 'Response'`
+- **Mobile PWA capability warning reduced** — added the modern `mobile-web-app-capable` meta tag alongside the existing Apple tag to address the deprecation warning Chrome surfaces in the console
+
+### Added
+
+- **Regression coverage for the CSP and service-worker fixes** — new tests lock in the narrow Wasm CSP allowance, the service worker's cross-origin bypass behavior, and the cache-miss fallback path
+
 ## [0.1.40.1] - 2026-03-29
 
 ### Fixed
