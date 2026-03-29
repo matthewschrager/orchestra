@@ -83,6 +83,39 @@ export function replaceAtToken(
   return { newValue, newCursorPos };
 }
 
+/** Measure the pixel X-offset of a caret position within a textarea. */
+function getCaretXOffset(textarea: HTMLTextAreaElement, position: number): number {
+  const mirror = document.createElement("div");
+  const style = getComputedStyle(textarea);
+
+  mirror.style.position = "absolute";
+  mirror.style.top = "-9999px";
+  mirror.style.left = "-9999px";
+  mirror.style.visibility = "hidden";
+  mirror.style.width = `${textarea.clientWidth}px`;
+  mirror.style.font = style.font;
+  mirror.style.letterSpacing = style.letterSpacing;
+  mirror.style.padding = style.padding;
+  mirror.style.border = style.border;
+  mirror.style.boxSizing = style.boxSizing;
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.wordWrap = "break-word";
+  mirror.style.overflowWrap = "break-word";
+
+  const textBefore = textarea.value.substring(0, position);
+  mirror.textContent = textBefore;
+
+  const marker = document.createElement("span");
+  marker.textContent = "\u200b"; // zero-width space
+  mirror.appendChild(marker);
+
+  document.body.appendChild(mirror);
+  const left = marker.offsetLeft;
+  document.body.removeChild(mirror);
+
+  return left;
+}
+
 type DropdownMode = "slash" | "file" | null;
 
 interface Props {
@@ -188,6 +221,14 @@ export function SlashCommandInput({
     const item = dropdown.querySelector("[data-selected=true]") as HTMLElement | null;
     item?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex, dropdownMode]);
+
+  // Track pixel X-offset of the slash token for cursor-positioned dropdown
+  const [caretLeft, setCaretLeft] = useState<number>(0);
+  useEffect(() => {
+    if (dropdownMode === "slash" && slashToken && textareaRef.current) {
+      setCaretLeft(getCaretXOffset(textareaRef.current, slashToken.start));
+    }
+  }, [dropdownMode, slashToken?.start]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectCommand = useCallback(
     (cmd: SlashCommand) => {
@@ -356,7 +397,8 @@ export function SlashCommandInput({
     <div className="relative flex-1">
       {/* Slash command autocomplete dropdown */}
       {dropdownMode === "slash" && (
-        <div ref={dropdownRef} role="listbox" className="absolute bottom-full left-0 mb-1 w-72 max-h-64 overflow-y-auto bg-surface-3 border border-edge-2 rounded-lg shadow-xl shadow-black/40 z-10">
+        <div ref={dropdownRef} role="listbox" className="absolute bottom-full mb-1 w-72 max-h-64 overflow-y-auto bg-surface-3 border border-edge-2 rounded-lg shadow-xl shadow-black/40 z-10"
+          style={{ left: `${Math.max(0, Math.min(caretLeft, (textareaRef.current?.offsetWidth ?? 288) - 288))}px` }}>
           {filteredCommands.map((cmd, i) => (
             <button
               key={cmd.name}
