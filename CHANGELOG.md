@@ -9,11 +9,25 @@
 ### Changed
 
 - **Auto-scroll updates live** — changing the setting takes effect immediately in the active thread, without reloading the page or reopening the session
+- **Project instructions stay aligned** — `CLAUDE.md` and `AGENTS.md` now document the auto-scroll setting alongside the current staging-first release workflow
 
 ### Fixed
 
 - **Unread message tracking with auto-scroll off** — the jump-to-bottom badge now counts the first unseen message correctly instead of starting one message late
 - **Regression coverage for the new setting** — added server route coverage plus client-side tests for the settings patch builder and thread scroll state
+
+## [0.1.44.1] - 2026-03-30
+
+### Fixed
+
+- **Queued steering survives user stop** — regular follow-up messages now stay pending until the current turn actually ends, so pressing Stop no longer orphans the queued message in persistent Claude sessions
+- **Next-turn steering now auto-runs deterministically** — queued non-interrupt messages are delivered through a single drain path after turn completion, matching the "steer the next turn" behavior users expect from Codex-style message queueing
+
+### Added
+
+- **Queue-drain regression coverage** — added session tests for stop-with-queued-message recovery, automatic next-turn pickup, and pending-queue accounting
+- **Staging branch workflow** — added `staging` as an integration/dogfooding branch between feature branches and `main`, with branching workflow documented in CLAUDE.md and AGENTS.md so all agents target `staging` for PRs
+- **Synced project documentation** — brought AGENTS.md in sync with CLAUDE.md (permission modes, settings descriptions, test coverage details)
 
 ## [0.1.44.0] - 2026-03-29
 
