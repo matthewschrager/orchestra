@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.44.1] - 2026-03-30
+
+### Fixed
+
+- **Queued steering survives user stop** — regular follow-up messages now stay pending until the current turn actually ends, so pressing Stop no longer orphans the queued message in persistent Claude sessions
+- **Next-turn steering now auto-runs deterministically** — queued non-interrupt messages are delivered through a single drain path after turn completion, matching the "steer the next turn" behavior users expect from Codex-style message queueing
+
+### Added
+
+- **Queue-drain regression coverage** — added session tests for stop-with-queued-message recovery, automatic next-turn pickup, and pending-queue accounting
+
 ## [0.1.44.0] - 2026-03-29
 
 ### Fixed
