@@ -9,6 +9,13 @@ import { ALL_EFFORT_OPTIONS, type EffortLevel, type Settings } from "shared";
 const VALID_EFFORT_LEVELS: readonly string[] = ALL_EFFORT_OPTIONS.map((o) => o.value);
 
 const DEFAULT_INACTIVITY_TIMEOUT_MINUTES = 30;
+const DEFAULT_AUTO_SCROLL_THREADS = true;
+
+function parseBooleanSetting(raw: string | undefined, fallback: boolean): boolean {
+  if (raw === "true" || raw === "1") return true;
+  if (raw === "false" || raw === "0") return false;
+  return fallback;
+}
 
 /** Resolve settings from DB with fallback defaults */
 function resolveSettings(db: DB): Settings {
@@ -20,6 +27,7 @@ function resolveSettings(db: DB): Settings {
     inactivityTimeoutMinutes: Number.isFinite(timeoutParsed) && timeoutParsed > 0
       ? timeoutParsed
       : DEFAULT_INACTIVITY_TIMEOUT_MINUTES,
+    autoScrollThreads: parseBooleanSetting(raw.autoScrollThreads, DEFAULT_AUTO_SCROLL_THREADS),
     remoteUrl: raw.remoteUrl || "",
     defaultModelClaude: raw.defaultModelClaude || "",
     defaultModelCodex: raw.defaultModelCodex || "",
@@ -49,6 +57,14 @@ export function createSettingsRoutes(db: DB, worktreeManager: WorktreeManager) {
         return c.json({ error: "inactivityTimeoutMinutes must be a number between 1 and 1440" }, 400);
       }
       validatedTimeout = val;
+    }
+
+    let validatedAutoScrollThreads: boolean | undefined;
+    if (body.autoScrollThreads !== undefined) {
+      if (typeof body.autoScrollThreads !== "boolean") {
+        return c.json({ error: "autoScrollThreads must be a boolean" }, 400);
+      }
+      validatedAutoScrollThreads = body.autoScrollThreads;
     }
 
     let resolvedWorktreeRoot: string | undefined;
@@ -137,6 +153,9 @@ export function createSettingsRoutes(db: DB, worktreeManager: WorktreeManager) {
     // ── Phase 2: Apply (all validated) ────────────────────
     if (validatedTimeout !== undefined) {
       setSetting(db, "inactivityTimeoutMinutes", String(validatedTimeout));
+    }
+    if (validatedAutoScrollThreads !== undefined) {
+      setSetting(db, "autoScrollThreads", String(validatedAutoScrollThreads));
     }
     if (resolvedWorktreeRoot !== undefined) {
       setSetting(db, "worktreeRoot", resolvedWorktreeRoot);

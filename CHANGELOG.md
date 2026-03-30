@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.45.0] - 2026-03-30
+
+### Added
+
+- **Thread auto-scroll setting** — Settings now includes an `Auto-scroll threads` toggle so users can choose whether chat views stay pinned to new messages and streaming output; it defaults to on
+
+### Changed
+
+- **Auto-scroll updates live** — changing the setting takes effect immediately in the active thread, without reloading the page or reopening the session
+- **Project instructions stay aligned** — `CLAUDE.md` and `AGENTS.md` now document the auto-scroll setting alongside the current staging-first release workflow
+
+### Fixed
+
+- **Unread message tracking with auto-scroll off** — the jump-to-bottom badge now counts the first unseen message correctly instead of starting one message late
+- **Regression coverage for the new setting** — added server route coverage plus client-side tests for the settings patch builder and thread scroll state
+
 ## [0.1.44.1] - 2026-03-30
 
 ### Fixed
