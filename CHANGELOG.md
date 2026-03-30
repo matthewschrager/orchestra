@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.44.1] - 2026-03-30
+
+### Added
+
+- **Staging branch workflow** — added `staging` as an integration/dogfooding branch between feature branches and `main`, with branching workflow documented in CLAUDE.md and AGENTS.md so all agents target `staging` for PRs
+- **Synced project documentation** — brought AGENTS.md in sync with CLAUDE.md (permission modes, settings descriptions, test coverage details)
+
 ## [0.1.44.0] - 2026-03-29
 
 ### Fixed
