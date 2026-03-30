@@ -10,6 +10,8 @@
 ### Added
 
 - **Queue-drain regression coverage** — added session tests for stop-with-queued-message recovery, automatic next-turn pickup, and pending-queue accounting
+- **Staging branch workflow** — added `staging` as an integration/dogfooding branch between feature branches and `main`, with branching workflow documented in CLAUDE.md and AGENTS.md so all agents target `staging` for PRs
+- **Synced project documentation** — brought AGENTS.md in sync with CLAUDE.md (permission modes, settings descriptions, test coverage details)
 
 ## [0.1.44.0] - 2026-03-29
 
