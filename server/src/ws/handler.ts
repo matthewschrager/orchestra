@@ -280,7 +280,7 @@ export function createWSHandler(
           break;
 
         case "stop_thread":
-          sessionManager.stopThread(msg.threadId);
+          sessionManager.stopThread(msg.threadId, { drainQueued: true });
           break;
 
         case "resolve_attention": {
