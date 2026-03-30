@@ -122,6 +122,20 @@ cd client && bun run build      # Build frontend to server/static/
 cd server && bun run src/index.ts  # Production server
 ```
 
+## Branching workflow
+
+```
+feature/foo ──PR──► staging ──PR──► main
+feature/bar ──PR──┘              (batched when stable)
+```
+
+- **`main`** — stable, public-facing branch. What people clone. Only updated via PR from `staging`.
+- **`staging`** — integration/dogfooding branch. All feature work merges here first.
+- **Feature branches** — short-lived, PR into `staging` (never directly into `main`).
+- When using `/ship` or creating PRs, **always target `staging`** as the base branch (e.g. `gh pr create --base staging`).
+- Periodically, once changes on `staging` are dogfooded and stable, open a single PR from `staging → main`.
+- External contributor PRs against `main` are fine — merge to `main`, then rebase `staging` on `main`.
+
 ## Key design decisions
 
 - Agents use `@anthropic-ai/claude-agent-sdk` (pinned v0.2.81) — SDK manages subprocess lifecycle internally
