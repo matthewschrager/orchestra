@@ -372,6 +372,32 @@ input[type="checkbox"] {
   .diff-line { font-size: 11px; }
 }
 
+/* ── Panel Resize Handle ───────────────────────────── */
+
+/* Prevent text selection while dragging panel handles */
+body.panel-resizing {
+  user-select: none;
+  cursor: col-resize;
+}
+/* ── File Diff Panel (ContextPanel accordion) ──────── */
+
+.file-diff-panel .renderer-block {
+  margin: 0;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.file-diff-panel .diff-body {
+  max-height: 240px;
+}
+.file-diff-panel .diff-line-num {
+  display: none;
+}
+.file-diff-panel .diff-line {
+  font-size: 11px;
+  line-height: 1.5;
+  min-height: 17px;
+}
+
 /* ── Read Renderer ──────────────────────────────────── */
 
 .read-line-num {

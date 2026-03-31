@@ -32,6 +32,23 @@ export function useTerminal(opts: {
   const threadIdRef = useRef(opts.threadId);
   threadIdRef.current = opts.threadId;
 
+  // Batch terminal input: accumulate keystrokes and flush once per frame (~16ms).
+  // This prevents hitting the WS rate limit (60/10s) during fast typing while
+  // remaining imperceptible to the user.
+  const inputBufferRef = useRef("");
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Flush and clean up input buffer on unmount or thread change
+  useEffect(() => {
+    return () => {
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      inputBufferRef.current = "";
+    };
+  }, [opts.threadId]);
+
   // Request terminal creation when visible + thread changes
   useEffect(() => {
     if (!opts.visible || !opts.threadId) return;
@@ -82,8 +99,37 @@ export function useTerminal(opts: {
 
   const sendInput = useCallback(
     (data: string) => {
-      if (terminalIdRef.current) {
+      if (!terminalIdRef.current) return;
+
+      // Control characters (Ctrl+C, Ctrl+D, etc.) and escape sequences must be
+      // sent immediately — they are time-sensitive signals that shouldn't be delayed.
+      const isControl = data.length === 1 && data.charCodeAt(0) < 32;
+      const isEscape = data.length > 0 && data.charCodeAt(0) === 0x1b;
+      if (isControl || isEscape) {
+        // Flush any pending buffer first so ordering is preserved
+        if (inputBufferRef.current) {
+          const buffered = inputBufferRef.current;
+          inputBufferRef.current = "";
+          if (flushTimerRef.current) {
+            clearTimeout(flushTimerRef.current);
+            flushTimerRef.current = null;
+          }
+          opts.send({ type: "terminal_input", terminalId: terminalIdRef.current, data: buffered });
+        }
         opts.send({ type: "terminal_input", terminalId: terminalIdRef.current, data });
+        return;
+      }
+
+      inputBufferRef.current += data;
+      if (!flushTimerRef.current) {
+        flushTimerRef.current = setTimeout(() => {
+          const buffered = inputBufferRef.current;
+          inputBufferRef.current = "";
+          flushTimerRef.current = null;
+          if (buffered && terminalIdRef.current) {
+            opts.send({ type: "terminal_input", terminalId: terminalIdRef.current, data: buffered });
+          }
+        }, 16); // ~1 frame — imperceptible, batches rapid keystrokes
       }
     },
     [opts.send],

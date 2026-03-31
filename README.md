@@ -6,12 +6,12 @@ I wanted an agent dashboard that combined a set of features I couldn't find toge
 - **Mobile access to local sessions** — Monitor and steer agents from your phone while they run on your laptop
 - **Model agnostic** — Bring your own agent, not locked to one provider
 - **Parallel development** — One-click worktree isolation, convenience functions to manage many worktrees simultaneously
-- **Use your existing subscriptions** — Runs local agents to leverage flat-rate plans (like Claude Pro/Max) rather than paying per token via API
+- **Use existing subscriptions** — Runs local agents to leverage flat-rate plans (like Claude Pro/Max) rather than paying per token via API
 - **Cross-platform** - Accessible from Windows, Mac, Linux, etc.
 
 Existing tools were either not agent first, tied to a single model provider (Claude/Codex apps), Mac-only (Conductor), required per-token API billing (Cursor etc.), or lacked first-class mobile access to local sessions (Cloud Agents etc.). Orchestra fills that gap. 
 
-Have a feature idea while walking the dog? Spin up a new thread from your phone, it runs on your laptop using your existing subscriptions (no pay-by-the-token). It has access to your local environment (skills, plugins, dev environment, etc.) - no need for a cloud environment to rebuild your environment every time. Before long, you'll find yourself managing dozens of threads across multiple projects. And you can do it from anywhere.
+Have a feature idea while walking the dog? Spin up a new thread from your phone, it runs on your laptop using your existing subscriptions (no pay-by-the-token). It has access to your local environment (skills, plugins, dev environment, etc.) - no need for a cloud VM to rebuild your environment every time. Before long, you'll find yourself managing dozens of threads across multiple projects. And you can do it from anywhere.
 
 <b>Manage your agents from any model provider, using your existing subscriptions, from wherever you are.</b>
 
@@ -33,7 +33,7 @@ Have a feature idea while walking the dog? Spin up a new thread from your phone,
 - **Thread-based UX** — Manage agent conversations as threads with streaming output, inline previews, collapsible tool blocks, and rich diffs
 - **Remote/mobile access** — Use from your phone while agents run on your laptop, with push notifications for attention events
 - **Worktree isolation** — One-click per-thread worktree isolation, with convenience functions for managing many worktrees simultaneously
-- **Parallel Dev Made Easy** — One-click to merge all outstanding PRs (you'll have lots due to easy worktree isolation), one-click to delete all threads with merged PRs, etc. 
+- **Parallel Dev Made Easy** — Isolated worktrees by default, one-click to merge all outstanding PRs, one-click to delete all threads with merged PRs, etc. 
 - **Multi-agent** — Bring your own CLIs; Claude Code and Codex adapters included, easy to add more
 - **Integrated terminal** — xterm.js terminal per thread, backed by a real PTY on the server
 - **Token auth** — Secure remote access with bearer token auth
@@ -70,19 +70,65 @@ That's it — `start.sh` installs dependencies, builds the frontend, and starts 
 
 By default, Orchestra binds to `127.0.0.1` (localhost only). For remote/mobile access:
 
-```bash
-# Easiest: Cloudflare Tunnel (public URL, works from anywhere)
-./start.sh --tunnel
+| Method | Setup | Auth | Best for |
+|--------|-------|------|----------|
+| **Tailscale Serve** | One command | Automatic (identity headers) | Daily use from phone/tablet |
+| **Cloudflare Tunnel** | `./start.sh --tunnel` | QR code (scan to auth) | Quick setup, no VPN needed |
+| **LAN** | `ORCHESTRA_HOST=0.0.0.0` | Bearer token | Same network only |
+| **SSH tunnel** | `ssh -L 3847:localhost:3847 host` | None (local) | Quick one-off access |
 
-# Or: bind to all interfaces on your LAN
+All remote methods (except SSH tunnel) generate a bearer token stored in `~/.orchestra/auth-token`.
+
+### Tailscale (recommended)
+
+[Tailscale](https://tailscale.com/) gives you a private HTTPS URL (e.g. `https://mybox.tail1234.ts.net`) accessible from any device on your tailnet — no port forwarding, no public exposure. Orchestra has first-class Tailscale integration with automatic browser sign-in.
+
+**Setup:**
+
+1. [Install Tailscale](https://tailscale.com/download) on both your server machine and your phone/tablet
+2. Start Orchestra: `./start.sh`
+3. Enable HTTPS serving (proxies Tailscale HTTPS → Orchestra HTTP):
+   ```bash
+   tailscale serve --bg 3847
+   ```
+4. Open `https://<your-hostname>.ts.net` on your phone
+
+That's it. Browser sessions sign in automatically — no token needed.
+
+**Guided setup in the UI:** You can also set this up from **Settings → Remote Access**, which detects your Tailscale status and shows the exact commands to run. It will flag misconfigurations (wrong port, HTTPS mismatch) and tell you how to fix them.
+
+**Tagged devices:** [Tagged nodes](https://tailscale.com/kb/1068/tags) can't sign in automatically — use the bearer token from `~/.orchestra/auth-token` instead.
+
+**Troubleshooting:**
+```bash
+tailscale serve status --json      # Check current serve config
+tailscale serve reset              # Clear config and start fresh
+tailscale serve --bg 3847          # Re-enable
+```
+
+### Cloudflare Tunnel
+
+```bash
+./start.sh --tunnel
+```
+
+Prints a QR code to your terminal — scan it from your phone to open Orchestra and auto-authenticate. The token is embedded in the URL, so there's nothing to copy-paste. The bearer token is also saved to `~/.orchestra/auth-token` if you need it.
+
+### LAN / manual
+
+```bash
 ORCHESTRA_HOST=0.0.0.0 ./start.sh
 ```
 
-Both generate a bearer token stored in `~/.orchestra/auth-token` — use it to sign in from other devices.
+Binds to all interfaces. Access via `http://<local-ip>:3847` and authenticate with the bearer token.
 
-**Other options:**
-- **Tailscale** — zero-config VPN; Orchestra auto-detects Tailscale identity headers for browser sessions
-- **SSH tunnel** — `ssh -L 3847:localhost:3847 <host>`
+### SSH tunnel
+
+```bash
+ssh -L 3847:localhost:3847 <host>
+```
+
+Forwards the port locally — no auth needed since traffic stays on `localhost`.
 
 ## Development
 

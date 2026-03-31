@@ -1,9 +1,29 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { Thread, WorktreeInfo } from "shared";
 import { getEffortLabel, getPermissionModeLabel } from "shared";
 import { api } from "../hooks/useApi";
 import { FilePathLink } from "./FilePathLink";
+import { FileDiffAccordion } from "./FileDiffAccordion";
 import { PrBadge } from "./PrBadge";
+
+// ── Panel resize constants ──────────────────────────────
+
+const MIN_PANEL_WIDTH = 280;
+const MAX_PANEL_WIDTH = 720;
+const DEFAULT_PANEL_WIDTH = 320;
+const PANEL_WIDTH_KEY = "orchestra:panel-width";
+
+function getStoredPanelWidth(): number {
+  try {
+    const val = localStorage.getItem(PANEL_WIDTH_KEY);
+    if (!val) return DEFAULT_PANEL_WIDTH;
+    const n = parseInt(val, 10);
+    if (isNaN(n) || n < MIN_PANEL_WIDTH) return DEFAULT_PANEL_WIDTH;
+    return Math.min(n, MAX_PANEL_WIDTH);
+  } catch {
+    return DEFAULT_PANEL_WIDTH;
+  }
+}
 
 interface Props {
   thread: Thread;
@@ -47,6 +67,46 @@ export function ContextPanel({ thread, onClose }: Props) {
   const [prLoading, setPrLoading] = useState(false);
   const [prRefreshing, setPrRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [panelWidth, setPanelWidth] = useState(getStoredPanelWidth);
+  const [dragging, setDragging] = useState(false);
+
+  // ── Horizontal drag resize (desktop only) ──────────────
+
+  const handleDragStart = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = panelWidth;
+      const el = e.currentTarget as HTMLElement;
+      el.setPointerCapture(e.pointerId);
+      setDragging(true);
+      document.body.classList.add("panel-resizing");
+
+      let lastWidth = startWidth;
+
+      const onMove = (ev: PointerEvent) => {
+        // Dragging left = increasing width (startX - ev.clientX is positive)
+        const delta = startX - ev.clientX;
+        const newWidth = Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, startWidth + delta));
+        lastWidth = newWidth;
+        setPanelWidth(newWidth);
+      };
+
+      const onUp = () => {
+        setDragging(false);
+        document.body.classList.remove("panel-resizing");
+        el.removeEventListener("pointermove", onMove);
+        el.removeEventListener("pointerup", onUp);
+        el.removeEventListener("lostpointercapture", onUp);
+        localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(lastWidth)));
+      };
+
+      el.addEventListener("pointermove", onMove);
+      el.addEventListener("pointerup", onUp);
+      el.addEventListener("lostpointercapture", onUp);
+    },
+    [panelWidth],
+  );
 
   useEffect(() => {
     if (!thread.worktree) return;
@@ -111,12 +171,24 @@ export function ContextPanel({ thread, onClose }: Props) {
         className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
         onClick={onClose}
       />
-      <aside className={`
-        fixed inset-x-0 bottom-0 z-50 max-h-[70vh] rounded-t-2xl
-        md:static md:inset-auto md:max-h-none md:rounded-none
-        w-full md:w-80 border-l-0 md:border-l border-t md:border-t-0 border-edge-1
-        bg-surface-1 flex flex-col shrink-0 overflow-y-auto
-      `}>
+
+      {/* Desktop resize handle */}
+      <div
+        className="hidden md:flex items-center shrink-0 w-1.5 cursor-col-resize group"
+        onPointerDown={handleDragStart}
+      >
+        <div className={`w-px h-full transition-colors ${dragging ? "bg-accent" : "bg-edge-1 group-hover:bg-accent/40"}`} />
+      </div>
+
+      <aside
+        className={`
+          fixed inset-x-0 bottom-0 z-50 max-h-[70vh] rounded-t-2xl
+          md:static md:inset-auto md:max-h-none md:rounded-none
+          w-full border-t md:border-t-0 border-edge-1
+          bg-surface-1 flex flex-col shrink-0 overflow-y-auto
+        `}
+        style={{ width: panelWidth }}
+      >
       <div className="flex items-center justify-between p-3 border-b border-edge-1">
         {/* Drag handle (mobile) */}
         <div className="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1 rounded-full bg-surface-4 md:hidden" />
@@ -154,7 +226,17 @@ export function ContextPanel({ thread, onClose }: Props) {
         {/* Branch info */}
         {thread.branch && (
           <Section title="Branch">
-            <code className="text-sm text-accent font-mono">{thread.branch}</code>
+            <div className="space-y-1">
+              <code className="text-sm text-accent font-mono">{thread.branch}</code>
+              {thread.baseBranch && (
+                <div className="flex items-center gap-1.5 text-xs text-content-3">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="opacity-50 shrink-0">
+                    <path d="M5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 0 10.5 8.5H12a2.25 2.25 0 1 1 0 1.5h-1.5A4 4 0 0 1 6.5 6V5.372a2.25 2.25 0 0 1-1.5-2.122ZM8 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm5.5 7a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z" />
+                  </svg>
+                  <span>from <code className="font-mono text-content-2">{thread.baseBranch}</code></span>
+                </div>
+              )}
+            </div>
           </Section>
         )}
 
@@ -167,7 +249,7 @@ export function ContextPanel({ thread, onClose }: Props) {
 
         {/* Ahead/Behind + Diff Stats */}
         {worktreeInfo && (
-          <Section title="Status">
+          <Section title={worktreeInfo.baseBranch ? `vs ${worktreeInfo.baseBranch}` : "Status"}>
             <div className="space-y-1.5">
               <div className="flex gap-3 text-sm font-mono">
                 <span className="text-emerald-400">
@@ -192,10 +274,11 @@ export function ContextPanel({ thread, onClose }: Props) {
           </Section>
         )}
 
-        {/* Changed files */}
+        {/* Changed files with expandable diffs */}
         {thread.worktree && worktreeInfo && worktreeInfo.changedFiles.length > 0 && (
           <Section title={`Changed files (${worktreeInfo.changedFiles.length})`}>
-            <ChangedFilesList
+            <FileDiffAccordion
+              threadId={thread.id}
               worktreePath={thread.worktree}
               changedFiles={worktreeInfo.changedFiles}
             />

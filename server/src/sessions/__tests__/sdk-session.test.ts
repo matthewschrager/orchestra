@@ -410,6 +410,7 @@ function createPersistentMockAdapter() {
   let pushMessage: (msg: Record<string, unknown>) => void;
   let finish: () => void;
   let injectCalls: Array<{ text: string; sessionId: string; priority?: "now" | "next" }> = [];
+  let startCalls: Array<{ prompt: string; resumeSessionId?: string }> = [];
   let closed = false;
   let resetCalls = 0;
 
@@ -426,6 +427,7 @@ function createPersistentMockAdapter() {
     },
 
     startPersistent(_opts: StartOpts): PersistentSession {
+      startCalls.push({ prompt: _opts.prompt, resumeSessionId: _opts.resumeSessionId });
       // Create a push-based async generator
       let resolve: ((value: IteratorResult<Record<string, unknown>>) => void) | null = null;
       const queue: Record<string, unknown>[] = [];
@@ -482,6 +484,7 @@ function createPersistentMockAdapter() {
     pushMessage: (msg: Record<string, unknown>) => pushMessage(msg),
     finish: () => finish(),
     getInjectCalls: () => injectCalls,
+    getStartCalls: () => startCalls,
     isClosed: () => closed,
     getResetCalls: () => resetCalls,
   };
@@ -624,6 +627,46 @@ describe("Persistent Session lifecycle", () => {
     sessionManager.stopAll();
   });
 
+  test("persistent session: stopThread can continue with the next queued message", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "stop and continue",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-stop-next", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    sessionManager.sendMessage(thread.id, "continue with this instead");
+    sessionManager.stopThread(thread.id, { drainQueued: true });
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(mock.isClosed()).toBe(true);
+
+    const startCalls = mock.getStartCalls();
+    expect(startCalls).toHaveLength(2);
+    expect(startCalls[1]).toMatchObject({
+      prompt: "continue with this instead",
+      resumeSessionId: "sess-stop-next",
+    });
+
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("running");
+    expect(sessionManager.isRunning(thread.id)).toBe(true);
+
+    const queueRows = db.query(
+      "SELECT delivered_at FROM message_queue WHERE thread_id = ? ORDER BY created_at ASC",
+    ).all(thread.id) as Array<{ delivered_at: string | null }>;
+    expect(queueRows).toHaveLength(1);
+    expect(queueRows[0]!.delivered_at).not.toBeNull();
+
+    sessionManager.stopAll();
+  });
+
   test("persistent session: queues message while agent is thinking", async () => {
     const mock = createPersistentMockAdapter();
     const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
@@ -654,11 +697,15 @@ describe("Persistent Session lifecycle", () => {
     const userMsgs = msgs.filter((m: { role: string }) => m.role === "user");
     expect(userMsgs.length).toBe(2); // initial prompt + queued message
 
-    // Verify injectMessage called with priority 'next'
-    const injects = mock.getInjectCalls();
-    expect(injects.length).toBe(1);
-    expect(injects[0].text).toBe("queued message 1");
-    expect(injects[0].priority).toBe("next");
+    // Regular steering should stay queued until the current turn finishes
+    expect(mock.getInjectCalls()).toHaveLength(0);
+
+    const pendingQueue = db.query(
+      "SELECT content, delivered_at FROM message_queue WHERE thread_id = ? ORDER BY created_at ASC",
+    ).all(thread.id) as Array<{ content: string; delivered_at: string | null }>;
+    expect(pendingQueue).toHaveLength(1);
+    expect(pendingQueue[0]!.content).toBe("queued message 1");
+    expect(pendingQueue[0]!.delivered_at).toBeNull();
 
     // Verify queue_updated delta was emitted (or queued_message for backward compat)
     const queuedDeltas = deltas.filter((d) => d.deltaType === "queue_updated" || d.deltaType === "queued_message");
@@ -667,9 +714,60 @@ describe("Persistent Session lifecycle", () => {
     sessionManager.stopAll();
   });
 
+  test("persistent session: queued steering auto-starts on the next turn", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const deltas: Array<{ deltaType: string; queuedCount?: number }> = [];
+    sessionManager.onStreamDelta((_threadId, delta) => {
+      deltas.push({ deltaType: delta.deltaType, queuedCount: delta.queuedCount });
+    });
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "next-turn test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-next", tools: [], cwd: "/tmp" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    sessionManager.sendMessage(thread.id, "pick this up next turn");
+    expect(mock.getInjectCalls()).toHaveLength(0);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-next",
+      permission_denials: [],
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    const injects = mock.getInjectCalls();
+    expect(injects).toHaveLength(1);
+    expect(injects[0]).toMatchObject({
+      text: "pick this up next turn",
+      sessionId: "sess-next",
+    });
+
+    const queueRows = db.query(
+      "SELECT delivered_at FROM message_queue WHERE thread_id = ? ORDER BY created_at ASC",
+    ).all(thread.id) as Array<{ delivered_at: string | null }>;
+    expect(queueRows).toHaveLength(1);
+    expect(queueRows[0]!.delivered_at).not.toBeNull();
+
+    const queuedCounts = deltas
+      .filter((d) => d.deltaType === "queue_updated" || d.deltaType === "queued_message")
+      .map((d) => d.queuedCount);
+    expect(queuedCounts.length).toBeGreaterThanOrEqual(1);
+
+    sessionManager.stopAll();
+  });
+
   test("persistent session: queue depth limit (max 5)", async () => {
     const mock = createPersistentMockAdapter();
-    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
 
     const thread = await sessionManager.startThread({
       agent: "mock",
@@ -685,7 +783,11 @@ describe("Persistent Session lifecycle", () => {
     for (let i = 1; i <= 5; i++) {
       sessionManager.sendMessage(thread.id, `queued ${i}`);
     }
-    expect(mock.getInjectCalls().length).toBe(5);
+    expect(mock.getInjectCalls()).toHaveLength(0);
+    const pendingCount = db.query(
+      "SELECT COUNT(*) as count FROM message_queue WHERE thread_id = ? AND delivered_at IS NULL",
+    ).get(thread.id) as { count: number };
+    expect(pendingCount.count).toBe(5);
 
     // 6th should throw "Queue full"
     expect(() => {
@@ -695,7 +797,7 @@ describe("Persistent Session lifecycle", () => {
     sessionManager.stopAll();
   });
 
-  test("persistent session: queuedCount resets on turn_end", async () => {
+  test("persistent session: queuedCount reflects remaining backlog after turn_end", async () => {
     const mock = createPersistentMockAdapter();
     const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
 
@@ -717,7 +819,7 @@ describe("Persistent Session lifecycle", () => {
     // Queue 2 messages
     sessionManager.sendMessage(thread.id, "msg 1");
     sessionManager.sendMessage(thread.id, "msg 2");
-    expect(mock.getInjectCalls().length).toBe(2);
+    expect(mock.getInjectCalls()).toHaveLength(0);
 
     // Complete the turn
     mock.pushMessage({
@@ -729,15 +831,22 @@ describe("Persistent Session lifecycle", () => {
       total_cost_usd: 0.01,
       num_turns: 1,
     });
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 100));
 
-    // After turn_end, should be able to queue 5 more (count was reset)
-    for (let i = 1; i <= 5; i++) {
+    expect(mock.getInjectCalls()).toHaveLength(1);
+
+    const queuedCounts = deltas
+      .filter((d) => d.deltaType === "queue_updated" || d.deltaType === "queued_message")
+      .map((d) => d.queuedCount);
+    expect(queuedCounts.length).toBeGreaterThanOrEqual(1);
+
+    // One queued follow-up is now in flight, so four more queued messages fit.
+    for (let i = 1; i <= 4; i++) {
       sessionManager.sendMessage(thread.id, `after-reset ${i}`);
     }
-    // Total injects: 2 (before reset) + 5 (after reset) = 7
-    // But after turn_end, state is 'idle' so these are regular injects, not queued
-    // The 5 after reset go through the idle path (state is idle after turn_end)
+    expect(() => {
+      sessionManager.sendMessage(thread.id, "after-reset 5");
+    }).toThrow("Queue full");
 
     sessionManager.stopAll();
   });
@@ -762,30 +871,6 @@ describe("Persistent Session lifecycle", () => {
 
     // No inject should have been called
     expect(mock.getInjectCalls().length).toBe(0);
-
-    sessionManager.stopAll();
-  });
-
-  test("persistent session: interrupt flag ignored in Phase 1", async () => {
-    const mock = createPersistentMockAdapter();
-    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
-
-    const thread = await sessionManager.startThread({
-      agent: "mock",
-      prompt: "interrupt test",
-      repoPath: repoDir,
-      projectId: "proj1",
-    });
-
-    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-int", tools: [], cwd: "/tmp" });
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Send with interrupt=true — should still queue as 'next' (Phase 1 ignores interrupt)
-    sessionManager.sendMessage(thread.id, "steer message", undefined, true);
-
-    const injects = mock.getInjectCalls();
-    expect(injects.length).toBe(1);
-    expect(injects[0].priority).toBe("next");
 
     sessionManager.stopAll();
   });

@@ -1,5 +1,93 @@
 # Changelog
 
+## [0.1.48.0] - 2026-03-31
+
+### Fixed
+
+- **Codex token metrics no longer drift upward across turns** — Orchestra now diffs the SDK's cumulative Codex usage per session instead of surfacing multi-turn totals as if they were the latest turn's usage
+- **Resumed Codex sessions no longer report bogus million-token spikes after reconnects** — when Orchestra lacks a safe cumulative baseline, it suppresses the token metric for that turn instead of showing an inflated total
+
+### Added
+
+- **Codex usage regression coverage** — added parser tests for first-turn totals, resumed-session diffs, and resumed sessions that start without a known baseline
+
+## [0.1.47.0] - 2026-03-31
+
+### Fixed
+
+- **Codex inline diffs now survive path format drift** — normalize `file_change` paths before snapshot and baseline lookup so completed-only edits keep the real pre-edit content instead of rendering the whole file as a fresh add
+
+### Added
+
+- **Codex parser regression coverage for path variants** — added tests for completed-only absolute paths and started/completed path-format mismatches so inflated inline diffs stay fixed
+
+## [0.1.46.0] - 2026-03-31
+
+### Fixed
+
+- **Codex screenshot rendering** - Codex tool results now preserve screenshots from both `content` and `structured_content`, and safe raster image payloads are proxied through `/api/files/serve` instead of relying on brittle inline data URLs
+- **Tool image path handling** - the client now converts real filesystem image paths into file-proxy URLs without rewriting normal web asset paths like `/assets/logo.png`
+
+### Added
+
+- **Regression coverage for tool screenshots** - new tests lock in Codex structured-content screenshots, file-backed raster image persistence, Claude tool-result image handling, and client-side image URL normalization
+
+### Changed
+
+- **Skill routing docs** - added the project-level routing block to `CLAUDE.md` and `AGENTS.md` so workflows like `/review`, `/ship`, and `/qa` are invoked consistently
+
+## [0.1.45.0] - 2026-03-30
+
+### Added
+
+- **Thread auto-scroll setting** — Settings now includes an `Auto-scroll threads` toggle so users can choose whether chat views stay pinned to new messages and streaming output; it defaults to on
+
+### Changed
+
+- **Auto-scroll updates live** — changing the setting takes effect immediately in the active thread, without reloading the page or reopening the session
+- **Project instructions stay aligned** — `CLAUDE.md` and `AGENTS.md` now document the auto-scroll setting alongside the current staging-first release workflow
+
+### Fixed
+
+- **Unread message tracking with auto-scroll off** — the jump-to-bottom badge now counts the first unseen message correctly instead of starting one message late
+- **Regression coverage for the new setting** — added server route coverage plus client-side tests for the settings patch builder and thread scroll state
+
+## [0.1.44.1] - 2026-03-30
+
+### Fixed
+
+- **Queued steering survives user stop** — regular follow-up messages now stay pending until the current turn actually ends, so pressing Stop no longer orphans the queued message in persistent Claude sessions
+- **Next-turn steering now auto-runs deterministically** — queued non-interrupt messages are delivered through a single drain path after turn completion, matching the "steer the next turn" behavior users expect from Codex-style message queueing
+
+### Added
+
+- **Queue-drain regression coverage** — added session tests for stop-with-queued-message recovery, automatic next-turn pickup, and pending-queue accounting
+- **Staging branch workflow** — added `staging` as an integration/dogfooding branch between feature branches and `main`, with branching workflow documented in CLAUDE.md and AGENTS.md so all agents target `staging` for PRs
+- **Synced project documentation** — brought AGENTS.md in sync with CLAUDE.md (permission modes, settings descriptions, test coverage details)
+
+## [0.1.44.0] - 2026-03-29
+
+### Fixed
+
+- **Terminal input batching** — accumulate keystrokes in a 16ms buffer (~1 animation frame) and flush as a single WebSocket message, preventing "rate limit exceeded" errors during fast typing in the integrated terminal
+- **Control character bypass** — Ctrl+C, Ctrl+D, escape sequences (arrow keys, etc.) now bypass the input buffer and send immediately, preserving time-sensitive signal delivery while still batching printable keystrokes
+
+### Added
+
+- **Terminal input buffer tests** — 14 new tests covering batching, timer lifecycle, cleanup, control character bypass, and edge cases (no terminal, disconnected terminal, empty input, ordering preservation)
+
+## [0.1.43.2] - 2026-03-29
+
+### Changed
+
+- **Expanded Remote Access documentation** — rewrote the README Remote Access section with a comparison table of all methods, detailed Tailscale setup guide (4-step flow, guided UI, tagged device fallback, troubleshooting), and dedicated subsections for Cloudflare Tunnel (QR code workflow), LAN, and SSH tunnel
+
+## [0.1.43.1] - 2026-03-29
+
+### Changed
+
+- **Updated README screenshots** — replaced all 4 documentation screenshots (desktop-thread, desktop-context, mobile-sessions, mobile-chat) with current UI captures reflecting the latest design changes
+
 ## [0.1.43.0] - 2026-03-29
 
 ### Changed

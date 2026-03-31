@@ -22,6 +22,7 @@ export interface ChatViewHandle {
 interface Props {
   messages: Message[];
   thread: Thread;
+  autoScrollThreads: boolean;
   streamingText?: string;
   streamingTool?: string;
   streamingToolInput?: string;
@@ -34,18 +35,47 @@ interface Props {
   onSaveTitle?: (newTitle: string) => void;
 }
 
+interface ContentUpdateScrollStateInput {
+  atBottom: boolean;
+  currentBaseline: number;
+  previousMessageCount: number;
+}
+
+interface ContentUpdateScrollState {
+  atBottom: boolean;
+  nextBaseline: number;
+}
+
+export function getContentUpdateScrollState({
+  atBottom,
+  currentBaseline,
+  previousMessageCount,
+}: ContentUpdateScrollStateInput): ContentUpdateScrollState {
+  if (atBottom) {
+    return { atBottom: true, nextBaseline: 0 };
+  }
+
+  return {
+    atBottom: false,
+    nextBaseline: currentBaseline === 0 ? previousMessageCount : currentBaseline,
+  };
+}
+
 export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
-  { messages, thread, streamingText, streamingTool, streamingToolInput, turnEnded, queuedSeqs, queueItems, onSubmitAnswers, onSaveTitle },
+  { messages, thread, autoScrollThreads, streamingText, streamingTool, streamingToolInput, turnEnded, queuedSeqs, queueItems, onSubmitAnswers, onSaveTitle },
   ref,
 ) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
+  const [isFollowingOutput, setIsFollowingOutput] = useState(autoScrollThreads);
+  const [isAtBottom, setIsAtBottom] = useState(true);
   const effortLabel = useMemo(() => getEffortLabel(thread.agent, thread.effortLevel), [thread.agent, thread.effortLevel]);
   // Track how many messages existed when user scrolled away, for the "N new" badge
   const [msgCountAtScrollAway, setMsgCountAtScrollAway] = useState(0);
   // Guard: suppress handleScroll during programmatic smooth-scroll to prevent flicker
   const isProgrammaticScroll = useRef(false);
+  const prevMessageCountRef = useRef(messages.length);
+  const pendingInitialScrollRef = useRef(true);
 
   const grouped = useMemo(() => groupMessages(messages), [messages]);
 
@@ -72,32 +102,91 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
     return ids;
   }, [messages]);
 
+  const measureAtBottom = useCallback((el: HTMLDivElement) => (
+    el.scrollHeight - el.scrollTop - el.clientHeight < 100
+  ), []);
+
   // Auto-scroll on new messages or streaming content
   // Uses scrollTo on the container (not scrollIntoView) to prevent scrolling
   // ancestor containers / viewport — which causes page jumps on mobile when
   // ChatView is mounted behind an overlay (e.g., the "New Session" tab).
   useEffect(() => {
-    if (autoScroll && containerRef.current) {
-      containerRef.current.scrollTo({ top: containerRef.current.scrollHeight, behavior: "smooth" });
+    const el = containerRef.current;
+    if (!el) {
+      prevMessageCountRef.current = messages.length;
+      return;
     }
-  }, [messages.length, streamingText, streamingTool, streamingToolInput, autoScroll]);
+
+    const previousMessageCount = prevMessageCountRef.current;
+
+    const hasRenderableContent = messages.length > 0 || Boolean(streamingText) || Boolean(streamingTool) || Boolean(streamingToolInput);
+    if (pendingInitialScrollRef.current && hasRenderableContent) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+      pendingInitialScrollRef.current = false;
+      setIsAtBottom(true);
+      setMsgCountAtScrollAway(0);
+      prevMessageCountRef.current = messages.length;
+      return;
+    }
+
+    if (autoScrollThreads && isFollowingOutput) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      setIsAtBottom(true);
+      setMsgCountAtScrollAway(0);
+      prevMessageCountRef.current = messages.length;
+      return;
+    }
+
+    const nextState = getContentUpdateScrollState({
+      atBottom: measureAtBottom(el),
+      currentBaseline: msgCountAtScrollAway,
+      previousMessageCount,
+    });
+    setIsAtBottom(nextState.atBottom);
+    setMsgCountAtScrollAway(nextState.nextBaseline);
+    prevMessageCountRef.current = messages.length;
+  }, [
+    thread.id,
+    messages.length,
+    streamingText,
+    streamingTool,
+    streamingToolInput,
+    autoScrollThreads,
+    isFollowingOutput,
+    measureAtBottom,
+    msgCountAtScrollAway,
+  ]);
 
   // Reset scroll-away state when switching threads
   useEffect(() => {
     setMsgCountAtScrollAway(0);
-    setAutoScroll(true);
+    setIsFollowingOutput(autoScrollThreads);
+    setIsAtBottom(true);
+    pendingInitialScrollRef.current = true;
   }, [thread.id]);
+
+  useEffect(() => {
+    if (autoScrollThreads) {
+      setIsFollowingOutput(true);
+      return;
+    }
+
+    setIsFollowingOutput(false);
+    if (containerRef.current) {
+      const atBottom = measureAtBottom(containerRef.current);
+      setIsAtBottom(atBottom);
+      if (atBottom) setMsgCountAtScrollAway(0);
+    }
+  }, [autoScrollThreads, measureAtBottom]);
 
   // Track when user scrolls away to count new messages for the FAB badge
   useEffect(() => {
-    if (!autoScroll && msgCountAtScrollAway === 0) {
-      setMsgCountAtScrollAway(messages.length);
-    } else if (autoScroll && msgCountAtScrollAway > 0) {
+    if (isAtBottom && msgCountAtScrollAway > 0) {
       setMsgCountAtScrollAway(0);
     }
-  }, [autoScroll, messages.length, msgCountAtScrollAway]);
+  }, [isAtBottom, msgCountAtScrollAway]);
 
-  const newMessageCount = !autoScroll && msgCountAtScrollAway > 0
+  const newMessageCount = !isAtBottom && msgCountAtScrollAway > 0
     ? Math.max(0, messages.length - msgCountAtScrollAway)
     : 0;
 
@@ -106,8 +195,16 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
     if (isProgrammaticScroll.current) return;
     const el = containerRef.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-    setAutoScroll(atBottom);
+    const atBottom = measureAtBottom(el);
+    setIsAtBottom(atBottom);
+    if (autoScrollThreads) {
+      setIsFollowingOutput(atBottom);
+    }
+    if (atBottom) {
+      setMsgCountAtScrollAway(0);
+    } else if (msgCountAtScrollAway === 0) {
+      setMsgCountAtScrollAway(messages.length);
+    }
   };
 
   const scrollToBottom = useCallback(() => {
@@ -115,17 +212,21 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
     if (containerRef.current) {
       containerRef.current.scrollTo({ top: containerRef.current.scrollHeight, behavior: "smooth" });
     }
-    setAutoScroll(true);
+    setIsAtBottom(true);
+    setMsgCountAtScrollAway(0);
+    setIsFollowingOutput(autoScrollThreads);
     // Re-enable scroll detection after animation settles
     setTimeout(() => { isProgrammaticScroll.current = false; }, 500);
-  }, []);
+  }, [autoScrollThreads]);
 
   const scrollToTop = useCallback(() => {
     isProgrammaticScroll.current = true;
-    setAutoScroll(false); // Disable auto-scroll so streaming doesn't fight the scroll-to-top
+    setIsFollowingOutput(false); // Disable auto-scroll so streaming doesn't fight the scroll-to-top
+    setIsAtBottom(false);
+    setMsgCountAtScrollAway(messages.length);
     containerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     setTimeout(() => { isProgrammaticScroll.current = false; }, 500);
-  }, []);
+  }, [messages.length]);
 
   useImperativeHandle(ref, () => ({ scrollToBottom, scrollToTop }), [scrollToBottom, scrollToTop]);
 
@@ -235,7 +336,7 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
     </div>
 
       {/* Jump-to-bottom FAB — positioned outside scroll container for reliable iOS Safari rendering */}
-      {!autoScroll && (
+      {!isAtBottom && (
         <button
           onClick={scrollToBottom}
           className="absolute bottom-3 right-3 z-10 flex items-center gap-1.5 pl-2.5 pr-3 py-1.5 rounded-full bg-surface-2 border border-edge-2 hover:border-accent/40 hover:bg-surface-3 shadow-lg text-xs text-content-2 hover:text-content-1 transition-all"

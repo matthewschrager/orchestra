@@ -11,6 +11,7 @@ interface Props {
   thread: Thread | null;
   activeProjectId: string | null;
   activeProjectName: string | null;
+  activeProjectBranch?: string | null;
   commands: SlashCommand[];
   settings?: Settings | null;
   history?: string[];
@@ -18,7 +19,7 @@ interface Props {
   defaultEffortLevel?: EffortLevel | "";
   defaultAgent?: string;
   onSend: (content: string, attachments?: Attachment[], interrupt?: boolean) => void;
-  onNewThread: (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[], permissionMode?: PermissionMode | null) => void;
+  onNewThread: (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[], permissionMode?: PermissionMode | null, baseBranch?: string) => void;
   onStop: () => void;
 }
 
@@ -46,7 +47,7 @@ function usePendingField<T extends string>(
   return [pending, setPending];
 }
 
-export function InputBar({ agents, thread, activeProjectId, activeProjectName, commands, settings, history, pendingQuestion, defaultEffortLevel, defaultAgent, onSend, onNewThread, onStop }: Props) {
+export function InputBar({ agents, thread, activeProjectId, activeProjectName, activeProjectBranch, commands, settings, history, pendingQuestion, defaultEffortLevel, defaultAgent, onSend, onNewThread, onStop }: Props) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
   const [mobileConfigExpanded, setMobileConfigExpanded] = useState(false);
@@ -61,6 +62,9 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
   const [newModel, setNewModel] = useState<string>("");
   const [isolate, setIsolate] = useState(true);
   const [worktreeName, setWorktreeName] = useState(() => generateDefaultWorktreeName(activeProjectName));
+  const [baseBranchOverride, setBaseBranchOverride] = useState<string>("");
+  const [editingBaseBranch, setEditingBaseBranch] = useState(false);
+  const baseBranchInputRef = useRef<HTMLInputElement>(null);
   const userChangedEffortRef = useRef(false);
   const userChangedAgentRef = useRef(false);
 
@@ -293,7 +297,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
       if (cmd === "/new") {
         const prompt = args || "";
         if (prompt) {
-          onNewThread(newAgent, newEffortLevel || null, newModel || null, prompt, isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, undefined, newPermissionMode || null);
+          onNewThread(newAgent, newEffortLevel || null, newModel || null, prompt, isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, undefined, newPermissionMode || null, isolate && baseBranchOverride ? baseBranchOverride : undefined);
         } else {
           setMode("new");
         }
@@ -310,7 +314,7 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
     const currentAttachments = hasAttachments ? attachments : undefined;
 
     if (isNewThread) {
-      onNewThread(newAgent, newEffortLevel || null, newModel || null, text || "(see attached files)", isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, currentAttachments, newPermissionMode || null);
+      onNewThread(newAgent, newEffortLevel || null, newModel || null, text || "(see attached files)", isolate, activeProjectId ?? undefined, isolate ? worktreeName : undefined, currentAttachments, newPermissionMode || null, isolate && baseBranchOverride ? baseBranchOverride : undefined);
     } else {
       onSend(text || "(see attached files)", currentAttachments, interrupt);
     }
@@ -322,6 +326,8 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
     userChangedAgentRef.current = false;
     setNewEffortLevel(defaultEffortLevel ?? "");
     setNewAgent(resolvedDefaultAgent);
+    setBaseBranchOverride("");
+    setEditingBaseBranch(false);
     if (isolate) setWorktreeName(generateDefaultWorktreeName(activeProjectName));
   };
 
@@ -518,6 +524,38 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
               />
               Worktree
             </label>
+            {isolate && activeProjectBranch && (
+              editingBaseBranch ? (
+                <span className="flex items-center gap-1 text-[10px] text-content-3 px-1">
+                  <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" className="opacity-50 shrink-0">
+                    <path d="M5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 0 10.5 8.5H12a2.25 2.25 0 1 1 0 1.5h-1.5A4 4 0 0 1 6.5 6V5.372a2.25 2.25 0 0 1-1.5-2.122ZM8 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm5.5 7a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z" />
+                  </svg>
+                  from
+                  <input
+                    ref={baseBranchInputRef}
+                    type="text"
+                    value={baseBranchOverride || activeProjectBranch}
+                    onChange={(e) => setBaseBranchOverride(e.target.value)}
+                    onBlur={() => setEditingBaseBranch(false)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingBaseBranch(false); }}
+                    className="w-20 bg-surface-2 border border-edge-2 rounded px-1 py-0 text-[10px] font-mono text-content-1 focus:outline-none focus:border-accent"
+                    spellCheck={false}
+                    autoFocus
+                  />
+                </span>
+              ) : (
+                <button
+                  onClick={() => { setEditingBaseBranch(true); setTimeout(() => baseBranchInputRef.current?.select(), 0); }}
+                  className="flex items-center gap-1 text-[10px] text-content-3 hover:text-content-2 px-1 transition-colors"
+                  title="Click to change base branch"
+                >
+                  <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" className="opacity-50 shrink-0">
+                    <path d="M5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 0 10.5 8.5H12a2.25 2.25 0 1 1 0 1.5h-1.5A4 4 0 0 1 6.5 6V5.372a2.25 2.25 0 0 1-1.5-2.122ZM8 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm5.5 7a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z" />
+                  </svg>
+                  from <code className={`font-mono ${baseBranchOverride ? "text-accent" : "text-content-2"}`}>{baseBranchOverride || activeProjectBranch}</code>
+                </button>
+              )
+            )}
             {isolate && (
               <WorktreePathInput value={worktreeName} onChange={setWorktreeName} compact />
             )}

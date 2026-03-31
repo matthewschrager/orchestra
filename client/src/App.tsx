@@ -588,7 +588,7 @@ function AppInner() {
 
   // ── Actions ───────────────────────────────────────────
 
-  const handleNewThread = async (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[], permissionMode?: PermissionMode | null) => {
+  const handleNewThread = async (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[], permissionMode?: PermissionMode | null, baseBranch?: string) => {
     const pid = projectId || activeProjectId;
     if (!pid) {
       setError("Select a project first");
@@ -596,7 +596,7 @@ function AppInner() {
     }
     try {
       setError(null);
-      const thread = await api.createThread({ agent, effortLevel: effortLevel ?? undefined, permissionMode: permissionMode ?? undefined, model: model ?? undefined, prompt, projectId: pid, isolate, worktreeName, attachments });
+      const thread = await api.createThread({ agent, effortLevel: effortLevel ?? undefined, permissionMode: permissionMode ?? undefined, model: model ?? undefined, prompt, projectId: pid, isolate, worktreeName, baseBranch, attachments });
       // Guard against duplicate: WS broadcast from server may arrive before this HTTP response
       setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
       setActiveThreadId(thread.id);
@@ -1031,6 +1031,7 @@ function AppInner() {
                 ref={chatViewRef}
                 messages={activeMessages}
                 thread={activeThread}
+                autoScrollThreads={appSettings?.autoScrollThreads ?? true}
                 streamingText={activeStreamingText}
                 streamingTool={activeStreamingTool}
                 streamingToolInput={activeStreamingToolInput}
@@ -1065,6 +1066,7 @@ function AppInner() {
                 thread={activeThread}
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject?.name ?? null}
+                activeProjectBranch={activeProject?.currentBranch ?? null}
                 commands={commands}
                 settings={appSettings}
                 history={activeInputHistory}
@@ -1107,6 +1109,7 @@ function AppInner() {
                 thread={null}
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject.name}
+                activeProjectBranch={activeProject.currentBranch}
                 commands={commands}
                 settings={appSettings}
                 defaultEffortLevel={defaultEffortLevel}
@@ -1185,8 +1188,8 @@ function AppInner() {
               settings={appSettings}
               defaultEffortLevel={defaultEffortLevel}
               defaultAgent={defaultAgent}
-              onNewThread={(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments) => {
-                handleNewThread(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments);
+              onNewThread={(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments, permissionMode, baseBranch) => {
+                handleNewThread(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments, permissionMode, baseBranch);
                 setMobileTab("sessions");
               }}
             />
@@ -1241,7 +1244,13 @@ function AppInner() {
 
       {/* Settings Panel */}
       {showSettings && (
-        <SettingsPanel onClose={() => setShowSettings(false)} agents={agents} onDefaultEffortChange={setDefaultEffortLevel} onDefaultAgentChange={setDefaultAgent} />
+        <SettingsPanel
+          onClose={() => setShowSettings(false)}
+          agents={agents}
+          onDefaultEffortChange={setDefaultEffortLevel}
+          onDefaultAgentChange={setDefaultAgent}
+          onSettingsChange={setAppSettings}
+        />
       )}
     </div>
   );

@@ -122,6 +122,20 @@ cd client && bun run build      # Build frontend to server/static/
 cd server && bun run src/index.ts  # Production server
 ```
 
+## Branching workflow
+
+```
+feature/foo ──PR──► staging ──PR──► main
+feature/bar ──PR──┘              (batched when stable)
+```
+
+- **`main`** — stable, public-facing branch. What people clone. Only updated via PR from `staging`.
+- **`staging`** — integration/dogfooding branch. All feature work merges here first.
+- **Feature branches** — short-lived, PR into `staging` (never directly into `main`).
+- When using `/ship` or creating PRs, **always target `staging`** as the base branch (e.g. `gh pr create --base staging`).
+- Periodically, once changes on `staging` are dogfooded and stable, open a single PR from `staging → main`.
+- External contributor PRs against `main` are fine — merge to `main`, then rebase `staging` on `main`.
+
 ## Key design decisions
 
 - Agents use `@anthropic-ai/claude-agent-sdk` (pinned v0.2.81) — SDK manages subprocess lifecycle internally
@@ -139,7 +153,7 @@ cd server && bun run src/index.ts  # Production server
 - **QA testing from worktrees**: Each worktree gets its own port (via hash). Build client (`bun run --filter client build`), start server with `ORCHESTRA_ALLOW_NESTED=1`, set `ORCHESTRA_DATA_DIR` to worktree-local path. Do not test against the main-branch instance.
 - Inactivity timeout (default 30 min, configurable via Settings) replaces PID-based health check for hung SDK iterators
 - Integrated terminal: xterm.js v6 (client) + Bun native PTY via `Bun.spawn({ terminal })` (server); PTY persists per-thread; desktop only
-- Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings`; gear icon in sidebar; `defaultEffortLevel` pre-selects effort in new-thread forms (validated against agent support, falls back to agent default if unsupported); `defaultAgent` pre-selects agent in new-thread forms (validated against detected agents, hidden when only one agent available)
+- Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings`; gear icon in sidebar; `autoScrollThreads` controls whether thread views follow new output by default; `defaultEffortLevel` pre-selects effort in new-thread forms (validated against agent support, falls back to agent default if unsupported); `defaultAgent` pre-selects agent in new-thread forms (validated against detected agents, hidden when only one agent available)
 
 ## Testing
 
@@ -147,4 +161,22 @@ cd server && bun run src/index.ts  # Production server
 bun test                        # Run all tests
 ```
 
-Tests cover renderer parsing functions (including Todo payload variants, Bash preview truncation, diff precision on large files, and sticky run-bar token summaries), server-side Claude and Codex message parsing, Tailscale auth/origin hardening flows, filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, settings CRUD (worktreeRoot validation, inactivityTimeoutMinutes bounds, remoteUrl HTTPS enforcement, defaultEffortLevel validation, defaultAgent validation), PR status utilities (URL number extraction, stale guard timing), and worktree status (diff stats parsing, branch/no-branch scenarios).
+Tests cover renderer parsing functions (including Todo payload variants, Bash preview truncation, diff precision on large files, and sticky run-bar token summaries), server-side Claude and Codex message parsing, Tailscale auth/origin hardening flows, filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, settings CRUD (worktreeRoot validation, inactivityTimeoutMinutes bounds, autoScrollThreads validation, remoteUrl HTTPS enforcement, defaultEffortLevel validation, defaultAgent validation), PR status utilities (URL number extraction, stale guard timing), and worktree status (diff stats parsing, branch/no-branch scenarios).
+
+## Skill routing
+
+When the user's request matches an available skill, ALWAYS invoke it using the Skill
+tool as your FIRST action. Do NOT answer directly, do NOT use other tools first.
+The skill has specialized workflows that produce better results than ad-hoc answers.
+
+Key routing rules:
+- Product ideas, "is this worth building", brainstorming → invoke office-hours
+- Bugs, errors, "why is this broken", 500 errors → invoke investigate
+- Ship, deploy, push, create PR → invoke ship
+- QA, test the site, find bugs → invoke qa
+- Code review, check my diff → invoke review
+- Update docs after shipping → invoke document-release
+- Weekly retro → invoke retro
+- Design system, brand → invoke design-consultation
+- Visual audit, design polish → invoke design-review
+- Architecture review → invoke plan-eng-review
