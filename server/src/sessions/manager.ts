@@ -106,6 +106,7 @@ export class SessionManager {
     title?: string;
     isolate?: boolean;
     worktreeName?: string;
+    baseBranch?: string;
     attachments?: Attachment[];
   }): Promise<ThreadRow> {
     const adapter = this.registry.get(opts.agent);
@@ -125,21 +126,23 @@ export class SessionManager {
     let cwd = opts.repoPath;
     let worktree: string | null = null;
     let branch: string | null = null;
+    let baseBranch: string | null = null;
 
     if (opts.isolate) {
-      const wt = await this.worktreeManager.create(threadId, opts.repoPath, opts.worktreeName);
+      const wt = await this.worktreeManager.create(threadId, opts.repoPath, opts.worktreeName, opts.baseBranch);
       cwd = wt.path;
       worktree = wt.path;
       branch = wt.branch;
+      baseBranch = wt.baseBranch;
     }
 
     // Insert thread record
     this.db
       .query(
-        `INSERT INTO threads (id, title, agent, effort_level, permission_mode, model, repo_path, project_id, worktree, branch, status, last_interacted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', datetime('now'))`,
+        `INSERT INTO threads (id, title, agent, effort_level, permission_mode, model, repo_path, project_id, worktree, branch, base_branch, status, last_interacted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', datetime('now'))`,
       )
-      .run(threadId, title, opts.agent, effortLevel, permissionMode, model, opts.repoPath, opts.projectId, worktree, branch);
+      .run(threadId, title, opts.agent, effortLevel, permissionMode, model, opts.repoPath, opts.projectId, worktree, branch, baseBranch);
 
     // Validate and build prompt with attachment references
     const validAttachments = this.validateAttachments(opts.attachments);
