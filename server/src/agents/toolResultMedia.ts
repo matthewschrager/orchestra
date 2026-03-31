@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 export interface ToolImageArtifact {
   src: string;
   mimeType?: string;
@@ -18,33 +22,31 @@ const SAFE_IMAGE_MIME_TYPES = new Set([
   "image/bmp",
 ]);
 
+const PERSISTED_TOOL_IMAGE_DIR = "/tmp/orchestra-tool-result-images";
+
 export function normalizeToolResultContent(content: unknown): NormalizedToolResultContent {
   if (typeof content === "string") {
     return { text: content, images: [] };
   }
 
-  if (!Array.isArray(content)) {
+  if (!Array.isArray(content) && !isRecord(content)) {
     return { text: "", images: [] };
   }
 
-  const textParts: string[] = [];
-  const images: ToolImageArtifact[] = [];
-
-  for (const block of content) {
-    if (!isRecord(block)) continue;
-
-    if (block.type === "text" && typeof block.text === "string") {
-      textParts.push(block.text);
-    }
-
-    const image = extractImageBlock(block, images.length + 1);
-    if (image) images.push(image);
-  }
+  const textParts = extractTextParts(content);
+  const images = extractToolResultImages(content);
 
   return {
     text: textParts.join("\n").trim(),
     images,
   };
+}
+
+export function extractToolResultImages(content: unknown): ToolImageArtifact[] {
+  const images: ToolImageArtifact[] = [];
+  const seen = new Set<string>();
+  collectToolResultImages(content, images, seen, 0);
+  return images;
 }
 
 function extractImageBlock(
@@ -63,12 +65,16 @@ function buildImageArtifact(
   value: Record<string, unknown>,
   index: number,
 ): ToolImageArtifact | null {
+  const pathImage = buildPathImageArtifact(value, index);
+  if (pathImage) return pathImage;
+
   const mimeType = extractMimeType(value);
   const alt = extractAltText(value, index);
   const data = typeof value.data === "string" ? value.data : null;
   if (data && isSafeRenderableImageMimeType(mimeType)) {
+    const persistedSrc = persistBase64ImageToFile(data, mimeType);
     return {
-      src: `data:${mimeType};base64,${data}`,
+      src: persistedSrc ?? `data:${mimeType};base64,${data}`,
       mimeType,
       alt,
     };
@@ -88,6 +94,20 @@ function buildImageArtifact(
   }
 
   return null;
+}
+
+function buildPathImageArtifact(
+  value: Record<string, unknown>,
+  index: number,
+): ToolImageArtifact | null {
+  const path = extractImagePath(value);
+  if (!path || !isRenderableImagePath(path)) return null;
+
+  return {
+    src: buildFileServeUrl(path),
+    mimeType: extractMimeType(value) ?? inferImageMimeTypeFromPath(path) ?? undefined,
+    alt: extractAltText(value, index),
+  };
 }
 
 function extractMimeType(value: Record<string, unknown>): string | null {
@@ -111,6 +131,10 @@ function isRenderableImageUri(uri: string, mimeType: string | null): boolean {
   return /\.(png|jpe?g|gif|webp|bmp)(?:[?#]|$)/i.test(uri);
 }
 
+function isRenderableImagePath(path: string): boolean {
+  return /^(?:\/|~\/)/.test(path) && /\.(png|jpe?g|gif|webp|bmp)(?:[?#]|$)/i.test(path);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -122,4 +146,108 @@ function isSafeRenderableImageMimeType(mimeType: string | null): mimeType is str
 function extractDataUrlMimeType(uri: string): string | null {
   const match = uri.match(/^data:([^;,]+)[;,]/i);
   return match ? match[1].toLowerCase() : null;
+}
+
+function extractTextParts(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+
+  const textParts: string[] = [];
+  for (const block of content) {
+    if (!isRecord(block)) continue;
+    if (block.type === "text" && typeof block.text === "string") {
+      textParts.push(block.text);
+    }
+  }
+  return textParts;
+}
+
+function collectToolResultImages(
+  value: unknown,
+  images: ToolImageArtifact[],
+  seen: Set<string>,
+  depth: number,
+): void {
+  if (depth > 6 || value === null || value === undefined) return;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectToolResultImages(item, images, seen, depth + 1);
+    }
+    return;
+  }
+
+  if (!isRecord(value)) return;
+
+  const image = extractImageBlock(value, images.length + 1);
+  if (image && !seen.has(image.src)) {
+    seen.add(image.src);
+    images.push(image);
+  }
+
+  for (const child of Object.values(value)) {
+    if (Array.isArray(child) || isRecord(child)) {
+      collectToolResultImages(child, images, seen, depth + 1);
+    }
+  }
+}
+
+function extractImagePath(value: Record<string, unknown>): string | null {
+  const path = value.path
+    ?? value.file_path
+    ?? value.filePath
+    ?? value.local_path
+    ?? value.localPath;
+  return typeof path === "string" && path.trim() ? path.trim() : null;
+}
+
+function inferImageMimeTypeFromPath(path: string): string | null {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".bmp")) return "image/bmp";
+  return null;
+}
+
+function extensionForMimeType(mimeType: string): string | null {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === "image/png") return ".png";
+  if (normalized === "image/jpeg" || normalized === "image/jpg") return ".jpg";
+  if (normalized === "image/gif") return ".gif";
+  if (normalized === "image/webp") return ".webp";
+  if (normalized === "image/bmp") return ".bmp";
+  return null;
+}
+
+function persistBase64ImageToFile(data: string, mimeType: string): string | null {
+  const ext = extensionForMimeType(mimeType);
+  if (!ext) return null;
+
+  try {
+    const bytes = Buffer.from(data, "base64");
+    if (bytes.length === 0) return null;
+
+    mkdirSync(PERSISTED_TOOL_IMAGE_DIR, { recursive: true });
+
+    const hash = createHash("sha256")
+      .update(mimeType)
+      .update(":")
+      .update(data)
+      .digest("hex")
+      .slice(0, 32);
+    const filePath = join(PERSISTED_TOOL_IMAGE_DIR, `${hash}${ext}`);
+
+    if (!existsSync(filePath)) {
+      writeFileSync(filePath, bytes);
+    }
+
+    return buildFileServeUrl(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function buildFileServeUrl(path: string): string {
+  return `/api/files/serve?path=${encodeURIComponent(path)}`;
 }

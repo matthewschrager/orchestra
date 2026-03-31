@@ -3,9 +3,9 @@
 // A top-level import would crash the server if the SDK is not installed.
 
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, normalize, relative, resolve } from "node:path";
 import { extractAskUserRequest } from "./askUser";
-import { normalizeToolResultContent } from "./toolResultMedia";
+import { extractToolResultImages, normalizeToolResultContent } from "./toolResultMedia";
 import type {
   AgentAdapter,
   AgentSession,
@@ -497,14 +497,18 @@ export class CodexParser {
     result: { content?: unknown; structured_content?: unknown } | undefined,
   ): Pick<ParsedMessage, "toolOutput" | "metadata"> & { toolOutput: string } {
     const normalized = normalizeToolResultContent(result?.content);
+    const images = dedupeToolImages([
+      ...normalized.images,
+      ...extractToolResultImages(result?.structured_content),
+    ]);
     let toolOutput = normalized.text;
-    if (!toolOutput && normalized.images.length === 0 && result) {
+    if (!toolOutput && images.length === 0 && result) {
       toolOutput = JSON.stringify(result.content ?? result.structured_content ?? result);
     }
 
     return {
       toolOutput,
-      metadata: normalized.images.length > 0 ? { images: normalized.images } : undefined,
+      metadata: images.length > 0 ? { images } : undefined,
     };
   }
 
@@ -532,7 +536,9 @@ export class CodexParser {
     for (const change of changes) {
       const path = change.path;
       if (!path || snapshots.has(path)) continue;
-      snapshots.set(path, this.readFileText(path));
+      const pathKey = this.normalizeChangePath(path);
+      if (snapshots.has(pathKey)) continue;
+      snapshots.set(pathKey, this.readFileText(path));
     }
     this.fileSnapshotsByItemId.set(itemId, snapshots);
   }
@@ -548,8 +554,9 @@ export class CodexParser {
     const snapshot = new Map<string, string>();
     const output = new TextDecoder().decode(result.stdout);
     for (const path of output.split("\0")) {
-      if (!path || snapshot.has(path)) continue;
-      snapshot.set(path, this.readFileText(path));
+      const pathKey = this.normalizeChangePath(path);
+      if (!pathKey || snapshot.has(pathKey)) continue;
+      snapshot.set(pathKey, this.readFileText(path));
     }
     return snapshot;
   }
@@ -558,7 +565,8 @@ export class CodexParser {
     for (const change of changes) {
       const path = change.path;
       if (!path) continue;
-      this.turnBaselineByPath.set(path, change.kind === "delete" ? "" : this.readFileText(path));
+      const pathKey = this.normalizeChangePath(path);
+      this.turnBaselineByPath.set(pathKey, change.kind === "delete" ? "" : this.readFileText(path));
     }
   }
 
@@ -567,16 +575,30 @@ export class CodexParser {
     beforeByPath?: Map<string, string>,
   ): Record<string, string> {
     const filePath = change.path ?? "unknown";
+    const normalizedPath = this.normalizeChangePath(filePath);
     const changeKind = change.kind ?? "update";
-    const oldString = beforeByPath?.get(filePath) ?? this.turnBaselineByPath.get(filePath) ?? "";
+    const oldString = beforeByPath?.get(normalizedPath) ?? this.turnBaselineByPath.get(normalizedPath) ?? "";
     const newString = changeKind === "delete" ? "" : this.readFileText(filePath);
 
     return {
-      file_path: filePath,
+      file_path: normalizedPath,
       old_string: oldString,
       new_string: newString,
       changeKind,
     };
+  }
+
+  private normalizeChangePath(path: string): string {
+    const absolutePath = resolve(this.cwd, path);
+    const relativePath = relative(this.cwd, absolutePath);
+    if (relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath)) {
+      return this.toPosixPath(relativePath);
+    }
+    return this.toPosixPath(normalize(path));
+  }
+
+  private toPosixPath(path: string): string {
+    return path.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "");
   }
 
   private resetTurnState(): void {
@@ -596,3 +618,12 @@ export class CodexParser {
 }
 
 const EMPTY: Readonly<ParseResult> = Object.freeze({ messages: [], deltas: [] });
+
+function dedupeToolImages<T extends { src: string }>(images: T[]): T[] {
+  const seen = new Set<string>();
+  return images.filter((image) => {
+    if (seen.has(image.src)) return false;
+    seen.add(image.src);
+    return true;
+  });
+}

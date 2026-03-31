@@ -238,6 +238,8 @@ export interface Settings {
   worktreeRoot: string;
   /** Inactivity timeout in minutes — abort sessions with no SDK messages for this long (default: 30) */
   inactivityTimeoutMinutes: number;
+  /** Whether thread views should follow new messages and streaming output automatically */
+  autoScrollThreads: boolean;
   /** Display-only remote URL (Tailscale HTTPS, VPN, tunnel, etc.) — shown in Settings panel */
   remoteUrl: string;
   /** Default model for Claude agent (empty string = SDK default) */

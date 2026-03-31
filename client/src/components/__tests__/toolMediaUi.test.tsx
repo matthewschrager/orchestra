@@ -75,6 +75,26 @@ describe("tool media rendering", () => {
     ]);
   });
 
+  test("converts local image paths into file proxy URLs", () => {
+    expect(getToolImages({
+      images: [
+        { src: "/tmp/mobile-shot.png", alt: "Preview" },
+      ],
+    })).toEqual([
+      { src: "/api/files/serve?path=%2Ftmp%2Fmobile-shot.png", alt: "Preview", mimeType: undefined },
+    ]);
+  });
+
+  test("keeps web asset image paths unchanged", () => {
+    expect(getToolImages({
+      images: [
+        { src: "/assets/logo.png", alt: "Logo" },
+      ],
+    })).toEqual([
+      { src: "/assets/logo.png", alt: "Logo", mimeType: undefined },
+    ]);
+  });
+
   test("rejects unsafe svg data URLs", () => {
     expect(getToolImages({
       images: [

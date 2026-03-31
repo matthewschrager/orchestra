@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { CodexAdapter, CodexParser } from "../codex";
 
 function createParser(cwd?: string) {
@@ -366,6 +366,85 @@ describe("CodexParser", () => {
     }
   });
 
+  test("file_change normalizes completed-only absolute paths against the turn baseline", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "codex-parser-"));
+    try {
+      initGitRepo(tempDir);
+      mkdirSync(join(tempDir, "src"), { recursive: true });
+      writeFileSync(join(tempDir, "src/index.ts"), "export const count = 1;\n");
+      Bun.spawnSync(["git", "add", "."], { cwd: tempDir });
+      Bun.spawnSync(["git", "commit", "-m", "init"], { cwd: tempDir });
+
+      const parser = createParser(tempDir);
+      parser.handleEvent({ type: "turn.started" });
+
+      const absPath = resolve(tempDir, "src/index.ts");
+      writeFileSync(absPath, "export const count = 2;\n");
+
+      const result = parser.handleEvent({
+        type: "item.completed",
+        item: {
+          id: "fc-abs",
+          type: "file_change",
+          changes: [{ path: absPath, kind: "update" }],
+          status: "completed",
+        },
+      });
+
+      const payload = JSON.parse(result.messages[0].toolInput ?? "{}");
+      expect(payload).toMatchObject({
+        file_path: "src/index.ts",
+        old_string: "export const count = 1;\n",
+        new_string: "export const count = 2;\n",
+        changeKind: "update",
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("file_change snapshots survive started/completed path format mismatch", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "codex-parser-"));
+    try {
+      mkdirSync(join(tempDir, "src"), { recursive: true });
+      writeFileSync(join(tempDir, "src/index.ts"), "export const count = 1;\n");
+
+      const parser = createParser(tempDir);
+      parser.handleEvent({
+        type: "item.started",
+        item: {
+          id: "fc-path-mismatch",
+          type: "file_change",
+          changes: [{ path: "./src/index.ts", kind: "update" }],
+          status: "in_progress",
+        },
+      });
+
+      const absPath = resolve(tempDir, "src/index.ts");
+      writeFileSync(absPath, "export const count = 2;\n");
+
+      const result = parser.handleEvent({
+        type: "item.completed",
+        item: {
+          id: "fc-path-mismatch",
+          type: "file_change",
+          changes: [{ path: absPath, kind: "update" }],
+          status: "completed",
+        },
+      });
+
+      const payload = JSON.parse(result.messages[0].toolInput ?? "{}");
+      expect(payload).toMatchObject({
+        file_path: "src/index.ts",
+        old_string: "export const count = 1;\n",
+        new_string: "export const count = 2;\n",
+        changeKind: "update",
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("turn baseline rolls forward across completed-only file changes", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "codex-parser-"));
     try {
@@ -543,12 +622,47 @@ describe("CodexParser", () => {
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0].toolName).toBe("js_repl");
     expect(result.messages[0].toolOutput).toBeUndefined();
+    const images = (result.messages[0].metadata as { images?: Array<{ src: string; mimeType?: string; alt?: string }> } | undefined)?.images;
+    expect(images).toHaveLength(1);
+    expect(images?.[0]).toMatchObject({
+      mimeType: "image/png",
+      alt: "Tool image 1",
+    });
+    expect(images?.[0].src).toMatch(/^\/api\/files\/serve\?path=/);
+  });
+
+  test("item.completed (mcp_tool_call) preserves screenshots from structured_content file paths", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.completed",
+      item: {
+        id: "mcp-image-2",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "view_image",
+        arguments: { path: "/tmp/mobile-shot.png" },
+        result: {
+          content: [],
+          structured_content: {
+            preview: {
+              path: "/tmp/mobile-shot.png",
+              title: "Mobile shot",
+            },
+          },
+        },
+        status: "completed",
+      },
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].toolName).toBe("view_image");
+    expect(result.messages[0].toolOutput).toBeUndefined();
     expect(result.messages[0].metadata).toEqual({
       images: [
         {
-          src: "data:image/png;base64,YWJjMTIz",
+          src: "/api/files/serve?path=%2Ftmp%2Fmobile-shot.png",
           mimeType: "image/png",
-          alt: "Tool image 1",
+          alt: "Mobile shot",
         },
       ],
     });
