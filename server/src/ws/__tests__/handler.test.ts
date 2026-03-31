@@ -33,6 +33,9 @@ function createSessionManagerStub(): SessionManager {
     sendMessage() {},
     stopThread() {},
     resolveAttention() { return null; },
+    getQueueItems() { return []; },
+    cancelQueued() { return false; },
+    clearQueue() { return 0; },
   } as unknown as SessionManager;
 }
 
@@ -54,6 +57,7 @@ describe("WS subscribe replay", () => {
       tool_input: null,
       tool_output: null,
       metadata: null,
+      queue_message_id: null,
       created_at: new Date().toISOString(),
     });
 

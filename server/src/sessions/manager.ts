@@ -16,12 +16,15 @@ import {
   dequeueNextMessage,
   countPendingQueue,
   cleanDeliveredQueue,
+  cancelQueuedMessage,
+  clearPendingQueue,
+  getPendingQueue,
 } from "../db";
 import type { AgentRegistry } from "../agents/registry";
 import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage, PersistentSession } from "../agents/types";
 import type { WorktreeManager } from "../worktrees/manager";
 import { isEffortLevelSupported, isPermissionModeSupported } from "shared";
-import type { Attachment, AttentionItem, AttentionResolution, EffortLevel, PermissionMode, StreamDelta } from "shared";
+import type { Attachment, AttentionItem, AttentionResolution, EffortLevel, PermissionMode, QueuedItem, StreamDelta } from "shared";
 import { resolveAttachmentPaths } from "../routes/uploads";
 import { generateTitle } from "../titles/generator";
 import { detectWorktree } from "../utils/git";
@@ -321,20 +324,19 @@ export class SessionManager {
         throw new Error("Queue full — wait for the agent to finish");
       }
 
-      // Persist user message immediately so it appears in chat
+      // Persist to message_queue first to get the queue row id
       const validAttachments = this.validateAttachments(attachments);
+      const agentPrompt = this.buildPromptWithAttachments(content, validAttachments);
+      const isInterrupt = !!opts?.interrupt;
+      const serializedAttachments = validAttachments?.length ? JSON.stringify(validAttachments) : null;
+      const queueRow = enqueueMessage(this.db, threadId, agentPrompt, serializedAttachments, isInterrupt);
+
+      // Persist user message with link to queue row so client can cross-reference state
       this.persistMessage(threadId, {
         role: "user",
         content,
         metadata: validAttachments?.length ? { attachments: validAttachments } : undefined,
-      });
-
-      const agentPrompt = this.buildPromptWithAttachments(content, validAttachments);
-      const isInterrupt = !!opts?.interrupt;
-
-      // Persist to message_queue for crash recovery + delivery tracking
-      const serializedAttachments = validAttachments?.length ? JSON.stringify(validAttachments) : null;
-      const queueRow = enqueueMessage(this.db, threadId, agentPrompt, serializedAttachments, isInterrupt);
+      }, queueRow.id);
 
       // For interrupt messages, orphan pending attention immediately (user is overriding)
       if (isInterrupt) {
@@ -375,10 +377,7 @@ export class SessionManager {
       if (existing.persistent) {
         existing.queuedThisTurn++;
       }
-      const newCount = existing.persistent
-        ? existing.queuedThisTurn
-        : countPendingQueue(this.db, threadId);
-      this.notifyStreamDelta(threadId, { threadId, deltaType: "queued_message", queuedCount: newCount });
+      this.broadcastQueueState(threadId);
       return;
     }
 
@@ -1063,6 +1062,7 @@ export class SessionManager {
   private persistMessage(
     threadId: string,
     parsed: Pick<ParsedMessage, "content"> & Partial<ParsedMessage> & { role: string },
+    queueMessageId?: string,
   ): void {
     const msgData = {
       id: nanoid(12),
@@ -1073,6 +1073,7 @@ export class SessionManager {
       tool_input: parsed.toolInput ?? null,
       tool_output: parsed.toolOutput ?? null,
       metadata: parsed.metadata ? JSON.stringify(parsed.metadata) : null,
+      queue_message_id: queueMessageId ?? null,
       created_at: new Date().toISOString(),
     };
 
@@ -1313,6 +1314,64 @@ export class SessionManager {
         error_message: "Process was orphaned (server restarted while thread was running)",
       });
     }
+  }
+
+  // ── Queue management ──────────────────────────────────────
+
+  /** Cancel a pending queued message. Returns true if successfully cancelled. */
+  cancelQueued(threadId: string, queueId: string): boolean {
+    const cancelled = cancelQueuedMessage(this.db, queueId, threadId);
+    if (!cancelled) return false;
+
+    // Decrement persistent session counter if applicable
+    const existing = this.sessions.get(threadId);
+    if (existing?.persistent && existing.queuedThisTurn > 0) {
+      existing.queuedThisTurn--;
+    }
+
+    this.broadcastQueueState(threadId);
+    return true;
+  }
+
+  /** Cancel all pending queued messages for a thread. */
+  clearQueue(threadId: string): number {
+    const count = clearPendingQueue(this.db, threadId);
+
+    // Reset persistent session counter
+    const existing = this.sessions.get(threadId);
+    if (existing?.persistent) {
+      existing.queuedThisTurn = Math.max(0, existing.queuedThisTurn - count);
+    }
+
+    this.broadcastQueueState(threadId);
+    return count;
+  }
+
+  /** Get current queue items for a thread (for WS subscribe replay). */
+  getQueueItems(threadId: string): QueuedItem[] {
+    return this.queueRowsToItems(getPendingQueue(this.db, threadId));
+  }
+
+  /** Broadcast full queue state to all subscribed clients. */
+  private broadcastQueueState(threadId: string): void {
+    const items = this.getQueueItems(threadId);
+    this.notifyStreamDelta(threadId, {
+      threadId,
+      deltaType: "queue_updated",
+      queueItems: items,
+      // Backward compat: also include count for older clients
+      queuedCount: items.filter((i) => i.state === "pending").length,
+    });
+  }
+
+  /** Convert DB queue rows to client-facing QueuedItem array. */
+  private queueRowsToItems(rows: import("../db").QueueRow[]): QueuedItem[] {
+    return rows.map((row) => ({
+      id: row.id,
+      content: row.content.length > 200 ? row.content.slice(0, 200) + "..." : row.content,
+      createdAt: row.created_at,
+      state: row.delivered_at ? "sent" as const : "pending" as const,
+    }));
   }
 }
 

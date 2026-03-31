@@ -566,16 +566,16 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, c
           onFileQueryChange={handleFileQueryChange}
         />
 
-        {/* Send button */}
+        {/* Send button — shows "Queue" when agent is running */}
         <button
           onClick={() => handleSubmit()}
           disabled={uploading || (!input.trim() && attachments.length === 0)}
           className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium shrink-0 border border-transparent"
           title={isRunning
-            ? "Enter to queue message · ⌘Enter to interrupt agent"
+            ? "Enter: queue for next turn · ⌘Enter: send to agent now (may interrupt current task)"
             : "Enter to send, Shift+Enter for newline"}
         >
-          {mode === "new" && thread ? "New" : "Send"}
+          {mode === "new" && thread ? "New" : isRunning ? "Queue" : "Send"}
         </button>
 
         {/* Stop button */}
