@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CodexAdapter, CodexParser } from "../codex";
 
-function createParser(cwd?: string) {
-  return new CodexParser(cwd);
+function createParser(
+  opts?: string | ConstructorParameters<typeof CodexParser>[0],
+) {
+  return new CodexParser(opts);
 }
 
 function initGitRepo(dir: string) {
@@ -45,7 +47,7 @@ describe("CodexParser", () => {
     expect(result.deltas).toHaveLength(0);
   });
 
-  test("turn.completed produces metrics and turn_end deltas", () => {
+  test("turn.completed on a new session produces first-turn token metrics and turn_end deltas", () => {
     const parser = createParser();
     const result = parser.handleEvent({
       type: "turn.completed",
@@ -65,6 +67,46 @@ describe("CodexParser", () => {
 
     const turnEnd = result.deltas.find((d) => d.deltaType === "turn_end");
     expect(turnEnd).toBeDefined();
+  });
+
+  test("turn.completed on a resumed session diffs against the cumulative baseline", () => {
+    const parser = createParser({
+      sessionId: "thread-abc",
+      cumulativeUsageBaseline: {
+        inputTokens: 100,
+        cachedInputTokens: 20,
+        outputTokens: 50,
+      },
+    });
+
+    const result = parser.handleEvent({
+      type: "turn.completed",
+      usage: { input_tokens: 160, cached_input_tokens: 25, output_tokens: 65 },
+    });
+
+    const metricsDelta = result.deltas.find((d) => d.deltaType === "metrics");
+    expect(metricsDelta).toBeDefined();
+    expect(metricsDelta!.inputTokens).toBe(65);
+    expect(metricsDelta!.outputTokens).toBe(15);
+    expect(metricsDelta!.finalMetrics).toBe(true);
+  });
+
+  test("turn.completed on a resumed session with no baseline suppresses token metrics", () => {
+    const parser = createParser({
+      sessionId: "thread-abc",
+      suppressTokenMetrics: true,
+    });
+
+    const result = parser.handleEvent({
+      type: "turn.completed",
+      usage: { input_tokens: 2_000_000, cached_input_tokens: 500_000, output_tokens: 250_000 },
+    });
+
+    const metricsDelta = result.deltas.find((d) => d.deltaType === "metrics");
+    expect(metricsDelta).toBeDefined();
+    expect(metricsDelta!.inputTokens).toBeUndefined();
+    expect(metricsDelta!.outputTokens).toBeUndefined();
+    expect(metricsDelta!.finalMetrics).toBe(true);
   });
 
   test("turn.failed produces error and turn_end", () => {

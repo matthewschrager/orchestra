@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.48.0] - 2026-03-31
+
+### Fixed
+
+- **Codex token metrics no longer drift upward across turns** — Orchestra now diffs the SDK's cumulative Codex usage per session instead of surfacing multi-turn totals as if they were the latest turn's usage
+- **Resumed Codex sessions no longer report bogus million-token spikes after reconnects** — when Orchestra lacks a safe cumulative baseline, it suppresses the token metric for that turn instead of showing an inflated total
+
+### Added
+
+- **Codex usage regression coverage** — added parser tests for first-turn totals, resumed-session diffs, and resumed sessions that start without a known baseline
+
 ## [0.1.47.0] - 2026-03-31
 
 ### Fixed

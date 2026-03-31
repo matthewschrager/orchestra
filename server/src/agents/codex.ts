@@ -16,8 +16,23 @@ import type {
 import { gitSpawnSync } from "../utils/git";
 import { toCodexPermissionConfig, type PermissionMode } from "shared";
 
+interface CodexCumulativeUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+}
+
+interface CodexParserOptions {
+  cwd?: string;
+  sessionId?: string;
+  cumulativeUsageBaseline?: CodexCumulativeUsage;
+  suppressTokenMetrics?: boolean;
+  onCumulativeUsage?: (sessionId: string, usage: CodexCumulativeUsage) => void;
+}
+
 export class CodexAdapter implements AgentAdapter {
   name = "codex";
+  private readonly cumulativeUsageBySessionId = new Map<string, CodexCumulativeUsage>();
 
   async detect(): Promise<boolean> {
     try {
@@ -52,7 +67,18 @@ export class CodexAdapter implements AgentAdapter {
 
   start(opts: StartOpts): AgentSession {
     const abortController = new AbortController();
-    const parser = new CodexParser(opts.cwd);
+    const cumulativeUsageBaseline = opts.resumeSessionId
+      ? this.cumulativeUsageBySessionId.get(opts.resumeSessionId)
+      : undefined;
+    const parser = new CodexParser({
+      cwd: opts.cwd,
+      sessionId: opts.resumeSessionId,
+      cumulativeUsageBaseline,
+      suppressTokenMetrics: !!opts.resumeSessionId && !cumulativeUsageBaseline,
+      onCumulativeUsage: (sessionId, usage) => {
+        this.cumulativeUsageBySessionId.set(sessionId, usage);
+      },
+    });
 
     async function* generateEvents(): AsyncGenerator<unknown> {
       const { Codex } = await import("@openai/codex-sdk");
@@ -107,8 +133,36 @@ export class CodexParser {
   private readonly fileSnapshotsByItemId = new Map<string, Map<string, string>>();
   /** Turn-level fallback snapshot when Codex only emits completed file_change items. */
   private turnBaselineByPath = new Map<string, string>();
+  /** Current Codex thread ID, used to persist cumulative usage baselines across turns. */
+  private currentSessionId: string | undefined;
+  /** Last cumulative usage snapshot surfaced by the Codex SDK for this thread. */
+  private cumulativeUsageBaseline: CodexCumulativeUsage | undefined;
+  /**
+   * Resumed sessions may not have a baseline after Orchestra restarts. In that case,
+   * suppress token metrics for the first resumed turn instead of surfacing a bogus
+   * multi-turn cumulative total.
+   */
+  private suppressTokenMetrics: boolean;
+  private readonly onCumulativeUsage?: (sessionId: string, usage: CodexCumulativeUsage) => void;
 
-  constructor(private readonly cwd: string = process.cwd()) {}
+  constructor(opts: string | CodexParserOptions = process.cwd()) {
+    if (typeof opts === "string") {
+      this.cwd = opts;
+      this.currentSessionId = undefined;
+      this.cumulativeUsageBaseline = undefined;
+      this.suppressTokenMetrics = false;
+      this.onCumulativeUsage = undefined;
+      return;
+    }
+
+    this.cwd = opts.cwd ?? process.cwd();
+    this.currentSessionId = opts.sessionId;
+    this.cumulativeUsageBaseline = opts.cumulativeUsageBaseline;
+    this.suppressTokenMetrics = opts.suppressTokenMetrics ?? false;
+    this.onCumulativeUsage = opts.onCumulativeUsage;
+  }
+
+  private readonly cwd: string;
 
   handleEvent(msg: unknown): ParseResult {
     const event = msg as Record<string, unknown>;
@@ -117,6 +171,7 @@ export class CodexParser {
 
     switch (type) {
       case "thread.started":
+        this.currentSessionId = event.thread_id as string;
         return {
           messages: [],
           deltas: [],
@@ -164,15 +219,46 @@ export class CodexParser {
     const deltas: ParseResult["deltas"] = [];
 
     if (usage) {
-      // Codex SDK turn.completed exposes token usage, but not cost/model/context metadata.
+      const cumulativeUsage = {
+        inputTokens: usage.input_tokens ?? 0,
+        cachedInputTokens: usage.cached_input_tokens ?? 0,
+        outputTokens: usage.output_tokens ?? 0,
+      };
+
+      // The Codex SDK's turn.completed usage is derived from the thread's cumulative
+      // token totals, not the latest request. Recover per-turn totals by diffing
+      // against the last cumulative snapshot we observed for this session.
+      //
+      // If Orchestra resumes an existing Codex session without a cached baseline
+      // (e.g. after a server restart), suppress token metrics for that turn rather
+      // than surfacing a misleading multi-turn total.
+      const turnInputTokens = this.suppressTokenMetrics
+        ? undefined
+        : this.diffUsage(
+            cumulativeUsage.inputTokens + cumulativeUsage.cachedInputTokens,
+            (this.cumulativeUsageBaseline?.inputTokens ?? 0) + (this.cumulativeUsageBaseline?.cachedInputTokens ?? 0),
+          );
+      const turnOutputTokens = this.suppressTokenMetrics
+        ? undefined
+        : this.diffUsage(
+            cumulativeUsage.outputTokens,
+            this.cumulativeUsageBaseline?.outputTokens ?? 0,
+          );
+
       deltas.push({
         deltaType: "metrics",
         costUsd: undefined,
         durationMs: undefined,
-        inputTokens: (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0),
-        outputTokens: usage.output_tokens ?? 0,
+        inputTokens: turnInputTokens,
+        outputTokens: turnOutputTokens,
         finalMetrics: true,
       });
+
+      if (this.currentSessionId) {
+        this.onCumulativeUsage?.(this.currentSessionId, cumulativeUsage);
+      }
+      this.cumulativeUsageBaseline = cumulativeUsage;
+      this.suppressTokenMetrics = false;
     }
     deltas.push({ deltaType: "turn_end" });
     this.resetTurnState();
@@ -195,6 +281,10 @@ export class CodexParser {
     this.turnBaselineByPath = this.captureTurnBaseline();
     this.fileSnapshotsByItemId.clear();
     return EMPTY;
+  }
+
+  private diffUsage(current: number, previous: number): number {
+    return Math.max(current - previous, 0);
   }
 
   private handleItemStarted(event: Record<string, unknown>): ParseResult {
