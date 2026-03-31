@@ -148,6 +148,11 @@ const COLUMN_MIGRATIONS = [
     column: "permission_mode",
     sql: `ALTER TABLE threads ADD COLUMN permission_mode TEXT`,
   },
+  {
+    table: "threads",
+    column: "base_branch",
+    sql: `ALTER TABLE threads ADD COLUMN base_branch TEXT`,
+  },
 ];
 
 const INDEX_MIGRATIONS = [
@@ -285,7 +290,7 @@ export function deleteProject(db: DB, id: string): void {
 // Fix 7: Column allowlists prevent SQL injection via dynamic column names
 const PROJECT_COLUMNS = new Set(["name"]);
 const THREAD_COLUMNS = new Set([
-  "title", "status", "worktree", "branch", "pid",
+  "title", "status", "worktree", "branch", "base_branch", "pid",
   "error_message", "pr_url", "archived_at", "session_id", "effort_level", "permission_mode", "model",
   "pr_status", "pr_number", "pr_status_checked_at", "last_interacted_at",
 ]);
@@ -633,6 +638,7 @@ export interface ThreadRow {
   repo_path: string;
   worktree: string | null;
   branch: string | null;
+  base_branch: string | null;
   pr_url: string | null;
   pr_status: string | null;
   pr_number: number | null;
@@ -674,6 +680,7 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
     repoPath: row.repo_path,
     worktree: row.worktree,
     branch: row.branch,
+    baseBranch: row.base_branch ?? null,
     prUrl: row.pr_url,
     prStatus: row.pr_status as import("shared").PrStatus | null,
     prNumber: row.pr_number,

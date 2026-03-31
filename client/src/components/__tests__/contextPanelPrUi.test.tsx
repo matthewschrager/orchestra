@@ -14,6 +14,7 @@ const baseThread: Thread = {
   repoPath: "/tmp/orchestra",
   worktree: "/tmp/wt-pr-discovery",
   branch: "orchestra/pr-discovery",
+  baseBranch: null,
   prUrl: null,
   prStatus: null,
   prNumber: null,

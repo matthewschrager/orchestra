@@ -96,6 +96,7 @@ export function createThreadRoutes(
       title?: string;
       isolate?: boolean;
       worktreeName?: string;
+      baseBranch?: string;
       attachments?: import("shared").Attachment[];
     }>();
 
@@ -130,6 +131,7 @@ export function createThreadRoutes(
         title: body.title,
         isolate: body.isolate,
         worktreeName: body.worktreeName,
+        baseBranch: body.baseBranch,
         attachments: body.attachments,
       });
       touchProjectUpdatedAt(db, body.projectId);
@@ -179,6 +181,7 @@ export function createThreadRoutes(
       updateThread(db, threadId, {
         worktree: wt.path,
         branch: wt.branch,
+        base_branch: wt.baseBranch,
         status: "paused",
       });
 

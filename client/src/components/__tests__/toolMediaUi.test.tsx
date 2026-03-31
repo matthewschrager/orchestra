@@ -15,6 +15,7 @@ const baseThread: Thread = {
   repoPath: "/repo",
   worktree: null,
   branch: null,
+  baseBranch: null,
   prUrl: null,
   prStatus: null,
   prNumber: null,
