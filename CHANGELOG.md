@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.49.0] - 2026-03-31
+
+### Added
+
+- **Queue visibility drawer** — click "N queued" in the StickyRunBar to expand a drawer showing each queued message with its state (Queued or Sent to agent) and cancel buttons for pending items
+- **Queue cancel and clear** — cancel individual pending messages or clear all pending messages from the queue drawer; cancelled messages show strikethrough in chat
+- **Queue state model** — messages now track Pending/Sent/Cancelled states via soft-delete (`cancelled_at` column), with thread-id auth guard on cancel operations
+- **Server-authoritative queue state** — new `queue_updated` WebSocket delta broadcasts full `QueuedItem[]` array on every queue mutation, replacing the count-only `queued_message` delta
+- **Queue-message linking** — user message rows link to queue entries via `queue_message_id`, enabling state-aware badges on message bubbles
+- **Steer discoverability** — Send button shows "Queue" when agent is running; improved tooltip explains `Cmd/Ctrl+Enter` steers the agent immediately
+
+### Changed
+
+- Queue drain now skips cancelled rows; `countPendingQueue` excludes cancelled entries
+- `cleanDeliveredQueue` preserves cancelled rows for transcript history
+
 ## [0.1.48.0] - 2026-03-31
 
 ### Fixed

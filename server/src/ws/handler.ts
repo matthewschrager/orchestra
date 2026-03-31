@@ -1,6 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import type { DB, MessageRow, ThreadRow } from "../db";
-import { getMessages, getPendingAttention, getThread, attentionRowToApi, messageRowToApi, threadRowToApi, countPendingQueue } from "../db";
+import { getMessages, getPendingAttention, getThread, attentionRowToApi, messageRowToApi, threadRowToApi } from "../db";
 import type { SessionManager } from "../sessions/manager";
 import type { TerminalManager } from "../terminal/manager";
 import type { AttentionItem, StreamDelta, WSClientMessage, WSServerMessage } from "shared";
@@ -241,13 +241,18 @@ export function createWSHandler(
             );
           }
 
-          // Replay pending queue count so client shows correct "N queued" indicator
-          const pendingQueueCount = countPendingQueue(db, msg.threadId);
-          if (pendingQueueCount > 0) {
+          // Replay full queue state so client can render drawer contents
+          const queueItems = sessionManager.getQueueItems(msg.threadId);
+          if (queueItems.length > 0) {
             ws.send(
               JSON.stringify({
                 type: "stream_delta",
-                delta: { threadId: msg.threadId, deltaType: "queued_message", queuedCount: pendingQueueCount },
+                delta: {
+                  threadId: msg.threadId,
+                  deltaType: "queue_updated",
+                  queueItems,
+                  queuedCount: queueItems.filter((i) => i.state === "pending").length,
+                },
               } satisfies WSServerMessage),
             );
           }
@@ -281,6 +286,25 @@ export function createWSHandler(
 
         case "stop_thread":
           sessionManager.stopThread(msg.threadId, { drainQueued: true });
+          break;
+
+        case "cancel_queued":
+          try {
+            const cancelled = sessionManager.cancelQueued(msg.threadId, msg.queueId);
+            if (!cancelled) {
+              ws.send(JSON.stringify({ type: "error", error: "Message already sent or cancelled" } satisfies WSServerMessage));
+            }
+          } catch (err) {
+            ws.send(JSON.stringify({ type: "error", error: (err as Error).message } satisfies WSServerMessage));
+          }
+          break;
+
+        case "clear_queue":
+          try {
+            sessionManager.clearQueue(msg.threadId);
+          } catch (err) {
+            ws.send(JSON.stringify({ type: "error", error: (err as Error).message } satisfies WSServerMessage));
+          }
           break;
 
         case "resolve_attention": {

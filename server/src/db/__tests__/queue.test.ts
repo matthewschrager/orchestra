@@ -5,6 +5,9 @@ import {
   dequeueNextMessage,
   countPendingQueue,
   cleanDeliveredQueue,
+  cancelQueuedMessage,
+  clearPendingQueue,
+  getPendingQueue,
 } from "../index";
 
 function createTestDb(): Database {
@@ -26,7 +29,8 @@ function createTestDb(): Database {
     attachments TEXT,
     interrupt INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    delivered_at TEXT
+    delivered_at TEXT,
+    cancelled_at TEXT
   )`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_queue_pending
     ON message_queue(thread_id, delivered_at) WHERE delivered_at IS NULL`);
@@ -145,5 +149,105 @@ describe("message_queue", () => {
     enqueueMessage(db, "t1", "msg");
     const cleaned = cleanDeliveredQueue(db);
     expect(cleaned).toBe(0);
+  });
+
+  // ── Cancel / Clear / GetPending tests ──
+
+  test("cancelQueuedMessage sets cancelled_at and returns true", () => {
+    const row = enqueueMessage(db, "t1", "will cancel");
+    const result = cancelQueuedMessage(db, row.id, "t1");
+    expect(result).toBe(true);
+
+    const updated = db.query("SELECT cancelled_at FROM message_queue WHERE id = ?").get(row.id) as { cancelled_at: string | null };
+    expect(updated.cancelled_at).not.toBeNull();
+  });
+
+  test("cancelQueuedMessage on already-delivered row returns false", () => {
+    const row = enqueueMessage(db, "t1", "delivered");
+    db.query("UPDATE message_queue SET delivered_at = datetime('now') WHERE id = ?").run(row.id);
+
+    const result = cancelQueuedMessage(db, row.id, "t1");
+    expect(result).toBe(false);
+  });
+
+  test("cancelQueuedMessage on already-cancelled row returns false", () => {
+    const row = enqueueMessage(db, "t1", "twice");
+    cancelQueuedMessage(db, row.id, "t1");
+    const result = cancelQueuedMessage(db, row.id, "t1");
+    expect(result).toBe(false);
+  });
+
+  test("cancelQueuedMessage with wrong threadId returns false (auth guard)", () => {
+    const row = enqueueMessage(db, "t1", "wrong thread");
+    const result = cancelQueuedMessage(db, row.id, "t2");
+    expect(result).toBe(false);
+  });
+
+  test("clearPendingQueue cancels all pending, ignores delivered", () => {
+    enqueueMessage(db, "t1", "pending1");
+    enqueueMessage(db, "t1", "pending2");
+    const delivered = enqueueMessage(db, "t1", "delivered");
+    db.query("UPDATE message_queue SET delivered_at = datetime('now') WHERE id = ?").run(delivered.id);
+
+    const count = clearPendingQueue(db, "t1");
+    expect(count).toBe(2);
+
+    // Delivered row should be untouched
+    const row = db.query("SELECT cancelled_at FROM message_queue WHERE id = ?").get(delivered.id) as { cancelled_at: string | null };
+    expect(row.cancelled_at).toBeNull();
+  });
+
+  test("getPendingQueue returns items with correct state", () => {
+    const pending = enqueueMessage(db, "t1", "pending msg");
+    const sent = enqueueMessage(db, "t1", "sent msg");
+    db.query("UPDATE message_queue SET delivered_at = datetime('now') WHERE id = ?").run(sent.id);
+
+    const items = getPendingQueue(db, "t1");
+    expect(items.length).toBe(2);
+
+    const pendingItem = items.find((i) => i.id === pending.id);
+    expect(pendingItem).toBeDefined();
+    expect(pendingItem!.delivered_at).toBeNull();
+
+    const sentItem = items.find((i) => i.id === sent.id);
+    expect(sentItem).toBeDefined();
+    expect(sentItem!.delivered_at).not.toBeNull();
+  });
+
+  test("getPendingQueue excludes cancelled rows", () => {
+    const row = enqueueMessage(db, "t1", "will cancel");
+    cancelQueuedMessage(db, row.id, "t1");
+
+    const items = getPendingQueue(db, "t1");
+    expect(items.length).toBe(0);
+  });
+
+  test("dequeueNextMessage skips cancelled rows", () => {
+    const first = enqueueMessage(db, "t1", "cancelled");
+    enqueueMessage(db, "t1", "active");
+    cancelQueuedMessage(db, first.id, "t1");
+
+    const claimed = dequeueNextMessage(db, "t1");
+    expect(claimed).not.toBeNull();
+    expect(claimed!.content).toBe("active");
+  });
+
+  test("countPendingQueue excludes cancelled rows", () => {
+    enqueueMessage(db, "t1", "pending");
+    const toCancel = enqueueMessage(db, "t1", "to cancel");
+    cancelQueuedMessage(db, toCancel.id, "t1");
+
+    expect(countPendingQueue(db, "t1")).toBe(1);
+  });
+
+  test("cleanDeliveredQueue keeps cancelled rows", () => {
+    const row = enqueueMessage(db, "t1", "cancelled old");
+    cancelQueuedMessage(db, row.id, "t1");
+
+    const cleaned = cleanDeliveredQueue(db);
+    expect(cleaned).toBe(0);
+
+    const remaining = db.query("SELECT COUNT(*) as cnt FROM message_queue").get() as { cnt: number };
+    expect(remaining.cnt).toBe(1);
   });
 });

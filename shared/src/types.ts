@@ -115,9 +115,19 @@ export interface AgentConfig {
 
 // ── Streaming ──────────────────────────────────────────
 
+/** A single queued message visible to the client */
+export interface QueuedItem {
+  id: string;
+  /** First 200 chars of the message content */
+  content: string;
+  createdAt: string;
+  /** pending = cancellable, sent = already injected via streamInput */
+  state: "pending" | "sent";
+}
+
 export interface StreamDelta {
   threadId: string;
-  deltaType: "text" | "tool_start" | "tool_input" | "tool_end" | "turn_end" | "metrics" | "queued_message";
+  deltaType: "text" | "tool_start" | "tool_input" | "tool_end" | "turn_end" | "metrics" | "queued_message" | "queue_updated";
   text?: string;
   toolName?: string;
   toolInput?: string;
@@ -134,8 +144,10 @@ export interface StreamDelta {
   modelName?: string;
   /** True when this metrics delta came from a completed turn result, not an intermediate stream update */
   finalMetrics?: boolean;
-  /** Current queue depth (for queued_message deltas) */
+  /** Current queue depth (for queued_message deltas — backward compat) */
   queuedCount?: number;
+  /** Full queue state (for queue_updated deltas) */
+  queueItems?: QueuedItem[];
 }
 
 // ── Turn Metrics ──────────────────────────────────────
@@ -162,6 +174,8 @@ export type WSClientMessage =
   | { type: "send_message"; threadId: string; content: string; attachments?: Attachment[]; interrupt?: boolean }
   | { type: "stop_thread"; threadId: string }
   | { type: "resolve_attention"; attentionId: string; resolution: AttentionResolution }
+  | { type: "cancel_queued"; threadId: string; queueId: string }
+  | { type: "clear_queue"; threadId: string }
   | { type: "terminal_create"; threadId: string }
   | { type: "terminal_input"; terminalId: string; data: string }
   | { type: "terminal_resize"; terminalId: string; cols: number; rows: number }
