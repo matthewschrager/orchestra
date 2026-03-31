@@ -71,8 +71,10 @@ orchestra/
 │       │   ├── WorktreePathInput.tsx Worktree root path selector
 │       │   ├── OrchestraLogo.tsx   SVG logo component
 │       │   ├── TodoItemList.tsx    Shared todo item list (card, inline, pinned)
+│       │   ├── ArchiveConfirmationModal.tsx Archive thread confirmation dialog
 │       │   ├── CleanupConfirmationModal.tsx Cleanup confirmation dialog
 │       │   ├── MergeAllPrsButton.tsx Bulk PR merge trigger
+│       │   ├── MergeAllPrsConfirmationModal.tsx Merge-all confirmation dialog
 │       │   ├── renderers/         Rich tool output renderers
 │       │   │   ├── DiffRenderer.tsx    Edit → inline diff
 │       │   │   ├── BashRenderer.tsx    Bash → inline terminal preview
@@ -125,19 +127,19 @@ cd server && bun run src/index.ts  # Production server
 - Agents use `@anthropic-ai/claude-agent-sdk` (pinned v0.2.81) — SDK manages subprocess lifecycle internally
 - **Persistent sessions**: Claude Code sessions use a long-lived `Query` object per thread — subprocess stays alive between turns, follow-ups injected via `streamInput()`. State machine: `thinking → idle/waiting → thinking`. Falls back to legacy `resume` if subprocess crashes. Session IDs persisted to `session_id` column (survives restart). Abort: persistent uses `Query.close()`, legacy uses AbortController; `aborted` flag distinguishes user-stop from SDK error.
 - **Message queuing**: Messages sent while agent is working are injected via `streamInput()` with `priority: 'next'`. Queue depth limit: 5 per turn. Non-persistent adapters (Codex) use blocking `query()` with `resume`.
-- SDK options: `permissionMode: "bypassPermissions"`, `cwd` per-call for multi-project isolation
+- SDK options: `permissionMode` per-thread (default: `bypassPermissions` for worktree-isolated, `acceptEdits` for non-isolated), `cwd` per-call for multi-project isolation. Permission modes: `bypassPermissions`, `acceptEdits`, `default`, `plan`. Codex maps to `approvalPolicy` + `sandboxMode`.
 - Multi-project: single server manages multiple registered git repos via `projects` table; multiple threads can run concurrently on the same project's worktree
 - Real-time streaming via ephemeral WebSocket deltas (not persisted); complete messages persisted to SQLite with WAL mode, seq-based replay on reconnect; cross-client sync via `thread_updated` WS broadcasts
 - Remote auth: localhost passwordless; LAN/Cloudflare Tunnel/SSH tunnel use bearer token; Tailscale Serve bootstraps signed `HttpOnly` cookie from identity headers
 - Security: CORS/Origin/Host validation via shared `getAllowedOrigins()`; WebSocket Origin check on upgrade; CSP + X-Frame-Options + nosniff headers; filesystem browse restricted to `$HOME`; SQL column allowlists; per-client WS rate limiting (60/10s); DOMPurify on rendered HTML
 - Attention queue: AskUserQuestion/permission events persisted to `attention_required` table, broadcast cross-thread to all WS clients, resolvable with first-caller-wins race guard; `sendMessage()` orphans pending items (user moved on)
-- ExitPlanMode workaround: SDK `requiresUserInteraction()` causes Zod error in headless mode — denied in `canUseTool` with `interrupt: true`, creates confirmation attention event; on approval, `resolveAttention` calls `setPermissionMode("bypassPermissions")`
+- ExitPlanMode workaround: SDK `requiresUserInteraction()` causes Zod error in headless mode — denied in `canUseTool` with `interrupt: true`, creates confirmation attention event; on approval, `resolveAttention` calls `setPermissionMode()` to restore the thread's configured permission mode (or `bypassPermissions` if thread was in plan mode)
 - Worktree isolation: three-layer defense — (1) nested instance guard (`ORCHESTRA_MANAGED=1`), (2) env scrubbing after startup, (3) prompt preamble injection with port/cwd/rules. Cleanup on archive via `?cleanup_worktree=true`; bulk cleanup via `POST /projects/:id/cleanup-pushed`
 - Git: all commands via `gitSpawn()`/`gitSpawnSync()` with `--no-optional-locks`; `git worktree add` always branches from detected main/master, not HEAD
 - **QA testing from worktrees**: Each worktree gets its own port (via hash). Build client (`bun run --filter client build`), start server with `ORCHESTRA_ALLOW_NESTED=1`, set `ORCHESTRA_DATA_DIR` to worktree-local path. Do not test against the main-branch instance.
 - Inactivity timeout (default 30 min, configurable via Settings) replaces PID-based health check for hung SDK iterators
 - Integrated terminal: xterm.js v6 (client) + Bun native PTY via `Bun.spawn({ terminal })` (server); PTY persists per-thread; desktop only
-- Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings`; gear icon in sidebar
+- Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings`; gear icon in sidebar; `defaultEffortLevel` pre-selects effort in new-thread forms (validated against agent support, falls back to agent default if unsupported); `defaultAgent` pre-selects agent in new-thread forms (validated against detected agents, hidden when only one agent available)
 
 ## Testing
 
@@ -145,4 +147,22 @@ cd server && bun run src/index.ts  # Production server
 bun test                        # Run all tests
 ```
 
-Tests cover renderer parsing functions (including Todo payload variants, Bash preview truncation, diff precision on large files, and sticky run-bar token summaries), server-side Claude and Codex message parsing, Tailscale auth/origin hardening flows, filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, settings CRUD (worktreeRoot validation, inactivityTimeoutMinutes bounds, remoteUrl HTTPS enforcement), and PR status utilities (URL number extraction, stale guard timing).
+Tests cover renderer parsing functions (including Todo payload variants, Bash preview truncation, diff precision on large files, and sticky run-bar token summaries), server-side Claude and Codex message parsing, Tailscale auth/origin hardening flows, filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, settings CRUD (worktreeRoot validation, inactivityTimeoutMinutes bounds, remoteUrl HTTPS enforcement, defaultEffortLevel validation, defaultAgent validation), PR status utilities (URL number extraction, stale guard timing), and worktree status (diff stats parsing, branch/no-branch scenarios).
+
+## Skill routing
+
+When the user's request matches an available skill, ALWAYS invoke it using the Skill
+tool as your FIRST action. Do NOT answer directly, do NOT use other tools first.
+The skill has specialized workflows that produce better results than ad-hoc answers.
+
+Key routing rules:
+- Product ideas, "is this worth building", brainstorming → invoke office-hours
+- Bugs, errors, "why is this broken", 500 errors → invoke investigate
+- Ship, deploy, push, create PR → invoke ship
+- QA, test the site, find bugs → invoke qa
+- Code review, check my diff → invoke review
+- Update docs after shipping → invoke document-release
+- Weekly retro → invoke retro
+- Design system, brand → invoke design-consultation
+- Visual audit, design polish → invoke design-review
+- Architecture review → invoke plan-eng-review
