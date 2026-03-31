@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.47.0] - 2026-03-31
+
+### Fixed
+
+- **Codex inline diffs now survive path format drift** — normalize `file_change` paths before snapshot and baseline lookup so completed-only edits keep the real pre-edit content instead of rendering the whole file as a fresh add
+
+### Added
+
+- **Codex parser regression coverage for path variants** — added tests for completed-only absolute paths and started/completed path-format mismatches so inflated inline diffs stay fixed
+
 ## [0.1.46.0] - 2026-03-31
 
 ### Fixed
