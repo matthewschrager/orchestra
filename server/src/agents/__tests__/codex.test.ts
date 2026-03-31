@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { CodexAdapter, CodexParser } from "../codex";
 
 function createParser(cwd?: string) {
@@ -350,6 +350,85 @@ describe("CodexParser", () => {
           id: "fc-3",
           type: "file_change",
           changes: [{ path: "src/index.ts", kind: "update" }],
+          status: "completed",
+        },
+      });
+
+      const payload = JSON.parse(result.messages[0].toolInput ?? "{}");
+      expect(payload).toMatchObject({
+        file_path: "src/index.ts",
+        old_string: "export const count = 1;\n",
+        new_string: "export const count = 2;\n",
+        changeKind: "update",
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("file_change normalizes completed-only absolute paths against the turn baseline", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "codex-parser-"));
+    try {
+      initGitRepo(tempDir);
+      mkdirSync(join(tempDir, "src"), { recursive: true });
+      writeFileSync(join(tempDir, "src/index.ts"), "export const count = 1;\n");
+      Bun.spawnSync(["git", "add", "."], { cwd: tempDir });
+      Bun.spawnSync(["git", "commit", "-m", "init"], { cwd: tempDir });
+
+      const parser = createParser(tempDir);
+      parser.handleEvent({ type: "turn.started" });
+
+      const absPath = resolve(tempDir, "src/index.ts");
+      writeFileSync(absPath, "export const count = 2;\n");
+
+      const result = parser.handleEvent({
+        type: "item.completed",
+        item: {
+          id: "fc-abs",
+          type: "file_change",
+          changes: [{ path: absPath, kind: "update" }],
+          status: "completed",
+        },
+      });
+
+      const payload = JSON.parse(result.messages[0].toolInput ?? "{}");
+      expect(payload).toMatchObject({
+        file_path: "src/index.ts",
+        old_string: "export const count = 1;\n",
+        new_string: "export const count = 2;\n",
+        changeKind: "update",
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("file_change snapshots survive started/completed path format mismatch", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "codex-parser-"));
+    try {
+      mkdirSync(join(tempDir, "src"), { recursive: true });
+      writeFileSync(join(tempDir, "src/index.ts"), "export const count = 1;\n");
+
+      const parser = createParser(tempDir);
+      parser.handleEvent({
+        type: "item.started",
+        item: {
+          id: "fc-path-mismatch",
+          type: "file_change",
+          changes: [{ path: "./src/index.ts", kind: "update" }],
+          status: "in_progress",
+        },
+      });
+
+      const absPath = resolve(tempDir, "src/index.ts");
+      writeFileSync(absPath, "export const count = 2;\n");
+
+      const result = parser.handleEvent({
+        type: "item.completed",
+        item: {
+          id: "fc-path-mismatch",
+          type: "file_change",
+          changes: [{ path: absPath, kind: "update" }],
           status: "completed",
         },
       });
