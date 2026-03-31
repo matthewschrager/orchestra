@@ -28,6 +28,7 @@ const baseThread: Thread = {
   repoPath: "/tmp/orchestra",
   worktree: "/tmp/wt-auth",
   branch: "orchestra/auth-fix",
+  baseBranch: null,
   prUrl: "https://github.com/acme/orchestra/pull/17",
   prStatus: "open",
   prNumber: 17,

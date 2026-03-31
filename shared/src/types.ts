@@ -71,6 +71,8 @@ export interface Thread {
   repoPath: string;
   worktree: string | null;
   branch: string | null;
+  /** The branch the worktree was created from (e.g. "staging", "main") */
+  baseBranch: string | null;
   prUrl: string | null;
   prStatus: PrStatus | null;
   prNumber: number | null;
@@ -236,6 +238,8 @@ export interface Settings {
   worktreeRoot: string;
   /** Inactivity timeout in minutes — abort sessions with no SDK messages for this long (default: 30) */
   inactivityTimeoutMinutes: number;
+  /** Whether thread views should follow new messages and streaming output automatically */
+  autoScrollThreads: boolean;
   /** Display-only remote URL (Tailscale HTTPS, VPN, tunnel, etc.) — shown in Settings panel */
   remoteUrl: string;
   /** Default model for Claude agent (empty string = SDK default) */
@@ -279,12 +283,16 @@ export interface CreateThreadRequest {
   title?: string;
   isolate?: boolean;
   worktreeName?: string;
+  /** Override the base branch for the worktree (defaults to project's checked-out branch) */
+  baseBranch?: string;
   attachments?: Attachment[];
 }
 
 export interface WorktreeInfo {
   path: string;
   branch: string;
+  /** The branch the worktree was created from (e.g. "staging", "main") */
+  baseBranch: string | null;
   aheadBehind: { ahead: number; behind: number };
   changedFiles: string[];
   diffStats?: { insertions: number; deletions: number };

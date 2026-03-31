@@ -2,7 +2,7 @@ import { join, basename, resolve } from "path";
 import { existsSync, readFileSync } from "fs";
 import type { DB, ThreadRow } from "../db";
 import { getThread, updateThread } from "../db";
-import { gitSpawn } from "../utils/git";
+import { getCurrentBranch, gitSpawn } from "../utils/git";
 import { extractPrNumber } from "./pr-status";
 import type { CleanupReason, PrStatus } from "shared";
 
@@ -15,6 +15,8 @@ export const DEFAULT_WORKTREE_ROOT = join(
 export interface WorktreeInfo {
   path: string;
   branch: string;
+  /** The branch the worktree was created from (e.g. "staging", "main") */
+  baseBranch: string;
 }
 
 export class WorktreeManager {
@@ -36,20 +38,28 @@ export class WorktreeManager {
     return this.worktreeRoot;
   }
 
-  async create(threadId: string, repoPath: string, name?: string): Promise<WorktreeInfo> {
+  async create(threadId: string, repoPath: string, name?: string, baseBranchOverride?: string): Promise<WorktreeInfo> {
     const repoName = basename(repoPath);
     const dirName = name || `${repoName}-${threadId}`;
     // Support absolute paths (from directory picker) or names relative to worktreeRoot
     const wtPath = dirName.startsWith("/") ? dirName : join(this.worktreeRoot, dirName);
     const branch = `orchestra/${basename(wtPath)}`;
 
-    // Always branch from main/master, not HEAD — prevents inheriting a dirty
-    // checkout state if an agent previously switched the main repo's branch.
-    const mainBranch = await this.detectMainBranch(repoPath);
+    // Use explicit override if provided, otherwise detect from the project directory's
+    // checked-out branch. Falls back to main/master detection if HEAD is detached.
+    let baseBranch: string;
+    if (baseBranchOverride) {
+      baseBranch = baseBranchOverride;
+    } else {
+      const checkedOut = getCurrentBranch(repoPath);
+      baseBranch = checkedOut && checkedOut !== "unknown"
+        ? checkedOut
+        : await this.detectMainBranch(repoPath);
+    }
 
     // Create the worktree with explicit start-point
     const proc = gitSpawn(
-      ["worktree", "add", wtPath, "-b", branch, mainBranch],
+      ["worktree", "add", wtPath, "-b", branch, baseBranch],
       { cwd: repoPath, stdout: "pipe", stderr: "pipe" },
     );
     await proc.exited;
@@ -59,12 +69,12 @@ export class WorktreeManager {
       throw new Error(`Failed to create worktree: ${stderr}`);
     }
 
-    return { path: wtPath, branch };
+    return { path: wtPath, branch, baseBranch };
   }
 
   async getStatus(
     threadId: string,
-  ): Promise<{ aheadBehind: { ahead: number; behind: number }; changedFiles: string[] } | null> {
+  ): Promise<{ baseBranch: string | null; aheadBehind: { ahead: number; behind: number }; changedFiles: string[]; diffStats?: { insertions: number; deletions: number } } | null> {
     const thread = getThread(this.db, threadId) as ThreadRow | null;
     if (!thread?.worktree) return null;
     if (!existsSync(thread.worktree)) return null;
@@ -91,19 +101,20 @@ export class WorktreeManager {
       ...untrackedText.trim().split("\n").filter(Boolean),
     ];
 
-    // Ahead/behind + diff stats (relative to main/master)
+    // Use stored base branch; fall back to main/master detection for old threads
+    const baseBranch = thread.base_branch || await this.detectMainBranch(thread.worktree);
+
+    // Ahead/behind + diff stats (relative to base branch)
     let ahead = 0;
     let behind = 0;
     let diffStats: { insertions: number; deletions: number } | undefined;
     if (thread.branch) {
-      const mainBranch = await this.detectMainBranch(thread.worktree);
-
       const abProc = gitSpawn(
-        ["rev-list", "--left-right", "--count", `${mainBranch}...${thread.branch}`],
+        ["rev-list", "--left-right", "--count", `${baseBranch}...${thread.branch}`],
         { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
       );
       const statProc = gitSpawn(
-        ["diff", "--shortstat", mainBranch],
+        ["diff", "--shortstat", baseBranch],
         { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
       );
 
@@ -125,7 +136,7 @@ export class WorktreeManager {
       }
     }
 
-    return { aheadBehind: { ahead, behind }, changedFiles, diffStats };
+    return { baseBranch: thread.base_branch, aheadBehind: { ahead, behind }, changedFiles, diffStats };
   }
 
   /** Max file size (per side) for diff responses */
@@ -156,9 +167,10 @@ export class WorktreeManager {
     const resolvedFile = resolve(resolvedWorktree, filePath);
     if (!resolvedFile.startsWith(resolvedWorktree + "/")) return null;
 
-    const mainBranch = await this.detectMainBranch(thread.worktree);
+    // Use stored base branch; fall back to main/master detection for old threads
+    const mainBranch = thread.base_branch || await this.detectMainBranch(thread.worktree);
 
-    // Old content from main branch (empty for new files)
+    // Old content from base branch (empty for new files)
     let oldContent = "";
     const oldProc = gitSpawn(
       ["show", `${mainBranch}:${filePath}`],
@@ -264,8 +276,13 @@ export class WorktreeManager {
     // Create PR (gh is not git — keep as Bun.spawn)
     const title = opts.title || thread.title;
     const body = opts.body || `Created by Orchestra thread ${threadId}`;
+    const prArgs = ["gh", "pr", "create", "--title", title, "--body", body];
+    // Target the base branch the worktree was created from (e.g. staging)
+    if (thread.base_branch) {
+      prArgs.push("--base", thread.base_branch);
+    }
     const prProc = Bun.spawn(
-      ["gh", "pr", "create", "--title", title, "--body", body],
+      prArgs,
       { cwd: thread.worktree, stdout: "pipe", stderr: "pipe" },
     );
     const [prStdout, prStderr] = await Promise.all([

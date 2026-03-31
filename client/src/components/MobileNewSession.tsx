@@ -26,6 +26,7 @@ interface MobileNewSessionProps {
     worktreeName?: string,
     attachments?: Attachment[],
     permissionMode?: PermissionMode | null,
+    baseBranch?: string,
   ) => void;
 }
 
@@ -55,6 +56,8 @@ export function MobileNewSession({
     const suffix = Math.random().toString(36).slice(2, 13);
     return `orchestra/${project?.name ?? "project"}-${suffix}`;
   });
+  const [baseBranchOverride, setBaseBranchOverride] = useState<string>("");
+  const [editingBaseBranch, setEditingBaseBranch] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -167,9 +170,12 @@ export function MobileNewSession({
       isolate ? worktreeName : undefined,
       currentAttachments,
       permissionMode || null,
+      isolate && baseBranchOverride ? baseBranchOverride : undefined,
     );
     setPrompt("");
     setAttachments([]);
+    setBaseBranchOverride("");
+    setEditingBaseBranch(false);
   };
 
   return (
@@ -345,22 +351,55 @@ export function MobileNewSession({
 
           <div className="mt-3 flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-content-2">
-                <input
-                  type="checkbox"
-                  checked={isolate}
-                  onChange={(e) => {
-                    setIsolate(e.target.checked);
-                    setPermissionMode(getDefaultPermissionMode(selectedAgent, e.target.checked));
-                    if (e.target.checked) {
-                      const suffix = Math.random().toString(36).slice(2, 13);
-                      setWorktreeName(`orchestra/${selectedProject?.name ?? "project"}-${suffix}`);
-                    }
-                  }}
-                  className="rounded"
-                />
-                Isolate to worktree
-              </label>
+              <div className="flex flex-col gap-1">
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-content-2">
+                  <input
+                    type="checkbox"
+                    checked={isolate}
+                    onChange={(e) => {
+                      setIsolate(e.target.checked);
+                      setPermissionMode(getDefaultPermissionMode(selectedAgent, e.target.checked));
+                      if (e.target.checked) {
+                        const suffix = Math.random().toString(36).slice(2, 13);
+                        setWorktreeName(`orchestra/${selectedProject?.name ?? "project"}-${suffix}`);
+                      }
+                    }}
+                    className="rounded"
+                  />
+                  Isolate to worktree
+                </label>
+                {isolate && selectedProject?.currentBranch && (
+                  editingBaseBranch ? (
+                    <span className="ml-6 flex items-center gap-1 text-[11px] text-content-3">
+                      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="opacity-50 shrink-0">
+                        <path d="M5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 0 10.5 8.5H12a2.25 2.25 0 1 1 0 1.5h-1.5A4 4 0 0 1 6.5 6V5.372a2.25 2.25 0 0 1-1.5-2.122ZM8 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm5.5 7a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z" />
+                      </svg>
+                      from
+                      <input
+                        type="text"
+                        value={baseBranchOverride || selectedProject.currentBranch}
+                        onChange={(e) => setBaseBranchOverride(e.target.value)}
+                        onBlur={() => setEditingBaseBranch(false)}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingBaseBranch(false); }}
+                        className="w-28 min-h-[28px] bg-surface-1 border border-edge-2 rounded px-1.5 py-0.5 text-[11px] font-mono text-content-1 focus:outline-none focus:border-accent"
+                        spellCheck={false}
+                        autoFocus
+                      />
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setEditingBaseBranch(true)}
+                      className="ml-6 flex items-center gap-1 text-[11px] text-content-3 hover:text-content-2 transition-colors"
+                      title="Tap to change base branch"
+                    >
+                      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="opacity-50 shrink-0">
+                        <path d="M5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 0 10.5 8.5H12a2.25 2.25 0 1 1 0 1.5h-1.5A4 4 0 0 1 6.5 6V5.372a2.25 2.25 0 0 1-1.5-2.122ZM8 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm5.5 7a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z" />
+                      </svg>
+                      from <code className={`font-mono ${baseBranchOverride ? "text-accent" : "text-content-2"}`}>{baseBranchOverride || selectedProject.currentBranch}</code>
+                    </button>
+                  )
+                )}
+              </div>
               <button
                 onClick={handleSubmit}
                 disabled={uploading || !hasContent || !selectedProjectId}

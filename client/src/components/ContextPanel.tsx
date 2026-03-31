@@ -226,7 +226,17 @@ export function ContextPanel({ thread, onClose }: Props) {
         {/* Branch info */}
         {thread.branch && (
           <Section title="Branch">
-            <code className="text-sm text-accent font-mono">{thread.branch}</code>
+            <div className="space-y-1">
+              <code className="text-sm text-accent font-mono">{thread.branch}</code>
+              {thread.baseBranch && (
+                <div className="flex items-center gap-1.5 text-xs text-content-3">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="opacity-50 shrink-0">
+                    <path d="M5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 0 10.5 8.5H12a2.25 2.25 0 1 1 0 1.5h-1.5A4 4 0 0 1 6.5 6V5.372a2.25 2.25 0 0 1-1.5-2.122ZM8 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm5.5 7a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z" />
+                  </svg>
+                  <span>from <code className="font-mono text-content-2">{thread.baseBranch}</code></span>
+                </div>
+              )}
+            </div>
           </Section>
         )}
 
@@ -239,7 +249,7 @@ export function ContextPanel({ thread, onClose }: Props) {
 
         {/* Ahead/Behind + Diff Stats */}
         {worktreeInfo && (
-          <Section title="Status">
+          <Section title={worktreeInfo.baseBranch ? `vs ${worktreeInfo.baseBranch}` : "Status"}>
             <div className="space-y-1.5">
               <div className="flex gap-3 text-sm font-mono">
                 <span className="text-emerald-400">

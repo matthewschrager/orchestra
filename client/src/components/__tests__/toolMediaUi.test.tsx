@@ -15,6 +15,7 @@ const baseThread: Thread = {
   repoPath: "/repo",
   worktree: null,
   branch: null,
+  baseBranch: null,
   prUrl: null,
   prStatus: null,
   prNumber: null,
@@ -71,6 +72,26 @@ describe("tool media rendering", () => {
       ],
     })).toEqual([
       { src: "data:image/png;base64,YWJj", alt: "Preview", mimeType: undefined },
+    ]);
+  });
+
+  test("converts local image paths into file proxy URLs", () => {
+    expect(getToolImages({
+      images: [
+        { src: "/tmp/mobile-shot.png", alt: "Preview" },
+      ],
+    })).toEqual([
+      { src: "/api/files/serve?path=%2Ftmp%2Fmobile-shot.png", alt: "Preview", mimeType: undefined },
+    ]);
+  });
+
+  test("keeps web asset image paths unchanged", () => {
+    expect(getToolImages({
+      images: [
+        { src: "/assets/logo.png", alt: "Logo" },
+      ],
+    })).toEqual([
+      { src: "/assets/logo.png", alt: "Logo", mimeType: undefined },
     ]);
   });
 
