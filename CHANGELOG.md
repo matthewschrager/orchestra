@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.45.0] - 2026-03-31
+
+### Fixed
+
+- **Codex screenshot rendering** - Codex tool results now preserve screenshots from both `content` and `structured_content`, and safe raster image payloads are proxied through `/api/files/serve` instead of relying on brittle inline data URLs
+- **Tool image path handling** - the client now converts real filesystem image paths into file-proxy URLs without rewriting normal web asset paths like `/assets/logo.png`
+
+### Added
+
+- **Regression coverage for tool screenshots** - new tests lock in Codex structured-content screenshots, file-backed raster image persistence, Claude tool-result image handling, and client-side image URL normalization
+
+### Changed
+
+- **Skill routing docs** - added the project-level routing block to `CLAUDE.md` and `AGENTS.md` so workflows like `/review`, `/ship`, and `/qa` are invoked consistently
+
 ## [0.1.44.0] - 2026-03-29
 
 ### Fixed
