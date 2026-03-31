@@ -1013,6 +1013,7 @@ function AppInner() {
                 ref={chatViewRef}
                 messages={activeMessages}
                 thread={activeThread}
+                autoScrollThreads={appSettings?.autoScrollThreads ?? true}
                 streamingText={activeStreamingText}
                 streamingTool={activeStreamingTool}
                 streamingToolInput={activeStreamingToolInput}
@@ -1219,7 +1220,13 @@ function AppInner() {
 
       {/* Settings Panel */}
       {showSettings && (
-        <SettingsPanel onClose={() => setShowSettings(false)} agents={agents} onDefaultEffortChange={setDefaultEffortLevel} onDefaultAgentChange={setDefaultAgent} />
+        <SettingsPanel
+          onClose={() => setShowSettings(false)}
+          agents={agents}
+          onDefaultEffortChange={setDefaultEffortLevel}
+          onDefaultAgentChange={setDefaultAgent}
+          onSettingsChange={setAppSettings}
+        />
       )}
     </div>
   );
