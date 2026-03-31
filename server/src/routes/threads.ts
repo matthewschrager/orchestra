@@ -141,7 +141,7 @@ export function createThreadRoutes(
 
   // Stop thread
   app.post("/:id/stop", (c) => {
-    sessionManager.stopThread(c.req.param("id"));
+    sessionManager.stopThread(c.req.param("id"), { drainQueued: true });
     const thread = getThread(db, c.req.param("id"));
     if (!thread) return c.json({ error: "Not found" }, 404);
     return c.json(threadRowToApi(thread));

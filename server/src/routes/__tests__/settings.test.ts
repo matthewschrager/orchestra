@@ -42,6 +42,7 @@ describe("GET /settings", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.worktreeRoot).toBe(join(homedir(), "projects", "worktrees"));
+    expect(body.autoScrollThreads).toBe(true);
   });
 
   test("returns stored settings", async () => {
@@ -185,6 +186,45 @@ describe("PATCH /settings", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.inactivityTimeoutMinutes).toBe(60);
+  });
+
+  test("PATCH autoScrollThreads accepts true", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoScrollThreads: true }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.autoScrollThreads).toBe(true);
+  });
+
+  test("PATCH autoScrollThreads accepts false", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoScrollThreads: false }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.autoScrollThreads).toBe(false);
+  });
+
+  test("PATCH autoScrollThreads rejects non-boolean", async () => {
+    const db = createTestDb();
+    const { app } = createApp(db);
+    const res = await app.request("/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoScrollThreads: "yes" }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("autoScrollThreads");
   });
 
   test("rejects inactivityTimeoutMinutes < 1", async () => {

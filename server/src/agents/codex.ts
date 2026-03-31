@@ -5,7 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, normalize, relative, resolve } from "node:path";
 import { extractAskUserRequest } from "./askUser";
-import { normalizeToolResultContent } from "./toolResultMedia";
+import { extractToolResultImages, normalizeToolResultContent } from "./toolResultMedia";
 import type {
   AgentAdapter,
   AgentSession,
@@ -497,14 +497,18 @@ export class CodexParser {
     result: { content?: unknown; structured_content?: unknown } | undefined,
   ): Pick<ParsedMessage, "toolOutput" | "metadata"> & { toolOutput: string } {
     const normalized = normalizeToolResultContent(result?.content);
+    const images = dedupeToolImages([
+      ...normalized.images,
+      ...extractToolResultImages(result?.structured_content),
+    ]);
     let toolOutput = normalized.text;
-    if (!toolOutput && normalized.images.length === 0 && result) {
+    if (!toolOutput && images.length === 0 && result) {
       toolOutput = JSON.stringify(result.content ?? result.structured_content ?? result);
     }
 
     return {
       toolOutput,
-      metadata: normalized.images.length > 0 ? { images: normalized.images } : undefined,
+      metadata: images.length > 0 ? { images } : undefined,
     };
   }
 
@@ -614,3 +618,12 @@ export class CodexParser {
 }
 
 const EMPTY: Readonly<ParseResult> = Object.freeze({ messages: [], deltas: [] });
+
+function dedupeToolImages<T extends { src: string }>(images: T[]): T[] {
+  const seen = new Set<string>();
+  return images.filter((image) => {
+    if (seen.has(image.src)) return false;
+    seen.add(image.src);
+    return true;
+  });
+}

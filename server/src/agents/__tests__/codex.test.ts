@@ -622,12 +622,47 @@ describe("CodexParser", () => {
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0].toolName).toBe("js_repl");
     expect(result.messages[0].toolOutput).toBeUndefined();
+    const images = (result.messages[0].metadata as { images?: Array<{ src: string; mimeType?: string; alt?: string }> } | undefined)?.images;
+    expect(images).toHaveLength(1);
+    expect(images?.[0]).toMatchObject({
+      mimeType: "image/png",
+      alt: "Tool image 1",
+    });
+    expect(images?.[0].src).toMatch(/^\/api\/files\/serve\?path=/);
+  });
+
+  test("item.completed (mcp_tool_call) preserves screenshots from structured_content file paths", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.completed",
+      item: {
+        id: "mcp-image-2",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "view_image",
+        arguments: { path: "/tmp/mobile-shot.png" },
+        result: {
+          content: [],
+          structured_content: {
+            preview: {
+              path: "/tmp/mobile-shot.png",
+              title: "Mobile shot",
+            },
+          },
+        },
+        status: "completed",
+      },
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].toolName).toBe("view_image");
+    expect(result.messages[0].toolOutput).toBeUndefined();
     expect(result.messages[0].metadata).toEqual({
       images: [
         {
-          src: "data:image/png;base64,YWJjMTIz",
+          src: "/api/files/serve?path=%2Ftmp%2Fmobile-shot.png",
           mimeType: "image/png",
-          alt: "Tool image 1",
+          alt: "Mobile shot",
         },
       ],
     });
