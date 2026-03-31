@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ImageLightbox } from "../ImageLightbox";
+import { fileServeUrl, isImageFile, parseLocalFileHref } from "../../lib/fileUtils";
 
 export interface ToolImageArtifact {
   src: string;
@@ -23,10 +24,11 @@ export function getToolImages(metadata: Record<string, unknown> | null | undefin
 
   return rawImages.flatMap((item, index) => {
     if (!isRecord(item) || typeof item.src !== "string" || !item.src) return [];
+    const src = normalizeToolImageSrc(item.src);
     const mimeType = typeof item.mimeType === "string" ? item.mimeType : undefined;
-    if (!isSafeRenderableToolImage(item.src, mimeType)) return [];
+    if (!isSafeRenderableToolImage(src, mimeType)) return [];
     return [{
-      src: item.src,
+      src,
       mimeType,
       alt: typeof item.alt === "string" && item.alt.trim() ? item.alt : `Tool image ${index + 1}`,
     }];
@@ -98,4 +100,18 @@ function isSafeRenderableToolImage(src: string, mimeType?: string): boolean {
 function extractDataUrlMimeType(src: string): string | null {
   const match = src.match(/^data:([^;,]+)[;,]/i);
   return match ? match[1].toLowerCase() : null;
+}
+
+function normalizeToolImageSrc(src: string): string {
+  if (src.startsWith("data:") || src.startsWith("blob:") || src.startsWith("http://") ||
+      src.startsWith("https://") || src.startsWith("/api/files/serve?")) {
+    return src;
+  }
+
+  const localFile = parseLocalFileHref(src);
+  if (localFile && isImageFile(localFile.path)) {
+    return fileServeUrl(localFile.path);
+  }
+
+  return src;
 }
