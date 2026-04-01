@@ -46,36 +46,33 @@ describe("WorktreeManager.create", () => {
     rmSync(wtRoot, { recursive: true, force: true });
   });
 
-  test("creates worktree branching from main, not HEAD", () => {
-    // Put the main repo on a feature branch to simulate a polluted checkout
+  test("creates worktree branching from the checked-out branch", () => {
+    // Put the main repo on a feature branch
     Bun.spawnSync(["git", "checkout", "-b", "feature/dirty"], { cwd: repoDir });
     Bun.spawnSync(["git", "commit", "--allow-empty", "-m", "feature commit"], { cwd: repoDir });
 
     const mgr = new WorktreeManager(db, wtRoot);
-    // The worktree should branch from main, not from feature/dirty
+    // The worktree should branch from feature/dirty (the checked-out branch)
     const result = mgr.create("test-thread", repoDir);
 
     return result.then((wt) => {
       // Verify the worktree was created
       expect(wt.path).toContain("test-thread");
       expect(wt.branch).toStartWith("orchestra/");
+      expect(wt.baseBranch).toBe("feature/dirty");
 
-      // Verify the worktree branch points to main's commit, NOT feature/dirty's commit
-      const mainCommit = Bun.spawnSync(["git", "rev-parse", "main"], { cwd: repoDir });
-      const mainSha = new TextDecoder().decode(mainCommit.stdout).trim();
+      // Verify the worktree branch points to feature/dirty's commit
+      const featureCommit = Bun.spawnSync(["git", "rev-parse", "feature/dirty"], { cwd: repoDir });
+      const featureSha = new TextDecoder().decode(featureCommit.stdout).trim();
 
       const wtCommit = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: wt.path });
       const wtSha = new TextDecoder().decode(wtCommit.stdout).trim();
 
-      const featureCommit = Bun.spawnSync(["git", "rev-parse", "feature/dirty"], { cwd: repoDir });
-      const featureSha = new TextDecoder().decode(featureCommit.stdout).trim();
-
-      expect(wtSha).toBe(mainSha);
-      expect(wtSha).not.toBe(featureSha);
+      expect(wtSha).toBe(featureSha);
     });
   });
 
-  test("creates worktree from main even when HEAD is detached", () => {
+  test("falls back to main/master when HEAD is detached", () => {
     // Detach HEAD
     const initCommit = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: repoDir });
     const sha = new TextDecoder().decode(initCommit.stdout).trim();
@@ -85,6 +82,9 @@ describe("WorktreeManager.create", () => {
     const result = mgr.create("detach-test", repoDir);
 
     return result.then((wt) => {
+      // With detached HEAD, getCurrentBranch returns "" → falls back to main
+      expect(wt.baseBranch).toBe("main");
+
       const mainCommit = Bun.spawnSync(["git", "rev-parse", "main"], { cwd: repoDir });
       const mainSha = new TextDecoder().decode(mainCommit.stdout).trim();
 
@@ -95,14 +95,14 @@ describe("WorktreeManager.create", () => {
     });
   });
 
-  test("falls back to master when main branch does not exist", () => {
+  test("branches from checked-out branch even on master-based repos", () => {
     // Create a repo with "master" as the default branch (no "main")
     const masterRepo = mkdtempSync(join(tmpdir(), "wt-master-"));
     Bun.spawnSync(["git", "init", "-b", "master"], { cwd: masterRepo });
     Bun.spawnSync(["git", "config", "user.email", "test@test.com"], { cwd: masterRepo });
     Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: masterRepo });
     Bun.spawnSync(["git", "commit", "--allow-empty", "-m", "init"], { cwd: masterRepo });
-    // Put on a feature branch so we can verify it branches from master, not HEAD
+    // Put on a feature branch — worktree should branch from feature/x
     Bun.spawnSync(["git", "checkout", "-b", "feature/x"], { cwd: masterRepo });
     Bun.spawnSync(["git", "commit", "--allow-empty", "-m", "feature"], { cwd: masterRepo });
 
@@ -110,11 +110,13 @@ describe("WorktreeManager.create", () => {
     const result = mgr.create("master-test", masterRepo);
 
     return result.then((wt) => {
-      const masterCommit = Bun.spawnSync(["git", "rev-parse", "master"], { cwd: masterRepo });
-      const masterSha = new TextDecoder().decode(masterCommit.stdout).trim();
+      expect(wt.baseBranch).toBe("feature/x");
+
+      const featureCommit = Bun.spawnSync(["git", "rev-parse", "feature/x"], { cwd: masterRepo });
+      const featureSha = new TextDecoder().decode(featureCommit.stdout).trim();
       const wtCommit = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: wt.path });
       const wtSha = new TextDecoder().decode(wtCommit.stdout).trim();
-      expect(wtSha).toBe(masterSha);
+      expect(wtSha).toBe(featureSha);
 
       rmSync(masterRepo, { recursive: true, force: true });
     });

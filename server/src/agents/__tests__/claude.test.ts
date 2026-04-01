@@ -463,15 +463,13 @@ describe("ClaudeParser", () => {
 
     expect(messages).toHaveLength(1);
     expect(messages[0].toolOutput).toBeUndefined();
-    expect(messages[0].metadata).toEqual({
-      images: [
-        {
-          src: "data:image/png;base64,YWJjMTIz",
-          mimeType: "image/png",
-          alt: "Tool image 1",
-        },
-      ],
+    const images = (messages[0].metadata as { images?: Array<{ src: string; mimeType?: string; alt?: string }> } | undefined)?.images;
+    expect(images).toHaveLength(1);
+    expect(images?.[0]).toMatchObject({
+      mimeType: "image/png",
+      alt: "Tool image 1",
     });
+    expect(images?.[0].src).toMatch(/^\/api\/files\/serve\?path=/);
   });
 
   test("propagates is_error from tool_result to metadata", () => {

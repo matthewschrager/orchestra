@@ -148,6 +148,21 @@ const COLUMN_MIGRATIONS = [
     column: "permission_mode",
     sql: `ALTER TABLE threads ADD COLUMN permission_mode TEXT`,
   },
+  {
+    table: "threads",
+    column: "base_branch",
+    sql: `ALTER TABLE threads ADD COLUMN base_branch TEXT`,
+  },
+  {
+    table: "message_queue",
+    column: "cancelled_at",
+    sql: `ALTER TABLE message_queue ADD COLUMN cancelled_at TEXT`,
+  },
+  {
+    table: "messages",
+    column: "queue_message_id",
+    sql: `ALTER TABLE messages ADD COLUMN queue_message_id TEXT`,
+  },
 ];
 
 const INDEX_MIGRATIONS = [
@@ -285,7 +300,7 @@ export function deleteProject(db: DB, id: string): void {
 // Fix 7: Column allowlists prevent SQL injection via dynamic column names
 const PROJECT_COLUMNS = new Set(["name"]);
 const THREAD_COLUMNS = new Set([
-  "title", "status", "worktree", "branch", "pid",
+  "title", "status", "worktree", "branch", "base_branch", "pid",
   "error_message", "pr_url", "archived_at", "session_id", "effort_level", "permission_mode", "model",
   "pr_status", "pr_number", "pr_status_checked_at", "last_interacted_at",
 ]);
@@ -391,8 +406,8 @@ export function getMessages(db: DB, threadId: string, afterSeq = 0) {
 
 export function insertMessage(db: DB, msg: Omit<MessageRow, "seq">): number {
   const result = db.query(
-    `INSERT INTO messages (id, thread_id, seq, role, content, tool_name, tool_input, tool_output, metadata, created_at)
-     VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE thread_id = ?), ?, ?, ?, ?, ?, ?, datetime('now'))`,
+    `INSERT INTO messages (id, thread_id, seq, role, content, tool_name, tool_input, tool_output, metadata, queue_message_id, created_at)
+     VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE thread_id = ?), ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
   ).run(
     msg.id,
     msg.thread_id,
@@ -403,6 +418,7 @@ export function insertMessage(db: DB, msg: Omit<MessageRow, "seq">): number {
     msg.tool_input,
     msg.tool_output,
     msg.metadata,
+    msg.queue_message_id ?? null,
   );
   // Return the assigned seq
   const row = db
@@ -567,6 +583,7 @@ export interface QueueRow {
   interrupt: number;
   created_at: string;
   delivered_at: string | null;
+  cancelled_at: string | null;
 }
 
 /** Enqueue a message for later delivery to the agent. */
@@ -589,35 +606,63 @@ export function enqueueMessage(
  *  Uses UPDATE...RETURNING to prevent duplicate drains from concurrent paths. */
 export function dequeueNextMessage(db: DB, threadId: string): QueueRow | null {
   // Bun's SQLite doesn't support RETURNING in .get(), so use two-step atomic approach:
-  // 1. Find the next pending row
+  // 1. Find the next pending row (skip cancelled)
   // 2. Claim it with a WHERE delivered_at IS NULL guard (prevents races)
   const next = db.query(
-    "SELECT id FROM message_queue WHERE thread_id = ? AND delivered_at IS NULL ORDER BY created_at ASC LIMIT 1",
+    "SELECT id FROM message_queue WHERE thread_id = ? AND delivered_at IS NULL AND cancelled_at IS NULL ORDER BY created_at ASC LIMIT 1",
   ).get(threadId) as { id: string } | null;
   if (!next) return null;
 
   const result = db.query(
-    "UPDATE message_queue SET delivered_at = datetime('now') WHERE id = ? AND delivered_at IS NULL",
+    "UPDATE message_queue SET delivered_at = datetime('now') WHERE id = ? AND delivered_at IS NULL AND cancelled_at IS NULL",
   ).run(next.id);
-  if (result.changes === 0) return null; // Another path claimed it
+  if (result.changes === 0) return null; // Another path claimed it or it was cancelled
 
   return db.query("SELECT * FROM message_queue WHERE id = ?").get(next.id) as QueueRow;
 }
 
-/** Count pending (undelivered) messages in the queue for a thread. */
+/** Count pending (undelivered, uncancelled) messages in the queue for a thread. */
 export function countPendingQueue(db: DB, threadId: string): number {
   const row = db.query(
-    "SELECT COUNT(*) as cnt FROM message_queue WHERE thread_id = ? AND delivered_at IS NULL",
+    "SELECT COUNT(*) as cnt FROM message_queue WHERE thread_id = ? AND delivered_at IS NULL AND cancelled_at IS NULL",
   ).get(threadId) as { cnt: number };
   return row.cnt;
 }
 
-/** Remove delivered queue entries older than 1 hour (housekeeping). */
+/** Remove delivered queue entries older than 1 hour (housekeeping).
+ *  Keeps cancelled rows for transcript display. */
 export function cleanDeliveredQueue(db: DB): number {
   const result = db.query(
-    "DELETE FROM message_queue WHERE delivered_at IS NOT NULL AND delivered_at < datetime('now', '-1 hour')",
+    "DELETE FROM message_queue WHERE delivered_at IS NOT NULL AND cancelled_at IS NULL AND delivered_at < datetime('now', '-1 hour')",
   ).run();
   return result.changes;
+}
+
+/** Cancel a pending queue message (soft-delete). Returns true if cancelled.
+ *  Includes thread_id guard to prevent cross-thread cancel. */
+export function cancelQueuedMessage(db: DB, queueId: string, threadId: string): boolean {
+  const result = db.query(
+    "UPDATE message_queue SET cancelled_at = datetime('now') WHERE id = ? AND thread_id = ? AND delivered_at IS NULL AND cancelled_at IS NULL",
+  ).run(queueId, threadId);
+  return result.changes > 0;
+}
+
+/** Cancel all pending (undelivered) messages for a thread. Returns count cancelled. */
+export function clearPendingQueue(db: DB, threadId: string): number {
+  const result = db.query(
+    "UPDATE message_queue SET cancelled_at = datetime('now') WHERE thread_id = ? AND delivered_at IS NULL AND cancelled_at IS NULL",
+  ).run(threadId);
+  return result.changes;
+}
+
+/** Get queue items for client display — pending + recently sent (not cancelled). */
+export function getPendingQueue(db: DB, threadId: string): QueueRow[] {
+  return db.query(
+    `SELECT * FROM message_queue
+     WHERE thread_id = ? AND cancelled_at IS NULL
+       AND (delivered_at IS NULL OR delivered_at > datetime('now', '-5 minutes'))
+     ORDER BY created_at ASC`,
+  ).all(threadId) as QueueRow[];
 }
 
 // ── Row types (DB columns use snake_case) ───────────────
@@ -633,6 +678,7 @@ export interface ThreadRow {
   repo_path: string;
   worktree: string | null;
   branch: string | null;
+  base_branch: string | null;
   pr_url: string | null;
   pr_status: string | null;
   pr_number: number | null;
@@ -657,6 +703,7 @@ export interface MessageRow {
   tool_input: string | null;
   tool_output: string | null;
   metadata: string | null;
+  queue_message_id: string | null;
   created_at: string;
 }
 
@@ -674,6 +721,7 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
     repoPath: row.repo_path,
     worktree: row.worktree,
     branch: row.branch,
+    baseBranch: row.base_branch ?? null,
     prUrl: row.pr_url,
     prStatus: row.pr_status as import("shared").PrStatus | null,
     prNumber: row.pr_number,
@@ -689,6 +737,24 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
 }
 
 export function messageRowToApi(row: MessageRow): import("shared").Message {
+  const metadata = row.metadata ? safeJsonParse(row.metadata) : null;
+  // Include queue_message_id in metadata so client can cross-reference queue state
+  if (row.queue_message_id) {
+    const meta = metadata ?? {};
+    meta.queueMessageId = row.queue_message_id;
+    return {
+      id: row.id,
+      threadId: row.thread_id,
+      seq: row.seq,
+      role: row.role as import("shared").MessageRole,
+      content: row.content,
+      toolName: row.tool_name,
+      toolInput: row.tool_input,
+      toolOutput: row.tool_output,
+      metadata: meta,
+      createdAt: row.created_at,
+    };
+  }
   return {
     id: row.id,
     threadId: row.thread_id,
@@ -698,7 +764,7 @@ export function messageRowToApi(row: MessageRow): import("shared").Message {
     toolName: row.tool_name,
     toolInput: row.tool_input,
     toolOutput: row.tool_output,
-    metadata: row.metadata ? safeJsonParse(row.metadata) : null,
+    metadata,
     createdAt: row.created_at,
   };
 }

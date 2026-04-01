@@ -7,6 +7,7 @@ import type {
   Message,
   PermissionMode,
   ProjectWithStatus,
+  QueuedItem,
   SlashCommand,
   StreamDelta,
   Thread,
@@ -78,10 +79,12 @@ interface StreamingState {
   metrics: Map<string, TurnMetrics>;
   /** Threads that received turn_end but thread status hasn't updated to done yet */
   turnEnded: Set<string>;
-  /** Number of messages queued during current agent turn (per thread) */
+  /** Number of messages queued during current agent turn (per thread) — backward compat */
   queuedCount: Map<string, number>;
   /** Seq numbers of user messages that were queued, keyed by threadId */
   queuedSeqs: Map<string, Set<number>>;
+  /** Full queue items per thread (server-authoritative) */
+  queueItems: Map<string, QueuedItem[]>;
 }
 
 const initialStreamingState: StreamingState = {
@@ -92,6 +95,7 @@ const initialStreamingState: StreamingState = {
   turnEnded: new Set(),
   queuedCount: new Map(),
   queuedSeqs: new Map(),
+  queueItems: new Map(),
 };
 
 const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0, modelName: null };
@@ -185,12 +189,26 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
             if (nextSeqs.size > 0) queuedSeqs.set(delta.threadId, nextSeqs);
             else queuedSeqs.delete(delta.threadId);
           }
+          // Don't clear queueItems on turn_end — server will send queue_updated if items remain
           return { ...state, text, tool, toolInput, turnEnded, queuedCount: queuedCountTe, queuedSeqs };
         }
         case "queued_message": {
+          // Backward compat: old server sends count-only
           const queuedCountQm = new Map(state.queuedCount);
           queuedCountQm.set(delta.threadId, delta.queuedCount ?? 0);
           return { ...state, queuedCount: queuedCountQm };
+        }
+        case "queue_updated": {
+          const queueItems = new Map(state.queueItems);
+          const items = delta.queueItems ?? [];
+          if (items.length > 0) queueItems.set(delta.threadId, items);
+          else queueItems.delete(delta.threadId);
+          // Also update queuedCount for backward compat
+          const queuedCountQu = new Map(state.queuedCount);
+          const pendingCount = items.filter((i) => i.state === "pending").length;
+          if (pendingCount > 0) queuedCountQu.set(delta.threadId, pendingCount);
+          else queuedCountQu.delete(delta.threadId);
+          return { ...state, queueItems, queuedCount: queuedCountQu };
         }
         default:
           return state;
@@ -570,7 +588,7 @@ function AppInner() {
 
   // ── Actions ───────────────────────────────────────────
 
-  const handleNewThread = async (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[], permissionMode?: PermissionMode | null) => {
+  const handleNewThread = async (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[], permissionMode?: PermissionMode | null, baseBranch?: string) => {
     const pid = projectId || activeProjectId;
     if (!pid) {
       setError("Select a project first");
@@ -578,7 +596,7 @@ function AppInner() {
     }
     try {
       setError(null);
-      const thread = await api.createThread({ agent, effortLevel: effortLevel ?? undefined, permissionMode: permissionMode ?? undefined, model: model ?? undefined, prompt, projectId: pid, isolate, worktreeName, attachments });
+      const thread = await api.createThread({ agent, effortLevel: effortLevel ?? undefined, permissionMode: permissionMode ?? undefined, model: model ?? undefined, prompt, projectId: pid, isolate, worktreeName, baseBranch, attachments });
       // Guard against duplicate: WS broadcast from server may arrive before this HTTP response
       setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
       setActiveThreadId(thread.id);
@@ -1013,11 +1031,13 @@ function AppInner() {
                 ref={chatViewRef}
                 messages={activeMessages}
                 thread={activeThread}
+                autoScrollThreads={appSettings?.autoScrollThreads ?? true}
                 streamingText={activeStreamingText}
                 streamingTool={activeStreamingTool}
                 streamingToolInput={activeStreamingToolInput}
                 turnEnded={activeTurnEnded}
                 queuedSeqs={activeThreadId ? streaming.queuedSeqs.get(activeThreadId) : undefined}
+                queueItems={activeThreadId ? (streaming.queueItems.get(activeThreadId) ?? undefined) : undefined}
                 onSubmitAnswers={handleSendMessage}
                 onSaveTitle={handleSaveTitle}
               />
@@ -1032,6 +1052,9 @@ function AppInner() {
                 onScrollToBottom={() => chatViewRef.current?.scrollToBottom()}
                 todos={activeTodos}
                 queuedCount={activeThreadId ? (streaming.queuedCount.get(activeThreadId) ?? 0) : 0}
+                queueItems={activeThreadId ? (streaming.queueItems.get(activeThreadId) ?? null) : null}
+                onCancelQueued={(queueId) => activeThreadId && send({ type: "cancel_queued", threadId: activeThreadId, queueId })}
+                onClearQueue={() => activeThreadId && send({ type: "clear_queue", threadId: activeThreadId })}
               />
               <PinnedTodoPanel
                 todos={activeTodos}
@@ -1043,6 +1066,7 @@ function AppInner() {
                 thread={activeThread}
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject?.name ?? null}
+                activeProjectBranch={activeProject?.currentBranch ?? null}
                 commands={commands}
                 settings={appSettings}
                 history={activeInputHistory}
@@ -1085,6 +1109,7 @@ function AppInner() {
                 thread={null}
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject.name}
+                activeProjectBranch={activeProject.currentBranch}
                 commands={commands}
                 settings={appSettings}
                 defaultEffortLevel={defaultEffortLevel}
@@ -1163,8 +1188,8 @@ function AppInner() {
               settings={appSettings}
               defaultEffortLevel={defaultEffortLevel}
               defaultAgent={defaultAgent}
-              onNewThread={(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments) => {
-                handleNewThread(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments);
+              onNewThread={(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments, permissionMode, baseBranch) => {
+                handleNewThread(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments, permissionMode, baseBranch);
                 setMobileTab("sessions");
               }}
             />
@@ -1219,7 +1244,13 @@ function AppInner() {
 
       {/* Settings Panel */}
       {showSettings && (
-        <SettingsPanel onClose={() => setShowSettings(false)} agents={agents} onDefaultEffortChange={setDefaultEffortLevel} onDefaultAgentChange={setDefaultAgent} />
+        <SettingsPanel
+          onClose={() => setShowSettings(false)}
+          agents={agents}
+          onDefaultEffortChange={setDefaultEffortLevel}
+          onDefaultAgentChange={setDefaultAgent}
+          onSettingsChange={setAppSettings}
+        />
       )}
     </div>
   );

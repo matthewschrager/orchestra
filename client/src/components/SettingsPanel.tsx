@@ -8,12 +8,57 @@ interface Props {
   agents?: Array<{ name: string; detected: boolean; models?: ModelOption[] }>;
   onDefaultEffortChange?: (level: EffortLevel | "") => void;
   onDefaultAgentChange?: (agent: string) => void;
+  onSettingsChange?: (settings: Settings) => void;
 }
 
-export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onDefaultAgentChange }: Props) {
+interface SettingsDraft {
+  worktreeRoot: string;
+  inactivityTimeout: string;
+  autoScrollThreads: boolean;
+  defaultModelClaude: string;
+  defaultModelCodex: string;
+  defaultEffortLevel: EffortLevel | "";
+  defaultAgent: string;
+}
+
+export function buildSettingsPatch(settings: Settings | null, draft: SettingsDraft): Partial<Settings> {
+  if (!settings) return {};
+
+  const patch: Partial<Settings> = {};
+  const trimmedWorktreeRoot = draft.worktreeRoot.trim();
+  if (trimmedWorktreeRoot !== settings.worktreeRoot) {
+    patch.worktreeRoot = trimmedWorktreeRoot;
+  }
+
+  const timeoutNum = Number(draft.inactivityTimeout);
+  if (Number.isFinite(timeoutNum) && timeoutNum >= 1 && timeoutNum !== settings.inactivityTimeoutMinutes) {
+    patch.inactivityTimeoutMinutes = timeoutNum;
+  }
+
+  if (draft.autoScrollThreads !== settings.autoScrollThreads) {
+    patch.autoScrollThreads = draft.autoScrollThreads;
+  }
+  if (draft.defaultModelClaude !== (settings.defaultModelClaude || "")) {
+    patch.defaultModelClaude = draft.defaultModelClaude;
+  }
+  if (draft.defaultModelCodex !== (settings.defaultModelCodex || "")) {
+    patch.defaultModelCodex = draft.defaultModelCodex;
+  }
+  if (draft.defaultEffortLevel !== settings.defaultEffortLevel) {
+    patch.defaultEffortLevel = draft.defaultEffortLevel;
+  }
+  if (draft.defaultAgent !== settings.defaultAgent) {
+    patch.defaultAgent = draft.defaultAgent;
+  }
+
+  return patch;
+}
+
+export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onDefaultAgentChange, onSettingsChange }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [worktreeRoot, setWorktreeRoot] = useState("");
   const [inactivityTimeout, setInactivityTimeout] = useState("30");
+  const [autoScrollThreads, setAutoScrollThreads] = useState(true);
   const [defaultModelClaude, setDefaultModelClaude] = useState("");
   const [defaultModelCodex, setDefaultModelCodex] = useState("");
   const [defaultEffortLevel, setDefaultEffortLevel] = useState<EffortLevel | "">("");
@@ -31,6 +76,7 @@ export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onD
       setSettings(s);
       setWorktreeRoot(s.worktreeRoot);
       setInactivityTimeout(String(s.inactivityTimeoutMinutes));
+      setAutoScrollThreads(s.autoScrollThreads);
       setDefaultModelClaude(s.defaultModelClaude || "");
       setDefaultModelCodex(s.defaultModelCodex || "");
       setDefaultEffortLevel(s.defaultEffortLevel);
@@ -45,36 +91,27 @@ export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onD
     setError(null);
     setSaved(false);
     try {
-      const patch: Partial<Settings> = {};
-      if (worktreeRoot.trim() !== settings?.worktreeRoot) {
-        patch.worktreeRoot = worktreeRoot.trim();
-      }
-      const timeoutNum = Number(inactivityTimeout);
-      if (Number.isFinite(timeoutNum) && timeoutNum >= 1 && timeoutNum !== settings?.inactivityTimeoutMinutes) {
-        patch.inactivityTimeoutMinutes = timeoutNum;
-      }
-      if (defaultModelClaude !== (settings?.defaultModelClaude || "")) {
-        patch.defaultModelClaude = defaultModelClaude;
-      }
-      if (defaultModelCodex !== (settings?.defaultModelCodex || "")) {
-        patch.defaultModelCodex = defaultModelCodex;
-      }
-      if (defaultEffortLevel !== settings?.defaultEffortLevel) {
-        patch.defaultEffortLevel = defaultEffortLevel;
-      }
-      if (defaultAgent !== settings?.defaultAgent) {
-        patch.defaultAgent = defaultAgent;
-      }
+      const patch = buildSettingsPatch(settings, {
+        worktreeRoot,
+        inactivityTimeout,
+        autoScrollThreads,
+        defaultModelClaude,
+        defaultModelCodex,
+        defaultEffortLevel,
+        defaultAgent,
+      });
       const updated = await api.updateSettings(patch);
       setSettings(updated);
       setWorktreeRoot(updated.worktreeRoot);
       setInactivityTimeout(String(updated.inactivityTimeoutMinutes));
+      setAutoScrollThreads(updated.autoScrollThreads);
       setDefaultModelClaude(updated.defaultModelClaude || "");
       setDefaultModelCodex(updated.defaultModelCodex || "");
       setDefaultEffortLevel(updated.defaultEffortLevel);
       setDefaultAgent(updated.defaultAgent);
       onDefaultEffortChange?.(updated.defaultEffortLevel);
       onDefaultAgentChange?.(updated.defaultAgent);
+      onSettingsChange?.(updated);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -82,11 +119,12 @@ export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onD
     } finally {
       setSaving(false);
     }
-  }, [worktreeRoot, inactivityTimeout, defaultModelClaude, defaultModelCodex, defaultEffortLevel, defaultAgent, settings, onDefaultEffortChange, onDefaultAgentChange]);
+  }, [worktreeRoot, inactivityTimeout, autoScrollThreads, defaultModelClaude, defaultModelCodex, defaultEffortLevel, defaultAgent, settings, onDefaultEffortChange, onDefaultAgentChange, onSettingsChange]);
 
   const isDirty = settings !== null && (
     worktreeRoot.trim() !== settings.worktreeRoot ||
     (Number.isFinite(Number(inactivityTimeout)) && Number(inactivityTimeout) >= 1 && Number(inactivityTimeout) !== settings.inactivityTimeoutMinutes) ||
+    autoScrollThreads !== settings.autoScrollThreads ||
     defaultModelClaude !== (settings.defaultModelClaude || "") ||
     defaultModelCodex !== (settings.defaultModelCodex || "") ||
     defaultEffortLevel !== settings.defaultEffortLevel ||
@@ -121,6 +159,7 @@ export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onD
                   setSettings(s);
                   setWorktreeRoot(s.worktreeRoot);
                   setInactivityTimeout(String(s.inactivityTimeoutMinutes));
+                  setAutoScrollThreads(s.autoScrollThreads);
                   setDefaultModelClaude(s.defaultModelClaude || "");
                   setDefaultModelCodex(s.defaultModelCodex || "");
                   setDefaultEffortLevel(s.defaultEffortLevel);
@@ -178,6 +217,24 @@ export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onD
                   if (e.key === "Enter" && isDirty) handleSave();
                 }}
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-content-2 mb-1.5">
+                Thread auto-scroll
+              </label>
+              <p className="text-xs text-content-3 mb-2">
+                Automatically keep the thread pinned to new messages and streaming output.
+              </p>
+              <label className="inline-flex items-center gap-3 rounded-lg border border-edge-2 bg-surface-1 px-3 py-2 text-sm text-content-1">
+                <input
+                  type="checkbox"
+                  checked={autoScrollThreads}
+                  onChange={(e) => setAutoScrollThreads(e.target.checked)}
+                  className="h-4 w-4 rounded border-edge-2 bg-surface-1 text-accent focus:ring-accent"
+                />
+                <span>Auto-scroll threads</span>
+              </label>
             </div>
 
             {/* Default Models */}

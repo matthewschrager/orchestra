@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { DB, MessageRow, ThreadRow, AttentionRow } from "../db";
+import type { DB, MessageRow, ThreadRow, AttentionRow, QueueRow } from "../db";
 import {
   getThread,
   getAttentionItem,
@@ -16,12 +16,15 @@ import {
   dequeueNextMessage,
   countPendingQueue,
   cleanDeliveredQueue,
+  cancelQueuedMessage,
+  clearPendingQueue,
+  getPendingQueue,
 } from "../db";
 import type { AgentRegistry } from "../agents/registry";
 import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage, PersistentSession } from "../agents/types";
 import type { WorktreeManager } from "../worktrees/manager";
 import { isEffortLevelSupported, isPermissionModeSupported } from "shared";
-import type { Attachment, AttentionItem, AttentionResolution, EffortLevel, PermissionMode, StreamDelta } from "shared";
+import type { Attachment, AttentionItem, AttentionResolution, EffortLevel, PermissionMode, QueuedItem, StreamDelta } from "shared";
 import { resolveAttachmentPaths } from "../routes/uploads";
 import { generateTitle } from "../titles/generator";
 import { detectWorktree } from "../utils/git";
@@ -106,6 +109,7 @@ export class SessionManager {
     title?: string;
     isolate?: boolean;
     worktreeName?: string;
+    baseBranch?: string;
     attachments?: Attachment[];
   }): Promise<ThreadRow> {
     const adapter = this.registry.get(opts.agent);
@@ -125,21 +129,23 @@ export class SessionManager {
     let cwd = opts.repoPath;
     let worktree: string | null = null;
     let branch: string | null = null;
+    let baseBranch: string | null = null;
 
     if (opts.isolate) {
-      const wt = await this.worktreeManager.create(threadId, opts.repoPath, opts.worktreeName);
+      const wt = await this.worktreeManager.create(threadId, opts.repoPath, opts.worktreeName, opts.baseBranch);
       cwd = wt.path;
       worktree = wt.path;
       branch = wt.branch;
+      baseBranch = wt.baseBranch;
     }
 
     // Insert thread record
     this.db
       .query(
-        `INSERT INTO threads (id, title, agent, effort_level, permission_mode, model, repo_path, project_id, worktree, branch, status, last_interacted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', datetime('now'))`,
+        `INSERT INTO threads (id, title, agent, effort_level, permission_mode, model, repo_path, project_id, worktree, branch, base_branch, status, last_interacted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', datetime('now'))`,
       )
-      .run(threadId, title, opts.agent, effortLevel, permissionMode, model, opts.repoPath, opts.projectId, worktree, branch);
+      .run(threadId, title, opts.agent, effortLevel, permissionMode, model, opts.repoPath, opts.projectId, worktree, branch, baseBranch);
 
     // Validate and build prompt with attachment references
     const validAttachments = this.validateAttachments(opts.attachments);
@@ -188,9 +194,10 @@ export class SessionManager {
     return thread;
   }
 
-  stopThread(threadId: string): void {
+  stopThread(threadId: string, opts?: { drainQueued?: boolean }): void {
     const active = this.sessions.get(threadId);
     if (!active) return;
+    const nextQueued = opts?.drainQueued ? dequeueNextMessage(this.db, threadId) : null;
     // 1. Delete from map FIRST so consumeStream bails on identity check
     this.sessions.delete(threadId);
     // 2. Mark as aborted so catch block knows this was intentional
@@ -212,6 +219,12 @@ export class SessionManager {
     // 4. Cleanup
     this.clearMainWorktreeLock(threadId);
     this.orphanPendingAttention(threadId, { type: "orphaned", reason: "session_stopped" });
+
+    if (nextQueued) {
+      this.deliverQueuedMessage(threadId, nextQueued);
+      return;
+    }
+
     updateThread(this.db, threadId, { status: "done", pid: null });
     this.notifyThread(threadId);
   }
@@ -309,43 +322,38 @@ export class SessionManager {
 
     // ── QUEUE PATH: any session mid-turn — queue for delivery ──
     if (existing && existing.state === "thinking") {
+      const isInterrupt = !!opts?.interrupt;
       if (!content.trim()) {
         throw new Error("Cannot queue an empty message");
       }
-      // Queue depth limit: persistent uses per-turn counter (messages are injected immediately),
-      // non-persistent uses total pending in SQLite (messages wait for turn to complete)
-      const queueCount = existing.persistent
-        ? existing.queuedThisTurn
-        : countPendingQueue(this.db, threadId);
-      if (queueCount >= MAX_QUEUED_MESSAGES) {
+      const queueCount = countPendingQueue(this.db, threadId);
+      if (!isInterrupt && queueCount >= MAX_QUEUED_MESSAGES) {
         throw new Error("Queue full — wait for the agent to finish");
       }
 
-      // Persist user message immediately so it appears in chat
+      // Persist to message_queue first to get the queue row id
       const validAttachments = this.validateAttachments(attachments);
+      const agentPrompt = this.buildPromptWithAttachments(content, validAttachments);
+      const serializedAttachments = validAttachments?.length ? JSON.stringify(validAttachments) : null;
+      const queueRow = enqueueMessage(this.db, threadId, agentPrompt, serializedAttachments, isInterrupt);
+
+      // Persist user message with link to queue row so client can cross-reference state
       this.persistMessage(threadId, {
         role: "user",
         content,
         metadata: validAttachments?.length ? { attachments: validAttachments } : undefined,
-      });
-
-      const agentPrompt = this.buildPromptWithAttachments(content, validAttachments);
-      const isInterrupt = !!opts?.interrupt;
-
-      // Persist to message_queue for crash recovery + delivery tracking
-      const serializedAttachments = validAttachments?.length ? JSON.stringify(validAttachments) : null;
-      const queueRow = enqueueMessage(this.db, threadId, agentPrompt, serializedAttachments, isInterrupt);
+      }, queueRow.id);
 
       // For interrupt messages, orphan pending attention immediately (user is overriding)
       if (isInterrupt) {
         this.orphanPendingAttention(threadId, { type: "orphaned", reason: "superseded_by_interrupt" });
       }
 
-      // For persistent sessions, also inject into the living subprocess.
-      // On successful inject, mark the queue entry as delivered immediately
-      // (the CLI subprocess has it — queue entry is only for crash recovery).
-      if (existing.persistent) {
-        const priority = isInterrupt ? "now" as const : "next" as const;
+      // Interrupts should preempt the current turn immediately.
+      // Regular steering stays queued until the turn boundary (or a user stop),
+      // which makes queue drain deterministic and keeps stop/resume reliable.
+      if (existing.persistent && isInterrupt) {
+        const priority = "now" as const;
         const sessionId = existing.sessionId ?? this.getPersistedSessionId(threadId);
         if (sessionId) {
           let injected = false;
@@ -372,13 +380,10 @@ export class SessionManager {
       }
       // Non-persistent sessions: message stays in SQLite queue, drained after iterator completes
 
-      if (existing.persistent) {
+      if (existing.persistent && !isInterrupt) {
         existing.queuedThisTurn++;
       }
-      const newCount = existing.persistent
-        ? existing.queuedThisTurn
-        : countPendingQueue(this.db, threadId);
-      this.notifyStreamDelta(threadId, { threadId, deltaType: "queued_message", queuedCount: newCount });
+      this.broadcastQueueState(threadId);
       return;
     }
 
@@ -573,6 +578,8 @@ export class SessionManager {
   private markQueueDelivered(queueId: string): void {
     this.db.query("UPDATE message_queue SET delivered_at = datetime('now') WHERE id = ?").run(queueId);
   }
+
+  // notifyPendingQueueCount replaced by broadcastQueueState (sends full QueuedItem[] state)
 
   private validateAttachments(attachments?: Attachment[]): Attachment[] | undefined {
     if (!attachments?.length) return attachments;
@@ -821,16 +828,13 @@ export class SessionManager {
             this.notifyThread(threadId);
           } else {
             // ── Queue drain for persistent sessions ──
-            // Check SQLite queue for pending messages. If found, route through sendMessage()
-            // which handles state transitions, resetTurnState(), and inject.
+            // Check SQLite queue for pending messages. If found, deliver the oldest one
+            // without re-persisting a duplicate user message.
             const nextQueued = dequeueNextMessage(this.db, threadId);
             if (nextQueued) {
               if (DEBUG) console.log(`[stream] Thread ${threadId} — draining queued message from SQLite`);
-              // sendMessage with internal flag (skip touchThreadInteraction)
-              // This transitions state back to "thinking" and injects the message.
               try {
-                const drainAttachments = nextQueued.attachments ? JSON.parse(nextQueued.attachments) : undefined;
-                this.sendMessage(threadId, nextQueued.content, drainAttachments, { internal: true });
+                this.deliverQueuedMessage(threadId, nextQueued);
               } catch (drainErr) {
                 console.error(`[stream] Thread ${threadId} — queue drain failed:`, drainErr);
                 updateThread(this.db, threadId, { status: "done", pid: null });
@@ -930,28 +934,7 @@ export class SessionManager {
         const nextQueued = dequeueNextMessage(this.db, threadId);
         if (nextQueued) {
           if (DEBUG) console.log(`[stream] Thread ${threadId} — draining queued message (non-persistent), starting new turn`);
-          const freshThread = getThread(this.db, threadId) as ThreadRow | null;
-          const drainAdapter = freshThread ? this.registry.get(freshThread.agent) : adapter;
-          const drainCwd = freshThread ? (freshThread.worktree || freshThread.repo_path) : activeSession.cwd;
-          const drainEffort = freshThread && isEffortLevelSupported(freshThread.agent, freshThread.effort_level)
-            ? freshThread.effort_level : null;
-          const drainPermMode = freshThread ? this.getThreadPermissionMode(threadId) : null;
-          const drainSessionId = activeSession.sessionId ?? this.getPersistedSessionId(threadId) ?? null;
-
-          if (drainAdapter) {
-            updateThread(this.db, threadId, { status: "running", error_message: null });
-            this.notifyThread(threadId);
-            if (drainAdapter.supportsPersistent?.()) {
-              this.startPersistentSession(threadId, drainAdapter, drainCwd, nextQueued.content, drainSessionId, drainEffort, undefined, 0, drainPermMode);
-            } else {
-              this.startTurn(threadId, drainAdapter, drainCwd, nextQueued.content, drainSessionId, drainEffort, undefined, drainPermMode);
-            }
-          } else {
-            // Adapter disappeared? Shouldn't happen, but handle gracefully
-            console.error(`[stream] Thread ${threadId} — queue drain failed: adapter not found`);
-            updateThread(this.db, threadId, { status: "done", pid: null });
-            this.notifyThread(threadId);
-          }
+          this.deliverQueuedMessage(threadId, nextQueued);
           return; // Skip normal completion — new turn handles lifecycle
         }
 
@@ -1043,6 +1026,80 @@ export class SessionManager {
     }
   }
 
+  private deliverQueuedMessage(threadId: string, queued: QueueRow): void {
+    const thread = getThread(this.db, threadId);
+    if (!thread) return;
+
+    const adapter = this.registry.get(thread.agent);
+    if (!adapter) {
+      console.error(`[session] queued delivery failed for ${threadId}: adapter not found`);
+      updateThread(this.db, threadId, { status: "done", pid: null });
+      this.notifyThread(threadId);
+      this.broadcastQueueState(threadId);
+      return;
+    }
+
+    const cwd = thread.worktree || thread.repo_path;
+    const effortLevel = isEffortLevelSupported(thread.agent, thread.effort_level) ? thread.effort_level : null;
+    const model = thread.model ?? null;
+    const permissionMode = this.getThreadPermissionMode(threadId);
+    const existing = this.sessions.get(threadId);
+
+    if (existing?.persistent) {
+      existing.state = "thinking";
+      existing.lastMessageAt = Date.now();
+      existing.queuedThisTurn = 0;
+      updateThread(this.db, threadId, { status: "running", error_message: null });
+      this.notifyThread(threadId);
+
+      (existing.session as PersistentSession).resetTurnState();
+
+      const sessionId = existing.sessionId ?? this.getPersistedSessionId(threadId);
+      if (!sessionId) {
+        console.warn(`[session] No sessionId for queued delivery on ${threadId}, falling back to restart`);
+        this.teardownSession(threadId);
+        if (adapter.supportsPersistent?.()) {
+          this.startPersistentSession(threadId, adapter, cwd, queued.content, null, effortLevel, model, 0, permissionMode);
+        } else {
+          this.startTurn(threadId, adapter, cwd, queued.content, null, effortLevel, model, permissionMode);
+        }
+        this.broadcastQueueState(threadId);
+        return;
+      }
+
+      try {
+        const injectPromise = (existing.session as PersistentSession).injectMessage(queued.content, sessionId);
+        injectPromise.catch((err) => {
+          if (existing.aborted || !this.sessions.has(threadId)) {
+            if (DEBUG) console.log(`[session] queued delivery inject failed for ${threadId} but session already stopped, ignoring`);
+            return;
+          }
+          console.error(`[session] queued delivery inject failed for ${threadId}, falling back to resume:`, err);
+          this.teardownSession(threadId);
+          this.restartWithResume(threadId, adapter, cwd, queued.content);
+        });
+      } catch (err) {
+        if (existing.aborted || !this.sessions.has(threadId)) return;
+        console.error(`[session] queued delivery inject threw for ${threadId}, falling back to resume:`, err);
+        this.teardownSession(threadId);
+        this.restartWithResume(threadId, adapter, cwd, queued.content);
+      }
+
+      this.broadcastQueueState(threadId);
+      return;
+    }
+
+    const sessionId = this.getPersistedSessionId(threadId);
+    updateThread(this.db, threadId, { status: "running", error_message: null });
+    this.notifyThread(threadId);
+    if (adapter.supportsPersistent?.()) {
+      this.startPersistentSession(threadId, adapter, cwd, queued.content, sessionId, effortLevel, model, 0, permissionMode);
+    } else {
+      this.startTurn(threadId, adapter, cwd, queued.content, sessionId, effortLevel, model, permissionMode);
+    }
+    this.broadcastQueueState(threadId);
+  }
+
   private getThreadEffortLevel(threadId: string): EffortLevel | null {
     const thread = getThread(this.db, threadId);
     if (!thread) return null;
@@ -1063,6 +1120,7 @@ export class SessionManager {
   private persistMessage(
     threadId: string,
     parsed: Pick<ParsedMessage, "content"> & Partial<ParsedMessage> & { role: string },
+    queueMessageId?: string,
   ): void {
     const msgData = {
       id: nanoid(12),
@@ -1073,6 +1131,7 @@ export class SessionManager {
       tool_input: parsed.toolInput ?? null,
       tool_output: parsed.toolOutput ?? null,
       metadata: parsed.metadata ? JSON.stringify(parsed.metadata) : null,
+      queue_message_id: queueMessageId ?? null,
       created_at: new Date().toISOString(),
     };
 
@@ -1313,6 +1372,64 @@ export class SessionManager {
         error_message: "Process was orphaned (server restarted while thread was running)",
       });
     }
+  }
+
+  // ── Queue management ──────────────────────────────────────
+
+  /** Cancel a pending queued message. Returns true if successfully cancelled. */
+  cancelQueued(threadId: string, queueId: string): boolean {
+    const cancelled = cancelQueuedMessage(this.db, queueId, threadId);
+    if (!cancelled) return false;
+
+    // Decrement persistent session counter if applicable
+    const existing = this.sessions.get(threadId);
+    if (existing?.persistent && existing.queuedThisTurn > 0) {
+      existing.queuedThisTurn--;
+    }
+
+    this.broadcastQueueState(threadId);
+    return true;
+  }
+
+  /** Cancel all pending queued messages for a thread. */
+  clearQueue(threadId: string): number {
+    const count = clearPendingQueue(this.db, threadId);
+
+    // Reset persistent session counter
+    const existing = this.sessions.get(threadId);
+    if (existing?.persistent) {
+      existing.queuedThisTurn = Math.max(0, existing.queuedThisTurn - count);
+    }
+
+    this.broadcastQueueState(threadId);
+    return count;
+  }
+
+  /** Get current queue items for a thread (for WS subscribe replay). */
+  getQueueItems(threadId: string): QueuedItem[] {
+    return this.queueRowsToItems(getPendingQueue(this.db, threadId));
+  }
+
+  /** Broadcast full queue state to all subscribed clients. */
+  private broadcastQueueState(threadId: string): void {
+    const items = this.getQueueItems(threadId);
+    this.notifyStreamDelta(threadId, {
+      threadId,
+      deltaType: "queue_updated",
+      queueItems: items,
+      // Backward compat: also include count for older clients
+      queuedCount: items.filter((i) => i.state === "pending").length,
+    });
+  }
+
+  /** Convert DB queue rows to client-facing QueuedItem array. */
+  private queueRowsToItems(rows: import("../db").QueueRow[]): QueuedItem[] {
+    return rows.map((row) => ({
+      id: row.id,
+      content: row.content.length > 200 ? row.content.slice(0, 200) + "..." : row.content,
+      createdAt: row.created_at,
+      state: row.delivered_at ? "sent" as const : "pending" as const,
+    }));
   }
 }
 
