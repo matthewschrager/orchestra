@@ -1,7 +1,7 @@
-import { Hono } from "hono";
-import { extname } from "path";
 import { realpathSync } from "fs";
-import { homedir } from "os";
+import { Hono } from "hono";
+import { homedir, tmpdir } from "os";
+import { extname } from "path";
 
 /** Image extensions safe for inline rendering (SVG excluded — XSS risk via script tags) */
 const IMAGE_EXTENSIONS = new Set([
@@ -27,6 +27,8 @@ const DOCUMENT_EXTENSIONS = new Set([
 ]);
 
 const ALLOWED_EXTENSIONS = new Set([...IMAGE_EXTENSIONS, ...DOCUMENT_EXTENSIONS]);
+const HOME = homedir();
+const TEMP_ROOTS = buildAllowedTempRoots();
 
 function resolveRequestedPath(rawPath: string): string {
   if (rawPath === "~") return homedir();
@@ -39,6 +41,39 @@ function contentTypeFor(filePath: string, detectedType: string): string {
   if (ext === ".pdf") return "application/pdf";
   if (DOCUMENT_EXTENSIONS.has(ext)) return "text/plain; charset=utf-8";
   return detectedType || "application/octet-stream";
+}
+
+function trimTrailingSlash(path: string): string {
+  if (path === "/") return path;
+  return path.replace(/\/+$/, "");
+}
+
+function isWithinRoot(filePath: string, root: string): boolean {
+  return filePath === root || filePath.startsWith(root + "/");
+}
+
+function isAllowedServedPath(filePath: string): boolean {
+  if (isWithinRoot(filePath, HOME)) return true;
+  return TEMP_ROOTS.some((root) => isWithinRoot(filePath, root));
+}
+
+function buildAllowedTempRoots(): string[] {
+  const roots = new Set<string>();
+
+  for (const candidate of ["/tmp", tmpdir()]) {
+    if (!candidate.startsWith("/")) continue;
+
+    const normalizedCandidate = trimTrailingSlash(candidate);
+    roots.add(normalizedCandidate);
+
+    try {
+      roots.add(trimTrailingSlash(realpathSync(normalizedCandidate)));
+    } catch {
+      // Ignore missing/unresolvable temp roots and keep the raw candidate.
+    }
+  }
+
+  return [...roots];
 }
 
 export function createFileRoutes() {
@@ -64,15 +99,11 @@ export function createFileRoutes() {
       return c.json({ error: "Path traversal not allowed" }, 400);
     }
 
-    // Restrict to home directory + /tmp — fast prefix check on raw path before I/O.
-    // /tmp is allowed for ephemeral tool artifacts (e.g. browse screenshots).
-    // After file existence is confirmed, realpathSync resolves symlinks for the
-    // definitive boundary check (matching filesystem.ts pattern).
-    const HOME = homedir();
-    const inHome = filePath === HOME || filePath.startsWith(HOME + "/");
-    const inTmp = filePath.startsWith("/tmp/");
-    if (!inHome && !inTmp) {
-      return c.json({ error: "Path must be under home directory or /tmp" }, 403);
+    // Restrict to the home directory plus known temp roots. We allow both raw
+    // roots like /tmp and their canonical realpaths (for example /private/tmp
+    // on macOS) so temp-file rendering works across platforms.
+    if (!isAllowedServedPath(filePath)) {
+      return c.json({ error: "Path must be under home directory or a temp directory" }, 403);
     }
 
     // Extension allowlist
@@ -94,10 +125,8 @@ export function createFileRoutes() {
     } catch {
       return c.json({ error: "Cannot resolve path" }, 400);
     }
-    const realInHome = realPath === HOME || realPath.startsWith(HOME + "/");
-    const realInTmp = realPath.startsWith("/tmp/");
-    if (!realInHome && !realInTmp) {
-      return c.json({ error: "Path must be under home directory or /tmp" }, 403);
+    if (!isAllowedServedPath(realPath)) {
+      return c.json({ error: "Path must be under home directory or a temp directory" }, 403);
     }
 
     const contentType = contentTypeFor(filePath, file.type);
