@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.49.1] - 2026-04-02
+
+### Fixed
+
+- **Settings modal overflow** — modal now caps at 90% viewport height with scrollable content area, so all settings and the Save/Close buttons are reachable on smaller screens
+
 ## [0.1.49.0] - 2026-03-31
 
 ### Added
