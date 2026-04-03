@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.50.0] - 2026-04-03
+
+### Fixed
+
+- **macOS temp-file rendering** — `/api/files/serve` now accepts canonical temp roots like `/private/tmp` after symlink resolution, so `/tmp`-backed screenshots and tool images render correctly in Orchestra on macOS
+
+### Added
+
+- **Canonical temp-dir regression coverage** — file-serving route tests now cover both `/tmp` and the OS-resolved temp directory
+
 ## [0.1.49.0] - 2026-03-31
 
 ### Added
