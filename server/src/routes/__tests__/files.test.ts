@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { createFileRoutes } from "../files";
 import { Hono } from "hono";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, writeFileSync, rmSync, realpathSync } from "fs";
 import { relative, resolve } from "path";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 
 function createApp() {
   const app = new Hono();
@@ -70,6 +70,23 @@ describe("GET /files/serve", () => {
 
   test("serves files from /tmp (tool artifacts)", async () => {
     const tmpPath = "/tmp/orchestra-test-screenshot.png";
+    const pngBytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    writeFileSync(tmpPath, pngBytes);
+
+    const app = createApp();
+    const res = await app.request(`/files/serve?path=${encodeURIComponent(tmpPath)}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/png");
+
+    rmSync(tmpPath);
+  });
+
+  test("serves files from the canonical OS temp directory", async () => {
+    const canonicalTmp = realpathSync(tmpdir());
+    const tmpPath = resolve(canonicalTmp, "orchestra-test-canonical-screenshot.png");
     const pngBytes = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
       "base64",
