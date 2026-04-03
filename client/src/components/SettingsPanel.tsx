@@ -136,7 +136,7 @@ export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onD
       className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
       onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}
     >
-      <div className="bg-surface-2 border border-edge-2 rounded-2xl p-6 w-full max-w-lg max-h-[90vh] shadow-2xl shadow-black/50 flex flex-col overflow-hidden">
+      <div className="bg-surface-2 border border-edge-2 rounded-2xl p-6 w-full max-w-lg max-h-[90dvh] shadow-2xl shadow-black/50 flex flex-col overflow-hidden">
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-lg font-semibold">Settings</h3>
           <button
@@ -331,7 +331,7 @@ export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onD
           </div>
 
           {error && (
-            <p className="text-sm text-red-400 mt-3 shrink-0">{error}</p>
+            <p className="text-sm text-red-400 mt-3 shrink-0 line-clamp-2" title={error}>{error}</p>
           )}
 
           {/* Footer */}
