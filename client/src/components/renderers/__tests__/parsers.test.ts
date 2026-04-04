@@ -289,6 +289,33 @@ describe("parseBash", () => {
     expect(result!.exitCode).toBe(0);
     expect(result!.lineCount).toBe(1);
   });
+
+  test("strips ANSI escape sequences from bash output", () => {
+    const input = JSON.stringify({ command: "npx vitest run" });
+    const result = parseBash(input, "start\n\u001b[2mTest Files\u001b[22m \u001b[32m9 passed\u001b[39m");
+
+    expect(result).not.toBeNull();
+    expect(result!.output).toBe("start\nTest Files 9 passed");
+    expect(result!.output).not.toContain("\u001b");
+    expect(result!.output).not.toContain("[22m");
+  });
+
+  test("strips stray non-renderable control characters from bash output", () => {
+    const input = JSON.stringify({ command: "printf" });
+    const result = parseBash(input, "alpha\u0000beta\u0007gamma");
+
+    expect(result).not.toBeNull();
+    expect(result!.output).toBe("alphabetagamma");
+  });
+
+  test("normalizes carriage returns before preview accounting", () => {
+    const input = JSON.stringify({ command: "progress" });
+    const result = parseBash(input, "line 1\rline 2\r\nline 3");
+
+    expect(result).not.toBeNull();
+    expect(result!.output).toBe("line 1\nline 2\nline 3");
+    expect(result!.lineCount).toBe(3);
+  });
 });
 
 describe("getBashPreview", () => {

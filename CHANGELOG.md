@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.50.1] - 2026-04-04
+
+### Fixed
+
+- **ANSI escape glyph leakage in bash tool output** — `BashRenderer` now strips terminal styling/control sequences before rendering, so colored `vitest`/`pytest` output no longer shows placeholder boxes or raw `[22m]`-style fragments in chat
+
+### Added
+
+- **Bash output sanitization regression coverage** — parser tests now cover ANSI escape sequences, stray control characters, and carriage-return normalization for bash tool output
+
 ## [0.1.50.0] - 2026-04-03
 
 ### Fixed
