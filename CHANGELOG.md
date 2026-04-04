@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.50.1] - 2026-04-04
+
+### Fixed
+
+- **Consecutive file edits stay visible in chat** — the transcript no longer collapses adjacent `Edit`, `Write`, `MultiEdit`, or `NotebookEdit` tool results into a single summary row, so users can see each file change independently
+
+### Added
+
+- **Tool-grouping regression coverage** — added client tests that lock in standalone rendering for consecutive file edits while keeping repeated non-edit tools grouped
+
 ## [0.1.50.0] - 2026-04-03
 
 ### Fixed

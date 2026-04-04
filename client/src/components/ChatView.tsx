@@ -521,13 +521,26 @@ function ToolGroupRow({ pairs, forceExpand, latestTodoId }: { pairs: ToolPair[];
   );
 }
 
-function groupConsecutiveTools(pairs: ToolPair[]): ToolPair[][] {
+const STANDALONE_TOOL_GROUPS = new Set([
+  "Bash",
+  "Edit",
+  "MultiEdit",
+  "NotebookEdit",
+  "TodoWrite",
+  "Write",
+]);
+
+function shouldKeepStandaloneToolGroup(name: string): boolean {
+  return isAskUserTool(name) || STANDALONE_TOOL_GROUPS.has(name);
+}
+
+export function groupConsecutiveTools(pairs: ToolPair[]): ToolPair[][] {
   const groups: ToolPair[][] = [];
   let current: ToolPair[] = [];
 
   for (const pair of pairs) {
-    // Ask-user tools and TodoWrite always get their own group
-    if (isAskUserTool(pair.name) || pair.name === "TodoWrite" || pair.name === "Bash") {
+    // Keep tool actions that should stay individually visible out of grouped summaries.
+    if (shouldKeepStandaloneToolGroup(pair.name)) {
       if (current.length > 0) groups.push(current);
       groups.push([pair]);
       current = [];
