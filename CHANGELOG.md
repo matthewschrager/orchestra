@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.50.1] - 2026-04-05
+
+### Added
+
+- **Source branch display** — worktree threads now show the branch they were spawned from (e.g. "from staging") in the desktop chat header, sidebar thread list, and mobile thread header
+
 ## [0.1.50.0] - 2026-04-03
 
 ### Fixed
