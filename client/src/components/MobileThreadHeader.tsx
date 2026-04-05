@@ -51,6 +51,14 @@ export function MobileThreadHeader({ thread, onBack, onSaveTitle }: MobileThread
           {effortLabel && (
             <span className="font-mono text-content-2">effort {effortLabel.toLowerCase()}</span>
           )}
+          {thread.branch && (
+            <span className="inline-flex items-center gap-0.5 font-mono text-content-2 truncate max-w-[120px]">
+              <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 opacity-50">
+                <path d="M5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 0 10.5 8.5H12a2.25 2.25 0 1 1 0 1.5h-1.5A4 4 0 0 1 6.5 6V5.372a2.25 2.25 0 0 1-1.5-2.122ZM8 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm5.5 7a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z" />
+              </svg>
+              <span className="truncate">{thread.baseBranch ?? thread.branch.replace(/^orchestra\//, "")}</span>
+            </span>
+          )}
         </div>
       </div>
 

@@ -257,7 +257,17 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
           {thread.branch && (
             <>
               <span className="text-content-3">&middot;</span>
-              <span className="font-mono text-content-2">{thread.branch}</span>
+              <span className="inline-flex items-center gap-1">
+                <span className="font-mono text-content-2">{thread.branch}</span>
+                {thread.baseBranch && (
+                  <span className="inline-flex items-center gap-0.5 text-content-3">
+                    <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="opacity-50 shrink-0">
+                      <path d="M5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 0 10.5 8.5H12a2.25 2.25 0 1 1 0 1.5h-1.5A4 4 0 0 1 6.5 6V5.372a2.25 2.25 0 0 1-1.5-2.122ZM8 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm5.5 7a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z" />
+                    </svg>
+                    <span className="font-mono">from {thread.baseBranch}</span>
+                  </span>
+                )}
+              </span>
             </>
           )}
         </div>

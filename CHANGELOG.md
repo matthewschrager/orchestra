@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.50.1] - 2026-04-04
+## [0.1.50.1] - 2026-04-05
 
 ### Fixed
 
@@ -11,6 +11,7 @@
 
 - **Bash output sanitization regression coverage** — parser tests now cover ANSI escape sequences, stray control characters, and carriage-return normalization for bash tool output
 - **Tool-grouping regression coverage** — added client tests that lock in standalone rendering for consecutive file edits while keeping repeated non-edit tools grouped
+- **Source branch display** — worktree threads now show the branch they were spawned from (e.g. "from staging") in the desktop chat header, sidebar thread list, and mobile thread header
 
 ## [0.1.50.0] - 2026-04-03
 
