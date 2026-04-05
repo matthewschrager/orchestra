@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.52.0] - 2026-04-05
+
+### Fixed
+
+- **Queued badges no longer overstate agent state** — the StickyRunBar now counts only truly pending queue items, so messages already injected into the agent no longer keep the bar stuck on `N queued`
+- **Immediate interrupt sends no longer masquerade as queued** — client-side queue fallback tracking now skips interrupt sends and isolates bookkeeping per thread, preventing unrelated messages from inheriting stale `Queued` badges
+- **User message queue badges now prefer server truth** — once a message is linked to a queue row, the transcript waits for the authoritative queue state instead of continuing to show a stale local queued marker
+
+### Added
+
+- **Queue-state regression coverage** — added tests for pending-only queue counts, server-vs-fallback badge precedence, per-thread queue fallback tracking, and interrupt send behavior
+
 ## [0.1.51.0] - 2026-04-05
 
 ### Fixed
