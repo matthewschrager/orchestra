@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.52.0] - 2026-04-05
+
+### Fixed
+
+- **Slash commands pick up newly installed skills without a restart** — Orchestra now revalidates the cached `/api/commands` sources and refreshes command lists when the composer is focused or a slash token appears, so new skills and plugin-setting changes show up automatically
+- **Mobile new-session slash commands now respect the selected project** — the mobile composer no longer reuses the active project's command list when you switch to a different project inside the new-session flow
+
+### Added
+
+- **Command refresh policy coverage** — added regression tests for command cache invalidation on new skills, edited `SKILL.md` files, and plugin setting toggles, plus client-side coverage for the refresh staleness window
+
 ## [0.1.51.0] - 2026-04-05
 
 ### Fixed
