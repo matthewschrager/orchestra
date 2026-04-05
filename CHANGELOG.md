@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.51.0] - 2026-04-05
+
+### Fixed
+
+- **Context usage survives refreshes** — the StickyRunBar now restores token usage, context window, and session totals after a page reload or reconnect instead of coming back empty until a new metrics event arrives
+- **Active run timing survives mid-turn reloads** — if you refresh while an agent is still running, elapsed time resumes from the persisted turn start instead of resetting to zero
+
+### Added
+
+- **Persisted thread metrics** — threads now store the latest token/context snapshot and active-turn timing so usage can rehydrate across tabs and devices
+- **Regression coverage for metrics persistence** — session tests now cover both completed-turn persistence and live mid-turn token updates
 ## [0.1.50.0] - 2026-04-03
 
 ### Fixed

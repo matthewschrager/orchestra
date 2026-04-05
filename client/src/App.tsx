@@ -100,8 +100,21 @@ const initialStreamingState: StreamingState = {
 
 const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0, modelName: null };
 
+function threadMetricsToTurnMetrics(thread: Thread): TurnMetrics {
+  return {
+    costUsd: thread.metrics.costUsd,
+    durationMs: thread.metrics.durationMs,
+    turnCount: thread.metrics.turnCount,
+    inputTokens: thread.metrics.inputTokens,
+    outputTokens: thread.metrics.outputTokens,
+    contextWindow: thread.metrics.contextWindow,
+    modelName: thread.metrics.modelName,
+  };
+}
+
 type StreamingAction =
   | { type: "delta"; delta: StreamDelta }
+  | { type: "hydrate_metrics"; threadId: string; metrics: TurnMetrics }
   | { type: "clear_text"; threadId: string }
   | { type: "clear_tool"; threadId: string }
   | { type: "clear_all"; threadId: string }
@@ -214,6 +227,11 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
           return state;
       }
     }
+    case "hydrate_metrics": {
+      const metrics = new Map(state.metrics);
+      metrics.set(action.threadId, action.metrics);
+      return { ...state, metrics };
+    }
     case "clear_text": {
       if (!state.text.has(action.threadId)) return state;
       const text = new Map(state.text);
@@ -309,6 +327,7 @@ function AppInner() {
   );
   const [streaming, dispatchStreaming] = useReducer(streamingReducer, initialStreamingState);
   const [unreadThreadIds, setUnreadThreadIds] = useState<Set<string>>(new Set());
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
   const wasConnectedRef = useRef<boolean | null>(null);
@@ -334,9 +353,13 @@ function AppInner() {
   const activeStreamingText = activeThreadId ? streaming.text.get(activeThreadId) : undefined;
   const activeStreamingTool = activeThreadId ? streaming.tool.get(activeThreadId) : undefined;
   const activeStreamingToolInput = activeThreadId ? streaming.toolInput.get(activeThreadId) : undefined;
-  const activeMetrics = activeThreadId ? streaming.metrics.get(activeThreadId) ?? EMPTY_METRICS : EMPTY_METRICS;
+  const activeMetrics = activeThread
+    ? streaming.metrics.get(activeThread.id) ?? threadMetricsToTurnMetrics(activeThread)
+    : EMPTY_METRICS;
   const activeTurnEnded = activeThreadId ? streaming.turnEnded.has(activeThreadId) : false;
   const activeTodos = activeThreadId ? latestTodos.get(activeThreadId) ?? null : null;
+  const isRunning = activeThread?.status === "running";
+  const activelyWorking = isRunning && !activeTurnEnded;
 
   const activeProjectThreads = useMemo(() =>
     threads
@@ -369,6 +392,14 @@ function AppInner() {
     }
     return foundAsk ? true : null;
   }, [activeMessages]);
+
+  const hydrateThreadMetrics = useCallback((thread: Thread) => {
+    dispatchStreaming({
+      type: "hydrate_metrics",
+      threadId: thread.id,
+      metrics: threadMetricsToTurnMetrics(thread),
+    });
+  }, []);
 
   // ── WebSocket ───────────────────────────────────────
 
@@ -418,6 +449,7 @@ function AppInner() {
         // New thread from another client — add to the top
         return [thread, ...prev];
       });
+      hydrateThreadMetrics(thread);
       if (thread.status === "done" || thread.status === "error") {
         dispatchStreaming({ type: "clear_all", threadId: thread.id });
       }
@@ -430,7 +462,7 @@ function AppInner() {
           return next;
         });
       }
-    }, []),
+    }, [hydrateThreadMetrics]),
     onStreamDelta: useCallback((delta: StreamDelta) => {
       dispatchStreaming({ type: "delta", delta });
     }, []),
@@ -515,11 +547,25 @@ function AppInner() {
   // ── Data loading ──────────────────────────────────────
 
   useEffect(() => {
+    if (!activelyWorking) return;
+    setNowMs(Date.now());
+    const tick = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(tick);
+  }, [activelyWorking, activeThread?.id]);
+
+  useEffect(() => {
     api.listProjects().then(setProjects).catch(console.error);
-    api.listThreads().then(setThreads).catch(console.error);
+    api.listThreads().then((loadedThreads) => {
+      setThreads(loadedThreads);
+      for (const thread of loadedThreads) {
+        hydrateThreadMetrics(thread);
+      }
+    }).catch(console.error);
     api.listAgents().then(setAgents).catch(console.error);
     api.getSettings().then((s) => { setAppSettings(s); setDefaultEffortLevel(s.defaultEffortLevel); setDefaultAgent(s.defaultAgent); }).catch(console.error);
-  }, []);
+  }, [hydrateThreadMetrics]);
 
   // Fetch commands scoped to active project; refetch when project changes.
   // Stale-response guard prevents a slow earlier response from overwriting a fast later one.
@@ -538,10 +584,15 @@ function AppInner() {
     // false = was connected, then disconnected → next true is a reconnect
     if (connected && wasConnectedRef.current === false) {
       api.listProjects().then(setProjects).catch(console.error);
-      api.listThreads().then(setThreads).catch(console.error);
+      api.listThreads().then((loadedThreads) => {
+        setThreads(loadedThreads);
+        for (const thread of loadedThreads) {
+          hydrateThreadMetrics(thread);
+        }
+      }).catch(console.error);
     }
     wasConnectedRef.current = connected;
-  }, [connected]);
+  }, [connected, hydrateThreadMetrics]);
 
   usePrAutoRefresh({
     connected,
@@ -599,6 +650,7 @@ function AppInner() {
       const thread = await api.createThread({ agent, effortLevel: effortLevel ?? undefined, permissionMode: permissionMode ?? undefined, model: model ?? undefined, prompt, projectId: pid, isolate, worktreeName, baseBranch, attachments });
       // Guard against duplicate: WS broadcast from server may arrive before this HTTP response
       setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
+      hydrateThreadMetrics(thread);
       setActiveThreadId(thread.id);
       clearUnread(thread.id); // WS race: thread_updated may arrive before setActiveThreadId takes effect
       setActiveProjectId(pid);
@@ -870,8 +922,12 @@ function AppInner() {
 
   // ── Render ────────────────────────────────────────────
 
-  const isRunning = activeThread?.status === "running";
-  const activelyWorking = isRunning && !activeTurnEnded;
+  const activeTurnStartedAtMs = activeThread?.metrics.activeTurnStartedAt
+    ? new Date(activeThread.metrics.activeTurnStartedAt).getTime()
+    : 0;
+  const elapsedMs = activelyWorking
+    ? Math.max(0, nowMs - (activeTurnStartedAtMs || turnStartRef.current || nowMs))
+    : activeMetrics.durationMs;
 
   return (
     <div className="h-dvh flex flex-col bg-base text-content-1 overflow-hidden">
@@ -1047,7 +1103,7 @@ function AppInner() {
                 currentAction={activeStreamingToolInput ? extractToolContextForBar(activeStreamingTool ?? null, activeStreamingToolInput) : null}
                 currentTool={activeStreamingTool ?? null}
                 metrics={activeMetrics}
-                elapsedMs={activelyWorking ? Date.now() - (turnStartRef.current || Date.now()) : activeMetrics.durationMs}
+                elapsedMs={elapsedMs}
                 onInterrupt={handleStopThread}
                 onScrollToBottom={() => chatViewRef.current?.scrollToBottom()}
                 todos={activeTodos}
