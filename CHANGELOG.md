@@ -5,10 +5,12 @@
 ### Fixed
 
 - **ANSI escape glyph leakage in bash tool output** — `BashRenderer` now strips terminal styling/control sequences before rendering, so colored `vitest`/`pytest` output no longer shows placeholder boxes or raw `[22m]`-style fragments in chat
+- **Consecutive file edits stay visible in chat** — the transcript no longer collapses adjacent `Edit`, `Write`, `MultiEdit`, or `NotebookEdit` tool results into a single summary row, so users can see each file change independently
 
 ### Added
 
 - **Bash output sanitization regression coverage** — parser tests now cover ANSI escape sequences, stray control characters, and carriage-return normalization for bash tool output
+- **Tool-grouping regression coverage** — added client tests that lock in standalone rendering for consecutive file edits while keeping repeated non-edit tools grouped
 
 ## [0.1.50.0] - 2026-04-03
 
