@@ -60,6 +60,18 @@ export type ThreadStatus = "running" | "pending" | "paused" | "waiting" | "done"
 
 export type PrStatus = "draft" | "open" | "merged" | "closed";
 
+export interface PersistedThreadMetrics {
+  costUsd: number;
+  durationMs: number;
+  turnCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  contextWindow: number;
+  modelName: string | null;
+  /** ISO timestamp when the current turn started, or null when idle */
+  activeTurnStartedAt: string | null;
+}
+
 export interface Thread {
   id: string;
   title: string;
@@ -84,6 +96,7 @@ export interface Thread {
   updatedAt: string;
   /** Timestamp of the last user-initiated message (used for sidebar sort order) */
   lastInteractedAt: string;
+  metrics: PersistedThreadMetrics;
 }
 
 // ── Message ─────────────────────────────────────────────

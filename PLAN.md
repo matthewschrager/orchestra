@@ -1,187 +1,182 @@
-# Command Queue Visibility, Cancel & Steering
+# Context Usage Persistence Across Refresh
 
-**Branch:** orchestra/orchestra-mx405vfykos
-**Problem:** When users send messages while the agent is working, Orchestra shows "N queued" in the StickyRunBar but provides no way to see what's queued, cancel a queued command, or "steer" the agent by injecting a message into the current turn immediately.
+**Current Branch:** `orchestra/orchestra-t6dn3j268k`
+
+## Problem
+
+The StickyRunBar context-usage/session summary is derived from ephemeral stream deltas in client memory. After a page refresh, the client reloads persisted messages and thread state, but not the usage metrics, so the context window indicator and session summary disappear until new metrics arrive.
 
 ## Current State
 
-- Messages sent mid-turn are persisted to `message_queue` SQLite table and injected via `streamInput()` with `priority: 'next'`
-- StickyRunBar shows `· N queued` as a plain text count
-- Individual queued messages show a clock icon + "Queued" label below the bubble
-- `interrupt: true` flag already exists in the WS protocol, mapping to `priority: 'now'` — this IS steering, but it's only used internally for attention resolution, never exposed as a user action
-- No cancel API exists — once enqueued, messages cannot be removed
-- Max queue depth: 5 messages per turn
+- `client/src/App.tsx` keeps usage in `StreamingState.metrics`, a `Map<string, TurnMetrics>` that starts empty on load.
+- The reducer updates that map only from `stream_delta` metrics events.
+- `server/src/ws/handler.ts` explicitly treats stream deltas as ephemeral and does not replay metrics on subscribe.
+- `server/src/db/index.ts` does not persist thread-level usage metrics.
+- On refresh, the client reloads messages and Todo state, but not metrics.
 
 ## Goals
 
-1. **Queue visibility**: Users can see the actual content of each queued message
-2. **Cancel**: Users can remove any queued message before the agent processes it
-3. **Steer**: Users can inject a message into the current turn immediately (Codex-style `turn/steer`)
-4. **Clear separation**: Queue (safe, deferred) and Steer (immediate injection) are distinct, deliberate actions
+1. Context usage survives page refresh and reconnect.
+2. The idle StickyRunBar still shows session summary and last-turn usage after refresh.
+3. A mid-turn refresh restores the latest known token/context snapshot immediately.
+4. The server is the source of truth, so refresh works across tabs/devices.
+5. Keep the implementation small and aligned with the current data flow.
 
-## Codex Reference
+## Non-Goals
 
-Codex CLI separates mid-turn input into two operations:
-- **Steer** (Enter): Injects into current turn immediately. Agent receives it as additive context. Can derail.
-- **Queue** (Tab): Deferred to next turn. Safe. Default in newer versions.
-- Queue is the safer default — accidental sends don't disrupt the agent's current task
+- Full historical per-turn analytics or charts.
+- Persisting streaming text/tool draft state.
+- Redesigning the StickyRunBar UI.
 
 ## Design
 
-### A. Queue Drawer (StickyRunBar expansion)
+### 1. Persist thread-level usage state
 
-Replace the static "· N queued" text with an interactive, expandable queue drawer:
+Persist the metrics the StickyRunBar actually needs on the `threads` row:
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ ⟳ Thinking… editing server/src/foo.ts   42s  · 2 queued │  ← click "2 queued" to expand
-├─────────────────────────────────────────────────────────┤
-│  ┌──────────────────────────────────────────────┐       │
-│  │ "Now also update the tests for..."   [▶][✕]  │       │  ← queued msg 1: Send Now / Cancel
-│  │ "And add a changelog entry"          [▶][✕]  │       │  ← queued msg 2: Send Now / Cancel
-│  └──────────────────────────────────────────────┘       │
-│                                         [Clear All]     │
-└─────────────────────────────────────────────────────────┘
-```
+- `metrics_turn_count`
+- `metrics_total_duration_ms`
+- `metrics_total_cost_usd`
+- `metrics_latest_input_tokens`
+- `metrics_latest_output_tokens`
+- `metrics_latest_context_window`
+- `metrics_latest_model_name`
+- `metrics_active_turn_started_at`
 
-- Expandable: Click "N queued" badge → slides down a panel showing each queued message
-- Each message shows truncated content (first ~80 chars)
-- **[▶] Send Now**: Promotes this message from queue to immediate steer (changes priority to "now")
-- **[✕] Cancel**: Removes message from queue entirely
-- **[Clear All]**: Removes all queued messages
-- Collapse: Click badge again or auto-collapse when queue empties
+These fields represent:
 
-### B. InputBar Split-Send (Queue vs Steer)
+- **Session totals:** turn count, total duration, total cost.
+- **Latest turn snapshot:** input/output tokens, context window, model name.
+- **Current turn timing:** explicit start time for the active turn.
 
-When the agent is running, the Send button becomes a split button:
+This is the smallest read model that matches the current StickyRunBar behavior.
 
-```
-┌────────────────────────────────────────────────────┐
-│  Type a message...                                  │
-│                                                     │
-│                        [Queue ▾]   or   [⚡ Steer]  │
-└────────────────────────────────────────────────────┘
-```
+### 2. Make `Thread` expose persisted metrics
 
-- **Queue** (default, Enter key): Defers message to next turn. Safe. Same as current behavior.
-- **Steer** (Cmd/Ctrl+Enter): Injects into current turn immediately with `priority: 'now'`. Shows distinct visual (lightning icon, different color) to communicate "this interrupts the current task."
-- The split button dropdown lets user swap the default if they prefer steer-first.
-- When agent is idle, just shows normal "Send" button (no split).
+Add a nested metrics object to the shared `Thread` type:
 
-### C. Queue Cancel API
-
-New server-side cancel endpoint + WS message:
-
-```typescript
-// New WS client message
-| { type: "cancel_queued"; threadId: string; queueId: string }
-| { type: "clear_queue"; threadId: string }
-
-// New DB function
-cancelQueuedMessage(db, queueId): boolean  // DELETE WHERE id = ? AND delivered_at IS NULL
-clearPendingQueue(db, threadId): number     // DELETE WHERE thread_id = ? AND delivered_at IS NULL
-
-// New WS server response
-| { type: "queue_updated"; threadId: string; queue: QueuedItem[] }
-```
-
-The `queue_updated` message replaces `queued_message` count-only deltas with full queue state so the client can render actual message content.
-
-### D. Queue State Broadcasting
-
-Replace the current count-only `queued_message` delta with a richer `queue_updated` message:
-
-```typescript
-interface QueuedItem {
-  id: string;
-  content: string;       // First ~200 chars of the original message
-  createdAt: string;
-  interrupt: boolean;     // Was this originally sent as a steer?
+```ts
+interface PersistedThreadMetrics {
+  turnCount: number;
+  totalDurationMs: number;
+  totalCostUsd: number;
+  latestInputTokens: number;
+  latestOutputTokens: number;
+  latestContextWindow: number;
+  latestModelName: string | null;
+  activeTurnStartedAt: string | null;
 }
-
-// StreamDelta gains:
-queueItems?: QueuedItem[];
 ```
 
-On every queue mutation (enqueue, cancel, deliver, clear), broadcast the full pending queue state to all subscribed clients.
+Thread APIs (`listThreads`, `getThread`, `thread_updated`) should return this as part of `Thread`.
 
-## Implementation Plan
+### 3. Update persisted metrics inside `SessionManager`
 
-### Step 1: Server — Queue cancel + clear APIs
-**Files:** `server/src/db/index.ts`, `server/src/sessions/manager.ts`, `server/src/ws/handler.ts`, `shared/src/types.ts`
+Add one helper in `server/src/sessions/manager.ts`, something like:
 
-1. Add `cancelQueuedMessage(db, queueId)` and `clearPendingQueue(db, threadId)` to db/index.ts
-2. Add `getPendingQueue(db, threadId)` to return full queue items (id, content truncated, createdAt, interrupt)
-3. Add `cancelQueued(threadId, queueId)` and `clearQueue(threadId)` methods to SessionManager
-4. Add `cancel_queued` and `clear_queue` WS message handlers
-5. Replace `queued_message` delta with `queue_updated` that includes full item list
-6. Update `WSClientMessage` and `WSServerMessage` types in shared/types.ts
+```ts
+private applyMetricsDelta(threadId: string, delta: StreamDelta): void
+```
 
-### Step 2: Server — Steer support (promote queued → immediate)
-**Files:** `server/src/sessions/manager.ts`, `server/src/ws/handler.ts`, `shared/src/types.ts`
+Rules:
 
-1. Add `steerMessage(threadId, queueId)` to SessionManager — cancels the queued entry and re-injects with `priority: 'now'`
-2. Add `steer_queued` WS message type
-3. Ensure `interrupt: true` on `send_message` already provides steer for NEW messages (it does, via existing code path)
+- On turn start:
+  - set `metrics_active_turn_started_at = now`
+  - reset `metrics_latest_input_tokens = 0`
+  - reset `metrics_latest_output_tokens = 0`
+- On every metrics delta:
+  - overwrite latest input/output/context/model fields when present
+  - increment total duration/cost/turn count only for completed-turn metrics
+- On turn end / done / waiting / error / stop:
+  - clear `metrics_active_turn_started_at`
+  - keep latest snapshot so idle state still shows the last turn's usage
 
-### Step 3: Client — Queue Drawer in StickyRunBar
-**Files:** `client/src/components/StickyRunBar.tsx`, `client/src/App.tsx`, `client/src/components/ChatView.tsx`
+Important: use `updateThreadSilent`, not `updateThread`, for metrics writes so the sidebar sort order does not thrash on every stream update.
 
-1. Add `queueItems` prop to StickyRunBar (array of QueuedItem, not just count)
-2. Add expandable drawer: click "N queued" → shows list of queued messages with Send Now / Cancel buttons
-3. Wire cancel/steer/clear actions through WS
-4. Update streaming reducer to track `queueItems` map instead of `queuedCount`
-5. Update `MessageBubble` isQueued indicator — can now cross-reference by queue ID
-6. Auto-collapse drawer when queue empties
-7. Animate expand/collapse with CSS transitions
+### 4. Hydrate client metrics from thread data
 
-### Step 4: Client — InputBar Split-Send
-**Files:** `client/src/components/InputBar.tsx`
+On the client, stop treating metrics as purely in-memory bootstrap data.
 
-1. When `isRunning`, render split button: primary "Queue" + secondary "Steer" (or vice versa based on preference)
-2. Queue = `onSend(content, attachments, false)` — deferred delivery
-3. Steer = `onSend(content, attachments, true)` — immediate injection (`interrupt: true`)
-4. Keyboard shortcuts: Enter = primary action (queue), Cmd/Ctrl+Enter = secondary (steer)
-5. Visual differentiation: Steer button uses warning/accent color + lightning icon
-6. Tooltip explaining the difference on hover
+Use thread-level metrics as the refresh baseline:
 
-### Step 5: Client — Queue Badge in MessageBubble
-**Files:** `client/src/components/ChatView.tsx`
+- when `listThreads()` resolves
+- when `getThread()` / subscribe `thread_updated` arrives
+- when the active thread changes
 
-1. Update "Queued" badge on message bubbles to include Cancel button (small ✕)
-2. Clicking ✕ sends `cancel_queued` WS message
-3. When message is delivered (removed from queue), badge changes from "Queued" → "Delivered" briefly, then disappears
+Two acceptable implementations:
 
-### Step 6: Tests
-**Files:** `server/src/db/__tests__/queue.test.ts`, `server/src/sessions/__tests__/sdk-session.test.ts`, `client/src/components/__tests__/StickyRunBar.test.ts`
+- Add a reducer action like `hydrate_metrics_from_thread`
+- Or derive a base `TurnMetrics` object from `thread.metrics` and layer live deltas on top
 
-1. Unit tests for `cancelQueuedMessage`, `clearPendingQueue`, `getPendingQueue`
-2. Test cancel of already-delivered message returns false
-3. Test steer promotion: cancel + re-inject with priority 'now'
-4. Test `queue_updated` broadcast on enqueue/cancel/clear
-5. Test split-send keyboard shortcuts
-6. Test queue drawer expand/collapse
-7. Test MessageBubble cancel integration
+The first option is simpler with the current reducer.
 
-### Step 7: Mobile
-**Files:** `client/src/components/InputBar.tsx`, `client/src/components/StickyRunBar.tsx`
+### 5. Restore active-turn elapsed time after refresh
 
-1. On mobile, split-send becomes a long-press menu or a toggle button (no hover states)
-2. Queue drawer adapts to smaller width — full-width messages, stacked buttons
-3. Touch-friendly cancel/steer targets (min 44px)
+Today `turnStartRef` resets on refresh, so even if token metrics were persisted, active elapsed time still restarts from zero.
+
+Use `thread.metrics.activeTurnStartedAt` when:
+
+- the thread is `running`
+- `turnStartRef.current` is empty after reload
+
+That restores the live timer for mid-turn refreshes.
+
+### 6. Keep WebSocket flow simple
+
+No new WebSocket message type is required.
+
+Current flow becomes:
+
+```text
+agent metrics delta
+-> SessionManager persists thread metrics
+-> live clients still receive normal stream_delta
+-> refreshed client reloads thread list / thread_updated
+-> client hydrates metrics from persisted thread state
+```
+
+This keeps stream deltas fast and ephemeral while giving refreshes a stable baseline.
+
+## Files
+
+### Server
+
+- `server/src/db/index.ts`
+- `server/src/sessions/manager.ts`
+- `server/src/routes/threads.ts` if thread serialization needs touch-up
+
+### Shared
+
+- `shared/src/types.ts`
+
+### Client
+
+- `client/src/App.tsx`
+- `client/src/components/StickyRunBar.tsx` only if prop/shape adjustments are needed
 
 ## Edge Cases
 
-- **Race: cancel after delivery**: `cancelQueuedMessage` uses `WHERE delivered_at IS NULL` guard — returns false if already delivered. Client shows "already sent" toast.
-- **Race: steer after turn_end**: If turn just ended, steer falls through to normal message delivery. No harm.
-- **Queue full + cancel**: After canceling a message, queue count decreases, allowing new messages. `queuedThisTurn` counter on persistent sessions must also decrement.
-- **Multiple clients**: `queue_updated` broadcasts to all subscribed WS clients, keeping queue state in sync cross-device.
-- **Large message content**: Truncate to 200 chars in `QueuedItem.content` for broadcast efficiency. Full content stays in SQLite.
-- **Persistent vs non-persistent sessions**: Cancel must work for both. For persistent sessions where message was already injected via `streamInput()`, cancel is best-effort (mark delivered, agent may still process it).
+- **Refresh mid-turn before any metrics delta:** show elapsed time from `activeTurnStartedAt`, but no usage bar until the first usage delta arrives.
+- **Refresh after completed turn:** show full session summary and last-turn usage immediately.
+- **Old rows with no metrics:** default to zeros/nulls; bar behaves as it does today.
+- **New turn starts after a previous heavy turn:** reset latest token snapshot at turn start so the new turn does not briefly show stale usage.
+- **Thread status changes while disconnected:** persisted metrics still rehydrate correctly on reconnect.
 
-## Not in Scope
+## Tests
 
-- Queue reordering (drag-and-drop to change execution order)
-- Queue message editing (modify content before delivery)
-- Persistent "send as steer by default" user preference (can be added later via Settings)
-- Pause agent functionality (freeze agent mid-task while composing a steer)
+1. DB migration test for the new thread metric columns.
+2. `SessionManager` test that metrics deltas persist the latest snapshot.
+3. `SessionManager` test that final metrics increment totals exactly once.
+4. Client hydration test that a thread with persisted metrics renders a non-empty StickyRunBar after refresh.
+5. Client test that active elapsed time uses `activeTurnStartedAt` after reload.
+6. Regression test that metrics persistence does not reorder threads by `updated_at`.
+
+## Rollout Notes
+
+- Migrate columns with safe defaults so existing databases continue working.
+- Ship thread metrics first, then client hydration.
+- If desired later, add a separate `thread_turn_metrics` table for history, but do not block this refresh fix on that.
+
+## Recommendation
+
+Persist the StickyRunBar read model on `threads`, hydrate it through existing thread APIs, and continue using live stream deltas for in-turn updates. That fixes refresh with minimal architectural churn.

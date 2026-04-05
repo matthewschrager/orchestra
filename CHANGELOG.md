@@ -1,17 +1,21 @@
 # Changelog
 
-## [0.1.50.1] - 2026-04-05
+## [0.1.51.0] - 2026-04-05
 
 ### Fixed
 
 - **ANSI escape glyph leakage in bash tool output** — `BashRenderer` now strips terminal styling/control sequences before rendering, so colored `vitest`/`pytest` output no longer shows placeholder boxes or raw `[22m]`-style fragments in chat
 - **Consecutive file edits stay visible in chat** — the transcript no longer collapses adjacent `Edit`, `Write`, `MultiEdit`, or `NotebookEdit` tool results into a single summary row, so users can see each file change independently
+- **Context usage survives refreshes** — the StickyRunBar now restores token usage, context window, and session totals after a page reload or reconnect instead of coming back empty until a new metrics event arrives
+- **Active run timing survives mid-turn reloads** — if you refresh while an agent is still running, elapsed time resumes from the persisted turn start instead of resetting to zero
 
 ### Added
 
 - **Bash output sanitization regression coverage** — parser tests now cover ANSI escape sequences, stray control characters, and carriage-return normalization for bash tool output
 - **Tool-grouping regression coverage** — added client tests that lock in standalone rendering for consecutive file edits while keeping repeated non-edit tools grouped
 - **Source branch display** — worktree threads now show the branch they were spawned from (e.g. "from staging") in the desktop chat header, sidebar thread list, and mobile thread header
+- **Persisted thread metrics** — threads now store the latest token/context snapshot and active-turn timing so usage can rehydrate across tabs and devices
+- **Regression coverage for metrics persistence** — session tests now cover both completed-turn persistence and live mid-turn token updates
 
 ## [0.1.50.0] - 2026-04-03
 

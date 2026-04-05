@@ -69,6 +69,19 @@ function createMockAdapter(
             };
           }
 
+          if (type === "metrics") {
+            return {
+              messages: [],
+              deltas: [{
+                deltaType: "metrics",
+                inputTokens: m.input_tokens as number | undefined,
+                outputTokens: m.output_tokens as number | undefined,
+                contextWindow: m.context_window as number | undefined,
+                modelName: m.model_name as string | undefined,
+              }],
+            };
+          }
+
           if (type === "result") {
             return {
               messages: [],
@@ -164,6 +177,49 @@ describe("SDK Session lifecycle", () => {
     const assistantMsg = msgs.find((m: any) => m.role === "assistant");
     expect(assistantMsg).toBeDefined();
     expect(assistantMsg.content).toBe("Hello from SDK!");
+
+    sessionManager.stopAll();
+  });
+
+  test("persists completed-turn metrics and clears active turn state", async () => {
+    const adapter = createMockAdapter([
+      { type: "system", subtype: "init", session_id: "sess-metrics-1", tools: [], cwd: "/tmp" },
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Metrics are ready" }] },
+        session_id: "sess-metrics-1",
+      },
+      {
+        type: "result",
+        subtype: "success",
+        total_cost_usd: 0.25,
+        duration_ms: 1500,
+        session_id: "sess-metrics-1",
+        permission_denials: [],
+      },
+    ]);
+
+    const { db, repoDir, sessionManager } = setupSessionManager(adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "metrics persistence",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    const started = getThread(db, thread.id);
+    expect(started?.metrics_active_turn_started_at).toBeTruthy();
+    expect(started?.metrics_input_tokens).toBe(0);
+    expect(started?.metrics_output_tokens).toBe(0);
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const updated = getThread(db, thread.id);
+    expect(updated?.metrics_cost_usd).toBe(0.25);
+    expect(updated?.metrics_duration_ms).toBe(1500);
+    expect(updated?.metrics_turn_count).toBe(1);
+    expect(updated?.metrics_active_turn_started_at).toBeNull();
 
     sessionManager.stopAll();
   });
@@ -388,6 +444,18 @@ function mockParseMessage(msg: unknown): ParseResult {
     const text = textBlocks.map(b => b.text ?? "").join("");
     return { messages: text ? [{ role: "assistant", content: text }] : [], deltas: [] };
   }
+  if (type === "metrics") {
+    return {
+      messages: [],
+      deltas: [{
+        deltaType: "metrics",
+        inputTokens: m.input_tokens as number | undefined,
+        outputTokens: m.output_tokens as number | undefined,
+        contextWindow: m.context_window as number | undefined,
+        modelName: m.model_name as string | undefined,
+      }],
+    };
+  }
   if (type === "result") {
     return {
       messages: [],
@@ -591,6 +659,40 @@ describe("Persistent Session lifecycle", () => {
 
     // resetTurnState should have been called before inject
     expect(mock.getResetCalls()).toBe(1);
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: persists live token usage while a turn is still running", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "live metrics",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-live", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "metrics",
+      input_tokens: 8800,
+      output_tokens: 1200,
+      context_window: 200000,
+      model_name: "claude-sonnet-4-20250514",
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("running");
+    expect(updated?.metrics_active_turn_started_at).toBeTruthy();
+    expect(updated?.metrics_input_tokens).toBe(8800);
+    expect(updated?.metrics_output_tokens).toBe(1200);
+    expect(updated?.metrics_context_window).toBe(200000);
+    expect(updated?.metrics_model_name).toBe("claude-sonnet-4-20250514");
+    expect(updated?.metrics_turn_count).toBe(0);
 
     sessionManager.stopAll();
   });
