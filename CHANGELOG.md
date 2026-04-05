@@ -5,6 +5,7 @@
 ### Fixed
 
 - **Missing agent installs are now explicit** — Orchestra now checks for the real `claude` and `codex` CLI binaries instead of only assuming the SDK packages are present, so missing installs fail early with a clear explanation instead of an opaque startup error
+- **Route tests no longer poison later files with a fake home directory** — the commands route now accepts an injected home-directory resolver for tests, so `commands.test.ts` no longer leaks a mocked `os.homedir()` into settings, files, and filesystem tests during the full suite
 
 ### Added
 

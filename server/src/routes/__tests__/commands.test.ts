@@ -1,6 +1,7 @@
-import { describe, expect, test, beforeEach, afterEach, mock } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { Hono } from "hono";
+import { createCommandRoutes } from "../commands";
 import {
   mkdtempSync,
   mkdirSync,
@@ -59,34 +60,17 @@ afterEach(() => {
   tempDirs = [];
 });
 
-// ── We need to mock `os.homedir` so that the commands module reads our fixture dirs ──
-// The module also uses `readFileSync`, `readdirSync`, `statSync`, `existsSync` from `fs`
-// but those operate on real paths, so we just need to control `homedir()`.
-
 let fakeHome: string;
 
 /**
  * Build a Hono app that routes through the commands route.
- * Because commands.ts caches results, we must re-import each time to get a fresh module.
- * We use `mock.module` to redirect `os.homedir` before the import.
+ * The route caches results per app instance, so each test gets a fresh app.
  */
 async function createApp(
   db: Database,
 ): Promise<Hono> {
-  // Clear module cache so each test gets a fresh cache Map
-  // and picks up the mocked homedir
-  const modulePath = resolve(
-    import.meta.dir,
-    "../commands.ts",
-  );
-
-  // Use dynamic import with a cache-busting query to avoid stale module cache
-  const cacheBuster = `?t=${Date.now()}-${Math.random()}`;
-  const mod = await import(modulePath + cacheBuster);
-  const { createCommandRoutes } = mod;
-
   const app = new Hono();
-  app.route("/api/commands", createCommandRoutes(db));
+  app.route("/api/commands", createCommandRoutes(db, { getHomeDir: () => fakeHome }));
   return app;
 }
 
@@ -97,10 +81,6 @@ describe("GET /api/commands", () => {
 
   beforeEach(() => {
     fakeHome = makeTmpDir();
-    // Mock os.homedir to return our temp directory
-    mock.module("os", () => ({
-      homedir: () => fakeHome,
-    }));
     db = createTestDb();
   });
 
