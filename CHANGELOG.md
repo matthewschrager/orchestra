@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.52.0] - 2026-04-05
+
+### Fixed
+
+- **Missing agent installs are now explicit** — Orchestra now checks for the real `claude` and `codex` CLI binaries instead of only assuming the SDK packages are present, so missing installs fail early with a clear explanation instead of an opaque startup error
+
+### Added
+
+- **Agent availability guidance** — `/api/agents` now returns install guidance for unavailable agents, the app shows a warning banner when Claude or Codex is missing, and thread creation refuses to start an unavailable agent with a human-readable error
+- **Regression coverage for agent availability metadata** — added shared helper tests and registry tests to lock in the new missing-agent payload and install hints
+
 ## [0.1.51.0] - 2026-04-05
 
 ### Fixed
