@@ -46,6 +46,7 @@ import { MergeAllPrsConfirmationModal } from "./components/MergeAllPrsConfirmati
 import { buildInputHistory } from "./lib/inputHistory";
 import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
 import { usePrAutoRefresh } from "./hooks/usePrAutoRefresh";
+import { consumeQueuedFallback, incrementQueuedFallback, shouldTrackQueuedFallback } from "./lib/queueFallback";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -417,10 +418,14 @@ function AppInner() {
         next.set(msg.threadId, [...existing, msg]);
         return next;
       });
-      // Tag user messages as queued if they were sent while agent was running
-      if (msg.role === "user" && pendingQueuedCountRef.current > 0) {
-        pendingQueuedCountRef.current--;
-        dispatchStreaming({ type: "mark_queued", threadId: msg.threadId, seq: msg.seq });
+      // Client-side fallback: if WS queue state arrives after the persisted user
+      // message, temporarily mark the matching message as queued.
+      if (msg.role === "user") {
+        const { nextCounts, shouldMarkQueued } = consumeQueuedFallback(pendingQueuedCountRef.current, msg.threadId);
+        pendingQueuedCountRef.current = nextCounts;
+        if (shouldMarkQueued) {
+          dispatchStreaming({ type: "mark_queued", threadId: msg.threadId, seq: msg.seq });
+        }
       }
       // Clear streaming state when a persisted message arrives
       if (msg.role === "assistant") {
@@ -668,8 +673,9 @@ function AppInner() {
     }
   };
 
-  // Track how many of the next incoming user messages should be marked as "queued"
-  const pendingQueuedCountRef = useRef(0);
+  // Track queued-message fallback markers per thread so unrelated messages don't
+  // consume another thread's pending badge.
+  const pendingQueuedCountRef = useRef(new Map<string, number>());
 
   const handleSendMessage = async (content: string, attachments?: Attachment[], interrupt?: boolean) => {
     if (!activeThreadId) return;
@@ -679,9 +685,9 @@ function AppInner() {
       const thread = threads.find((t) => t.id === activeThreadId);
       if (!thread || thread.status !== "running") {
         turnStartRef.current = Date.now();
-      } else {
+      } else if (shouldTrackQueuedFallback(thread.status, interrupt)) {
         // Sending while running — flag next incoming user message as queued
-        pendingQueuedCountRef.current++;
+        pendingQueuedCountRef.current = incrementQueuedFallback(pendingQueuedCountRef.current, activeThreadId);
       }
       send({ type: "send_message", threadId: activeThreadId, content, attachments, interrupt: interrupt ?? false });
     } catch (err) {

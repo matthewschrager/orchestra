@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import type { TurnMetrics } from "shared";
-import { formatModelName, formatTokenCount, getTokenUsageSummary } from "../StickyRunBar";
+import type { QueuedItem, TurnMetrics } from "shared";
+import { formatModelName, formatTokenCount, getPendingQueueDisplayCount, getTokenUsageSummary } from "../StickyRunBar";
 
 describe("formatModelName", () => {
   test("strips YYYYMMDD date suffix", () => {
@@ -76,5 +76,19 @@ describe("getTokenUsageSummary", () => {
       contextWindow: 200_000,
       pct: 50,
     });
+  });
+});
+
+describe("getPendingQueueDisplayCount", () => {
+  test("counts only pending queue items when sent items are still visible", () => {
+    const items: QueuedItem[] = [
+      { id: "q1", content: "already injected", createdAt: "2026-04-05T00:00:00.000Z", state: "sent" },
+      { id: "q2", content: "still pending", createdAt: "2026-04-05T00:00:01.000Z", state: "pending" },
+    ];
+    expect(getPendingQueueDisplayCount(items, 0)).toBe(1);
+  });
+
+  test("falls back to queuedCount when queue items are unavailable", () => {
+    expect(getPendingQueueDisplayCount(undefined, 2)).toBe(2);
   });
 });

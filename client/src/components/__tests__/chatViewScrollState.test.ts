@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getContentUpdateScrollState } from "../ChatView";
+import { getContentUpdateScrollState, getUserMessageQueueDisplayState } from "../ChatView";
 
 describe("chat view scroll state", () => {
   test("clears the unread baseline when the user is at the bottom", () => {
@@ -32,6 +32,41 @@ describe("chat view scroll state", () => {
     })).toEqual({
       atBottom: false,
       nextBaseline: 7,
+    });
+  });
+});
+
+describe("user message queue display state", () => {
+  test("prefers server sent state over the client queued fallback", () => {
+    expect(getUserMessageQueueDisplayState({
+      hasQueueMessageId: true,
+      isQueued: true,
+      queueState: "sent",
+    })).toEqual({
+      showQueueBadge: true,
+      isSent: true,
+    });
+  });
+
+  test("suppresses the local queued fallback once a server queue id exists", () => {
+    expect(getUserMessageQueueDisplayState({
+      hasQueueMessageId: true,
+      isQueued: true,
+      queueState: undefined,
+    })).toEqual({
+      showQueueBadge: false,
+      isSent: false,
+    });
+  });
+
+  test("uses the local fallback only for legacy messages without a queue id", () => {
+    expect(getUserMessageQueueDisplayState({
+      hasQueueMessageId: false,
+      isQueued: true,
+      queueState: undefined,
+    })).toEqual({
+      showQueueBadge: true,
+      isSent: false,
     });
   });
 });
