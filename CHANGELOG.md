@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.51.1] - 2026-04-05
+
+### Fixed
+
+- **PR badge and metadata clipped in sidebar** — the thread metadata row (agent badge, worktree branch, PR badge) now handles flex overflow correctly so the PR badge is always fully visible instead of being cut off on narrower screens. The worktree branch name truncates earlier to make room, and both desktop sidebar and mobile thread list share the same fix.
+
 ## [0.1.51.0] - 2026-04-05
 
 ### Fixed
