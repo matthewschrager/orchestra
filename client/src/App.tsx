@@ -43,6 +43,7 @@ import { MergeAllPrsButton } from "./components/MergeAllPrsButton";
 import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
 import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal";
 import { MergeAllPrsConfirmationModal } from "./components/MergeAllPrsConfirmationModal";
+import { getCommandsCacheKey, shouldRefreshCommands } from "./lib/commandRefresh";
 import { buildInputHistory } from "./lib/inputHistory";
 import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
 import { usePrAutoRefresh } from "./hooks/usePrAutoRefresh";
@@ -309,7 +310,7 @@ function AppInner() {
   const [messages, setMessages] = useState<Map<string, Message[]>>(new Map());
   const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [appSettings, setAppSettings] = useState<import("shared").Settings | null>(null);
-  const [commands, setCommands] = useState<SlashCommand[]>([]);
+  const [commandsByProject, setCommandsByProject] = useState<Map<string, SlashCommand[]>>(new Map());
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
@@ -333,6 +334,8 @@ function AppInner() {
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
   const wasConnectedRef = useRef<boolean | null>(null);
+  const commandFetchTimesRef = useRef<Map<string, number>>(new Map());
+  const commandRequestsRef = useRef<Map<string, Promise<void>>>(new Map());
   const activeThreadRef = useRef<string | null>(null);
   activeThreadRef.current = activeThreadId;
   const chatViewRef = useRef<ChatViewHandle>(null);
@@ -346,6 +349,10 @@ function AppInner() {
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
+  const activeCommands = useMemo(
+    () => commandsByProject.get(getCommandsCacheKey(activeProjectId)) ?? [],
+    [commandsByProject, activeProjectId],
+  );
   const missingAgents = useMemo(
     () => agents.filter((agent) => !agent.detected),
     [agents],
@@ -577,15 +584,37 @@ function AppInner() {
     api.getSettings().then((s) => { setAppSettings(s); setDefaultEffortLevel(s.defaultEffortLevel); setDefaultAgent(s.defaultAgent); }).catch(console.error);
   }, [hydrateThreadMetrics]);
 
+  const refreshCommands = useCallback((projectId: string | null, options?: { force?: boolean }) => {
+    const key = getCommandsCacheKey(projectId);
+    const inFlight = commandRequestsRef.current.get(key);
+    if (inFlight) return inFlight;
+
+    const lastFetchedAt = commandFetchTimesRef.current.get(key);
+    if (!options?.force && !shouldRefreshCommands(lastFetchedAt)) {
+      return Promise.resolve();
+    }
+
+    const request = api.listCommands(projectId ?? undefined).then((cmds) => {
+      setCommandsByProject((prev) => {
+        const next = new Map(prev);
+        next.set(key, cmds);
+        return next;
+      });
+      commandFetchTimesRef.current.set(key, Date.now());
+    }).catch(console.error).finally(() => {
+      if (commandRequestsRef.current.get(key) === request) {
+        commandRequestsRef.current.delete(key);
+      }
+    });
+
+    commandRequestsRef.current.set(key, request);
+    return request;
+  }, []);
+
   // Fetch commands scoped to active project; refetch when project changes.
-  // Stale-response guard prevents a slow earlier response from overwriting a fast later one.
   useEffect(() => {
-    let stale = false;
-    api.listCommands(activeProjectId ?? undefined).then((cmds) => {
-      if (!stale) setCommands(cmds);
-    }).catch(console.error);
-    return () => { stale = true; };
-  }, [activeProjectId]);
+    void refreshCommands(activeProjectId ?? null);
+  }, [activeProjectId, refreshCommands]);
 
   // Re-fetch thread list on WS reconnection so sidebar statuses are fresh.
   // Without this, threads that changed status while disconnected appear "stuck".
@@ -1146,12 +1175,13 @@ function AppInner() {
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject?.name ?? null}
                 activeProjectBranch={activeProject?.currentBranch ?? null}
-                commands={commands}
+                commands={activeCommands}
                 settings={appSettings}
                 history={activeInputHistory}
                 pendingQuestion={pendingQuestion}
                 defaultEffortLevel={defaultEffortLevel}
                 defaultAgent={defaultAgent}
+                onRequestCommandRefresh={() => { void refreshCommands(activeProjectId ?? null); }}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
@@ -1189,10 +1219,11 @@ function AppInner() {
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject.name}
                 activeProjectBranch={activeProject.currentBranch}
-                commands={commands}
+                commands={activeCommands}
                 settings={appSettings}
                 defaultEffortLevel={defaultEffortLevel}
                 defaultAgent={defaultAgent}
+                onRequestCommandRefresh={() => { void refreshCommands(activeProjectId ?? null); }}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
@@ -1262,11 +1293,12 @@ function AppInner() {
             <MobileNewSession
               projects={projects}
               agents={agents}
-              commands={commands}
+              commandsByProject={commandsByProject}
               activeProjectId={activeProjectId}
               settings={appSettings}
               defaultEffortLevel={defaultEffortLevel}
               defaultAgent={defaultAgent}
+              onRequestCommandRefresh={(projectId) => { void refreshCommands(projectId); }}
               onNewThread={(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments, permissionMode, baseBranch) => {
                 handleNewThread(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments, permissionMode, baseBranch);
                 setMobileTab("sessions");

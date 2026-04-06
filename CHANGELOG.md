@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Slash commands pick up newly installed skills without a restart** — Orchestra now revalidates the cached `/api/commands` sources and refreshes command lists when the composer is focused or a slash token appears, so new skills and plugin-setting changes show up automatically
+- **Mobile new-session slash commands now respect the selected project** — the mobile composer no longer reuses the active project's command list when you switch to a different project inside the new-session flow
 - **Missing agent installs are now explicit** — Orchestra now checks for the real `claude` and `codex` CLI binaries instead of only assuming the SDK packages are present, so missing installs fail early with a clear explanation instead of an opaque startup error
 - **Route tests no longer poison later files with a fake home directory** — the commands route now accepts an injected home-directory resolver for tests, so `commands.test.ts` no longer leaks a mocked `os.homedir()` into settings, files, and filesystem tests during the full suite
 - **Queued badges no longer overstate agent state** — the StickyRunBar now counts only truly pending queue items, so messages already injected into the agent no longer keep the bar stuck on `N queued`
@@ -12,6 +14,7 @@
 
 ### Added
 
+- **Command refresh policy coverage** — added regression tests for command cache invalidation on new skills, edited `SKILL.md` files, and plugin setting toggles, plus client-side coverage for the refresh staleness window
 - **Agent availability guidance** — `/api/agents` now returns install guidance for unavailable agents, the app shows a warning banner when Claude or Codex is missing, and thread creation refuses to start an unavailable agent with a human-readable error
 - **Regression coverage for agent availability metadata** — added shared helper tests and registry tests to lock in the new missing-agent payload and install hints
 - **Queue-state regression coverage** — added tests for pending-only queue counts, server-vs-fallback badge precedence, per-thread queue fallback tracking, and interrupt send behavior

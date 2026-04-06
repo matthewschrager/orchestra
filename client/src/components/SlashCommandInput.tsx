@@ -123,6 +123,8 @@ interface Props {
   onChange: (value: string) => void;
   onSubmit: (interrupt?: boolean) => void;
   onPaste?: (e: React.ClipboardEvent) => void;
+  onCommandFocus?: () => void;
+  onSlashIntent?: () => void;
   commands: SlashCommand[];
   history?: string[];
   placeholder?: string;
@@ -137,6 +139,8 @@ export function SlashCommandInput({
   onChange,
   onSubmit,
   onPaste,
+  onCommandFocus,
+  onSlashIntent,
   commands,
   history = [],
   placeholder,
@@ -156,6 +160,8 @@ export function SlashCommandInput({
   // Find tokens at the cursor position
   const slashToken = useMemo(() => findSlashToken(value, cursorPos), [value, cursorPos]);
   const atToken = useMemo(() => findAtToken(value, cursorPos), [value, cursorPos]);
+
+  const hadSlashTokenRef = useRef(false);
 
   // Exact match against a known command
   const isRecognizedCommand =
@@ -184,6 +190,14 @@ export function SlashCommandInput({
       onFileQueryChange?.(query);
     }
   }, [atToken?.query, onFileQueryChange]);
+
+  useEffect(() => {
+    const hasSlashToken = slashToken !== null;
+    if (hasSlashToken && !hadSlashTokenRef.current) {
+      onSlashIntent?.();
+    }
+    hadSlashTokenRef.current = hasSlashToken;
+  }, [onSlashIntent, slashToken]);
 
   // Build highlighted segments for the overlay
   const highlightSegments = useMemo(() => buildHighlightSegments(value, commands), [value, commands]);
@@ -514,6 +528,7 @@ export function SlashCommandInput({
               : "bg-surface-2",
           ].join(" ")}
           style={hasHighlights ? { caretColor: "var(--color-content-1)" } : undefined}
+          onFocus={onCommandFocus}
           onKeyDown={handleKeyDown}
           onSelect={updateCursor}
           onScroll={handleScroll}
