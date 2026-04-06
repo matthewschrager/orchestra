@@ -1,7 +1,12 @@
 import type { AgentAdapter } from "./types";
 import { ClaudeAdapter, getCachedClaudeModels } from "./claude";
 import { CodexAdapter } from "./codex";
-import { getModelOptions, type ModelOption } from "shared";
+import {
+  getAgentInstallHint,
+  getAgentUnavailableReason,
+  getModelOptions,
+  type AgentStatus,
+} from "shared";
 
 export class AgentRegistry {
   private adapters: Map<string, AgentAdapter> = new Map();
@@ -23,16 +28,21 @@ export class AgentRegistry {
     return Array.from(this.adapters.values());
   }
 
-  async detectAll(): Promise<Array<{ name: string; detected: boolean; version: string | null; models: ModelOption[] }>> {
+  async detectAll(): Promise<AgentStatus[]> {
     const results = await Promise.all(
-      this.list().map(async (a) => ({
-        name: a.name,
-        detected: await a.detect(),
-        version: await a.getVersion(),
-        models: a.name === "claude"
-          ? (getCachedClaudeModels() ?? [...getModelOptions("claude")])
-          : [...getModelOptions(a.name)],
-      })),
+      this.list().map(async (a) => {
+        const detected = await a.detect();
+        return {
+          name: a.name,
+          detected,
+          version: detected ? await a.getVersion() : null,
+          models: a.name === "claude"
+            ? (getCachedClaudeModels() ?? [...getModelOptions("claude")])
+            : [...getModelOptions(a.name)],
+          unavailableReason: detected ? null : getAgentUnavailableReason(a.name),
+          installHint: detected ? null : getAgentInstallHint(a.name),
+        };
+      }),
     );
     return results;
   }

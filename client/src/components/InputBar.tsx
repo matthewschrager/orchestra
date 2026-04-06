@@ -18,6 +18,7 @@ interface Props {
   pendingQuestion?: boolean | null;
   defaultEffortLevel?: EffortLevel | "";
   defaultAgent?: string;
+  onRequestCommandRefresh?: () => void;
   onSend: (content: string, attachments?: Attachment[], interrupt?: boolean) => void;
   onNewThread: (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[], permissionMode?: PermissionMode | null, baseBranch?: string) => void;
   onStop: () => void;
@@ -47,7 +48,7 @@ function usePendingField<T extends string>(
   return [pending, setPending];
 }
 
-export function InputBar({ agents, thread, activeProjectId, activeProjectName, activeProjectBranch, commands, settings, history, pendingQuestion, defaultEffortLevel, defaultAgent, onSend, onNewThread, onStop }: Props) {
+export function InputBar({ agents, thread, activeProjectId, activeProjectName, activeProjectBranch, commands, settings, history, pendingQuestion, defaultEffortLevel, defaultAgent, onRequestCommandRefresh, onSend, onNewThread, onStop }: Props) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
   const [mobileConfigExpanded, setMobileConfigExpanded] = useState(false);
@@ -591,6 +592,8 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, a
           onSubmit={handleSubmit}
           onPaste={handlePaste}
           commands={commands}
+          onCommandFocus={onRequestCommandRefresh}
+          onSlashIntent={onRequestCommandRefresh}
           history={history}
           placeholder={
             isNewThread

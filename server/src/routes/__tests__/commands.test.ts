@@ -1,9 +1,11 @@
-import { describe, expect, test, beforeEach, afterEach, mock } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { Hono } from "hono";
+import { createCommandRoutes } from "../commands";
 import {
   mkdtempSync,
   mkdirSync,
+  utimesSync,
   writeFileSync,
   rmSync,
 } from "fs";
@@ -48,6 +50,11 @@ function makeTmpDir(prefix = "orchestra-cmd-test-"): string {
   return dir;
 }
 
+function bumpMtime(path: string): void {
+  const now = new Date();
+  utimesSync(path, now, now);
+}
+
 afterEach(() => {
   for (const dir of tempDirs) {
     try {
@@ -59,34 +66,17 @@ afterEach(() => {
   tempDirs = [];
 });
 
-// ── We need to mock `os.homedir` so that the commands module reads our fixture dirs ──
-// The module also uses `readFileSync`, `readdirSync`, `statSync`, `existsSync` from `fs`
-// but those operate on real paths, so we just need to control `homedir()`.
-
 let fakeHome: string;
 
 /**
  * Build a Hono app that routes through the commands route.
- * Because commands.ts caches results, we must re-import each time to get a fresh module.
- * We use `mock.module` to redirect `os.homedir` before the import.
+ * The route caches results per app instance, so each test gets a fresh app.
  */
 async function createApp(
   db: Database,
 ): Promise<Hono> {
-  // Clear module cache so each test gets a fresh cache Map
-  // and picks up the mocked homedir
-  const modulePath = resolve(
-    import.meta.dir,
-    "../commands.ts",
-  );
-
-  // Use dynamic import with a cache-busting query to avoid stale module cache
-  const cacheBuster = `?t=${Date.now()}-${Math.random()}`;
-  const mod = await import(modulePath + cacheBuster);
-  const { createCommandRoutes } = mod;
-
   const app = new Hono();
-  app.route("/api/commands", createCommandRoutes(db));
+  app.route("/api/commands", createCommandRoutes(db, { getHomeDir: () => fakeHome }));
   return app;
 }
 
@@ -97,10 +87,6 @@ describe("GET /api/commands", () => {
 
   beforeEach(() => {
     fakeHome = makeTmpDir();
-    // Mock os.homedir to return our temp directory
-    mock.module("os", () => ({
-      homedir: () => fakeHome,
-    }));
     db = createTestDb();
   });
 
@@ -691,7 +677,7 @@ describe("GET /api/commands", () => {
       expect(builtins.length).toBeGreaterThan(0);
     });
 
-    test("cache hit returns cached result", async () => {
+    test("cache hit returns cached result when watched inputs are unchanged", async () => {
       const skillsDir = join(fakeHome, ".claude", "skills");
       mkdirSync(skillsDir, { recursive: true });
 
@@ -705,22 +691,107 @@ describe("GET /api/commands", () => {
       const res1 = await app.request("/api/commands");
       const commands1 = await res1.json();
 
-      // Mutate filesystem — add a new skill AFTER the first request
-      const newSkillDir = join(skillsDir, "new-skill");
-      mkdirSync(newSkillDir);
-      writeSkillMd(newSkillDir, "new-cmd", "Should NOT appear due to cache");
-
       // Second request should return cached result (same reference)
       const res2 = await app.request("/api/commands");
       const commands2 = await res2.json();
 
       expect(commands1).toEqual(commands2);
+    });
 
-      // The new command should NOT be in the cached result
-      const newCmd = commands2.find(
-        (c: { name: string }) => c.name === "/new-cmd",
+    test("cache invalidates when a new user skill is added", async () => {
+      const skillsDir = join(fakeHome, ".claude", "skills");
+      mkdirSync(skillsDir, { recursive: true });
+
+      const skillDir = join(skillsDir, "cached-skill");
+      mkdirSync(skillDir);
+      writeSkillMd(skillDir, "cached-cmd", "Cached");
+
+      const app = await createApp(db);
+
+      const res1 = await app.request("/api/commands");
+      const commands1 = await res1.json();
+      expect(commands1.find((c: { name: string }) => c.name === "/new-cmd")).toBeUndefined();
+
+      const newSkillDir = join(skillsDir, "new-skill");
+      mkdirSync(newSkillDir);
+      writeSkillMd(newSkillDir, "new-cmd", "Freshly installed");
+      bumpMtime(skillsDir);
+
+      const res2 = await app.request("/api/commands");
+      const commands2 = await res2.json();
+      expect(commands2.find((c: { name: string }) => c.name === "/new-cmd")).toBeTruthy();
+    });
+
+    test("cache invalidates when an existing skill file changes", async () => {
+      const skillsDir = join(fakeHome, ".claude", "skills");
+      mkdirSync(skillsDir, { recursive: true });
+
+      const skillDir = join(skillsDir, "editable-skill");
+      mkdirSync(skillDir);
+      writeSkillMd(skillDir, "editable-cmd", "Original description");
+
+      const app = await createApp(db);
+
+      const res1 = await app.request("/api/commands");
+      const commands1 = await res1.json();
+      expect(commands1.find((c: { name: string; description: string }) => c.name === "/editable-cmd")?.description)
+        .toBe("Original description");
+
+      const skillFile = join(skillDir, "SKILL.md");
+      writeFileSync(
+        skillFile,
+        "---\nname: editable-cmd\ndescription: Updated description\n---\nBody content here.\n",
       );
-      expect(newCmd).toBeUndefined();
+      bumpMtime(skillFile);
+
+      const res2 = await app.request("/api/commands");
+      const commands2 = await res2.json();
+      expect(commands2.find((c: { name: string; description: string }) => c.name === "/editable-cmd")?.description)
+        .toBe("Updated description");
+    });
+
+    test("cache invalidates when global plugin settings change", async () => {
+      const pluginsDir = join(fakeHome, ".claude", "plugins");
+      mkdirSync(pluginsDir, { recursive: true });
+
+      const installPath = makeTmpDir();
+      writeSkillMd(installPath, "toggle-cmd", "Plugin command");
+
+      writeFileSync(
+        join(pluginsDir, "installed_plugins.json"),
+        JSON.stringify({
+          version: 1,
+          plugins: {
+            "toggle-plugin": [
+              { scope: "global", installPath, version: "1.0.0" },
+            ],
+          },
+        }),
+      );
+
+      const settingsDir = join(fakeHome, ".claude");
+      mkdirSync(settingsDir, { recursive: true });
+      const settingsPath = join(settingsDir, "settings.json");
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ enabledPlugins: { "toggle-plugin": false } }),
+      );
+
+      const app = await createApp(db);
+
+      const res1 = await app.request("/api/commands");
+      const commands1 = await res1.json();
+      expect(commands1.find((c: { name: string }) => c.name === "/toggle-cmd")).toBeUndefined();
+
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ enabledPlugins: { "toggle-plugin": true } }),
+      );
+      bumpMtime(settingsPath);
+
+      const res2 = await app.request("/api/commands");
+      const commands2 = await res2.json();
+      expect(commands2.find((c: { name: string }) => c.name === "/toggle-cmd")).toBeTruthy();
     });
   });
 

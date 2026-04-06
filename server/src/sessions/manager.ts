@@ -24,7 +24,12 @@ import {
 import type { AgentRegistry } from "../agents/registry";
 import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage, PersistentSession } from "../agents/types";
 import type { WorktreeManager } from "../worktrees/manager";
-import { isEffortLevelSupported, isPermissionModeSupported } from "shared";
+import {
+  getAgentInstallHint,
+  getAgentUnavailableReason,
+  isEffortLevelSupported,
+  isPermissionModeSupported,
+} from "shared";
 import type { Attachment, AttentionItem, AttentionResolution, EffortLevel, PermissionMode, QueuedItem, StreamDelta } from "shared";
 import { resolveAttachmentPaths } from "../routes/uploads";
 import { generateTitle } from "../titles/generator";
@@ -115,6 +120,9 @@ export class SessionManager {
   }): Promise<ThreadRow> {
     const adapter = this.registry.get(opts.agent);
     if (!adapter) throw new Error(`Unknown agent: ${opts.agent}`);
+    if (!await adapter.detect()) {
+      throw new Error(`${getAgentUnavailableReason(opts.agent)} ${getAgentInstallHint(opts.agent)}`);
+    }
     if (opts.effortLevel && !isEffortLevelSupported(opts.agent, opts.effortLevel)) {
       throw new Error(`Effort level "${opts.effortLevel}" is not supported for ${opts.agent}`);
     }

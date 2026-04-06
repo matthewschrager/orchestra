@@ -920,9 +920,12 @@ function MessageBubble({ message, isQueued, queueState }: { message: Message; is
   if (trimmed === '""' && !hasAttachments) return null;
 
   if (message.role === "user") {
-    // Determine display state: prefer server-authoritative queueState, fall back to client-side isQueued
-    const showQueueBadge = queueState === "pending" || queueState === "sent" || isQueued;
-    const isSent = queueState === "sent";
+    const queueMessageId = typeof message.metadata?.queueMessageId === "string" ? message.metadata.queueMessageId : undefined;
+    const { showQueueBadge, isSent } = getUserMessageQueueDisplayState({
+      hasQueueMessageId: Boolean(queueMessageId),
+      isQueued,
+      queueState,
+    });
 
     return (
       <div className="flex flex-col items-end gap-1">
@@ -960,6 +963,32 @@ function MessageBubble({ message, isQueued, queueState }: { message: Message; is
       </div>
     </div>
   );
+}
+
+export function getUserMessageQueueDisplayState({
+  hasQueueMessageId,
+  isQueued,
+  queueState,
+}: {
+  hasQueueMessageId: boolean;
+  isQueued?: boolean;
+  queueState?: "pending" | "sent";
+}): { showQueueBadge: boolean; isSent: boolean } {
+  if (queueState === "sent") {
+    return { showQueueBadge: true, isSent: true };
+  }
+
+  if (queueState === "pending") {
+    return { showQueueBadge: true, isSent: false };
+  }
+
+  if (hasQueueMessageId) {
+    // Once the server attached a queue row, prefer waiting for the
+    // authoritative queue state over showing a possibly stale local fallback.
+    return { showQueueBadge: false, isSent: false };
+  }
+
+  return { showQueueBadge: Boolean(isQueued), isSent: false };
 }
 
 // ── Helpers ─────────────────────────────────────────────

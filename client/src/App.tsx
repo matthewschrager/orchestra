@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
+  AgentStatus,
   Attachment,
   AttentionResolution,
   CleanupPushedResponse,
@@ -42,9 +43,11 @@ import { MergeAllPrsButton } from "./components/MergeAllPrsButton";
 import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
 import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal";
 import { MergeAllPrsConfirmationModal } from "./components/MergeAllPrsConfirmationModal";
+import { getCommandsCacheKey, shouldRefreshCommands } from "./lib/commandRefresh";
 import { buildInputHistory } from "./lib/inputHistory";
 import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
 import { usePrAutoRefresh } from "./hooks/usePrAutoRefresh";
+import { consumeQueuedFallback, incrementQueuedFallback, shouldTrackQueuedFallback } from "./lib/queueFallback";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -305,9 +308,9 @@ function AppInner() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Map<string, Message[]>>(new Map());
-  const [agents, setAgents] = useState<Array<{ name: string; detected: boolean; version: string | null; models?: import("shared").ModelOption[] }>>([]);
+  const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [appSettings, setAppSettings] = useState<import("shared").Settings | null>(null);
-  const [commands, setCommands] = useState<SlashCommand[]>([]);
+  const [commandsByProject, setCommandsByProject] = useState<Map<string, SlashCommand[]>>(new Map());
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
@@ -331,6 +334,8 @@ function AppInner() {
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
   const wasConnectedRef = useRef<boolean | null>(null);
+  const commandFetchTimesRef = useRef<Map<string, number>>(new Map());
+  const commandRequestsRef = useRef<Map<string, Promise<void>>>(new Map());
   const activeThreadRef = useRef<string | null>(null);
   const reportedPresenceRef = useRef<string | null | undefined>(undefined);
   activeThreadRef.current = activeThreadId;
@@ -348,6 +353,14 @@ function AppInner() {
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
+  const activeCommands = useMemo(
+    () => commandsByProject.get(getCommandsCacheKey(activeProjectId)) ?? [],
+    [commandsByProject, activeProjectId],
+  );
+  const missingAgents = useMemo(
+    () => agents.filter((agent) => !agent.detected),
+    [agents],
+  );
   const defaultDetectedAgent = useMemo(
     () => agents.find((agent) => agent.detected)?.name ?? "claude",
     [agents],
@@ -416,10 +429,14 @@ function AppInner() {
         next.set(msg.threadId, [...existing, msg]);
         return next;
       });
-      // Tag user messages as queued if they were sent while agent was running
-      if (msg.role === "user" && pendingQueuedCountRef.current > 0) {
-        pendingQueuedCountRef.current--;
-        dispatchStreaming({ type: "mark_queued", threadId: msg.threadId, seq: msg.seq });
+      // Client-side fallback: if WS queue state arrives after the persisted user
+      // message, temporarily mark the matching message as queued.
+      if (msg.role === "user") {
+        const { nextCounts, shouldMarkQueued } = consumeQueuedFallback(pendingQueuedCountRef.current, msg.threadId);
+        pendingQueuedCountRef.current = nextCounts;
+        if (shouldMarkQueued) {
+          dispatchStreaming({ type: "mark_queued", threadId: msg.threadId, seq: msg.seq });
+        }
       }
       // Clear streaming state when a persisted message arrives
       if (msg.role === "assistant") {
@@ -604,15 +621,37 @@ function AppInner() {
     api.getSettings().then((s) => { setAppSettings(s); setDefaultEffortLevel(s.defaultEffortLevel); setDefaultAgent(s.defaultAgent); }).catch(console.error);
   }, [hydrateThreadMetrics]);
 
+  const refreshCommands = useCallback((projectId: string | null, options?: { force?: boolean }) => {
+    const key = getCommandsCacheKey(projectId);
+    const inFlight = commandRequestsRef.current.get(key);
+    if (inFlight) return inFlight;
+
+    const lastFetchedAt = commandFetchTimesRef.current.get(key);
+    if (!options?.force && !shouldRefreshCommands(lastFetchedAt)) {
+      return Promise.resolve();
+    }
+
+    const request = api.listCommands(projectId ?? undefined).then((cmds) => {
+      setCommandsByProject((prev) => {
+        const next = new Map(prev);
+        next.set(key, cmds);
+        return next;
+      });
+      commandFetchTimesRef.current.set(key, Date.now());
+    }).catch(console.error).finally(() => {
+      if (commandRequestsRef.current.get(key) === request) {
+        commandRequestsRef.current.delete(key);
+      }
+    });
+
+    commandRequestsRef.current.set(key, request);
+    return request;
+  }, []);
+
   // Fetch commands scoped to active project; refetch when project changes.
-  // Stale-response guard prevents a slow earlier response from overwriting a fast later one.
   useEffect(() => {
-    let stale = false;
-    api.listCommands(activeProjectId ?? undefined).then((cmds) => {
-      if (!stale) setCommands(cmds);
-    }).catch(console.error);
-    return () => { stale = true; };
-  }, [activeProjectId]);
+    void refreshCommands(activeProjectId ?? null);
+  }, [activeProjectId, refreshCommands]);
 
   // Re-fetch thread list on WS reconnection so sidebar statuses are fresh.
   // Without this, threads that changed status while disconnected appear "stuck".
@@ -700,8 +739,9 @@ function AppInner() {
     }
   };
 
-  // Track how many of the next incoming user messages should be marked as "queued"
-  const pendingQueuedCountRef = useRef(0);
+  // Track queued-message fallback markers per thread so unrelated messages don't
+  // consume another thread's pending badge.
+  const pendingQueuedCountRef = useRef(new Map<string, number>());
 
   const handleSendMessage = async (content: string, attachments?: Attachment[], interrupt?: boolean) => {
     if (!activeThreadId) return;
@@ -711,9 +751,9 @@ function AppInner() {
       const thread = threads.find((t) => t.id === activeThreadId);
       if (!thread || thread.status !== "running") {
         turnStartRef.current = Date.now();
-      } else {
+      } else if (shouldTrackQueuedFallback(thread.status, interrupt)) {
         // Sending while running — flag next incoming user message as queued
-        pendingQueuedCountRef.current++;
+        pendingQueuedCountRef.current = incrementQueuedFallback(pendingQueuedCountRef.current, activeThreadId);
       }
       send({ type: "send_message", threadId: activeThreadId, content, attachments, interrupt: interrupt ?? false });
     } catch (err) {
@@ -1056,6 +1096,18 @@ function AppInner() {
         </div>
       )}
 
+      {missingAgents.length > 0 && (
+        <div className="bg-amber-950/60 border-b border-amber-900/30 text-amber-200 px-4 py-2 text-sm">
+          {missingAgents.map((agent) => (
+            <div key={agent.name}>
+              <span className="font-medium">{agent.name} unavailable.</span>{" "}
+              {agent.unavailableReason ?? "Not detected."}{" "}
+              {agent.installHint}
+            </div>
+          ))}
+        </div>
+      )}
+
       {!connected && (
         <div className="bg-amber-950/60 border-b border-amber-900/30 text-amber-300 px-4 py-1.5 text-sm text-center">
           Reconnecting...
@@ -1173,12 +1225,13 @@ function AppInner() {
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject?.name ?? null}
                 activeProjectBranch={activeProject?.currentBranch ?? null}
-                commands={commands}
+                commands={activeCommands}
                 settings={appSettings}
                 history={activeInputHistory}
                 pendingQuestion={pendingQuestion}
                 defaultEffortLevel={defaultEffortLevel}
                 defaultAgent={defaultAgent}
+                onRequestCommandRefresh={() => { void refreshCommands(activeProjectId ?? null); }}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
@@ -1216,10 +1269,11 @@ function AppInner() {
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject.name}
                 activeProjectBranch={activeProject.currentBranch}
-                commands={commands}
+                commands={activeCommands}
                 settings={appSettings}
                 defaultEffortLevel={defaultEffortLevel}
                 defaultAgent={defaultAgent}
+                onRequestCommandRefresh={() => { void refreshCommands(activeProjectId ?? null); }}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
@@ -1289,11 +1343,12 @@ function AppInner() {
             <MobileNewSession
               projects={projects}
               agents={agents}
-              commands={commands}
+              commandsByProject={commandsByProject}
               activeProjectId={activeProjectId}
               settings={appSettings}
               defaultEffortLevel={defaultEffortLevel}
               defaultAgent={defaultAgent}
+              onRequestCommandRefresh={(projectId) => { void refreshCommands(projectId); }}
               onNewThread={(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments, permissionMode, baseBranch) => {
                 handleNewThread(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments, permissionMode, baseBranch);
                 setMobileTab("sessions");

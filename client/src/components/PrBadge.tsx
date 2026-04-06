@@ -85,7 +85,7 @@ export function PrBadge({ prUrl, prStatus, prNumber }: Props) {
   if (!prUrl) return null;
 
   const BADGE_BASE =
-    "inline-flex items-center gap-1 text-[10px] leading-none px-1.5 py-0.5 rounded-md bg-surface-3/60 text-content-2 font-mono";
+    "inline-flex items-center gap-1 text-[10px] leading-none px-1.5 py-0.5 rounded-md bg-surface-3/60 text-content-2 font-mono shrink-0 whitespace-nowrap";
 
   // Fallback: prUrl exists but no status yet
   if (!prStatus) {

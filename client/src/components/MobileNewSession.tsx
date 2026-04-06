@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getEffortOptions, getPermissionModeOptions, getDefaultPermissionMode, type Attachment, type EffortLevel, type ModelOption, type PermissionMode, type ProjectWithStatus, type Settings, type SlashCommand } from "shared";
 import { api } from "../hooks/useApi";
+import { getCommandsCacheKey } from "../lib/commandRefresh";
 import { useFileAutocomplete } from "../hooks/useFileAutocomplete";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { SlashCommandInput } from "./SlashCommandInput";
@@ -11,11 +12,12 @@ const MAX_ATTACHMENTS = 10;
 interface MobileNewSessionProps {
   projects: ProjectWithStatus[];
   agents: Array<{ name: string; detected: boolean; models?: ModelOption[] }>;
-  commands: SlashCommand[];
+  commandsByProject: Map<string, SlashCommand[]>;
   activeProjectId: string | null;
   settings?: Settings | null;
   defaultEffortLevel?: EffortLevel | "";
   defaultAgent?: string;
+  onRequestCommandRefresh: (projectId: string | null) => void;
   onNewThread: (
     agent: string,
     effortLevel: EffortLevel | null,
@@ -33,11 +35,12 @@ interface MobileNewSessionProps {
 export function MobileNewSession({
   projects,
   agents,
-  commands,
+  commandsByProject,
   activeProjectId,
   settings,
   defaultEffortLevel,
   defaultAgent,
+  onRequestCommandRefresh,
   onNewThread,
 }: MobileNewSessionProps) {
   const detectedAgents = agents.filter((agent) => agent.detected);
@@ -63,6 +66,9 @@ export function MobileNewSession({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const selectedCommands = selectedProjectId
+    ? commandsByProject.get(getCommandsCacheKey(selectedProjectId)) ?? []
+    : [];
   const effortOptions = getEffortOptions(selectedAgent);
   const permissionOptions = getPermissionModeOptions(selectedAgent);
   const agentModels = agents.find((a) => a.name === selectedAgent)?.models ?? [];
@@ -87,6 +93,11 @@ export function MobileNewSession({
       setSelectedModel("");
     }
   }, [selectedAgent, selectedModel, agentModels]);
+
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    onRequestCommandRefresh(selectedProjectId);
+  }, [onRequestCommandRefresh, selectedProjectId]);
 
   const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -264,7 +275,9 @@ export function MobileNewSession({
                 onChange={setPrompt}
                 onSubmit={handleSubmit}
                 onPaste={handlePaste}
-                commands={commands}
+                commands={selectedCommands}
+                onCommandFocus={() => onRequestCommandRefresh(selectedProjectId)}
+                onSlashIntent={() => onRequestCommandRefresh(selectedProjectId)}
                 placeholder={`What should the agent do in ${selectedProject.name}?`}
                 rows={4}
                 fileSuggestions={fileSuggestions}

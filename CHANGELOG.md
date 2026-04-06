@@ -7,11 +7,28 @@
 - **Mobile push notification setup is no longer silent** — Orchestra now detects unsupported mobile/browser states, shows clear setup guidance in Settings, and explains when iPhone/iPad users need to install the app to the Home Screen or use HTTPS remote access
 - **Agent completion can now notify without an explicit question** — threads now send a push notification when a run finishes or errors, so users get a check-in moment even when the agent did not ask for input
 - **Same-device completion pushes no longer fire while the thread is visibly open** — completion/error notifications are now suppressed only while that device is actively viewing the thread, and foreground presence is tracked separately from the replay WebSocket subscription so lock-phone workflows still notify correctly
+- **Slash commands pick up newly installed skills without a restart** — Orchestra now revalidates the cached `/api/commands` sources and refreshes command lists when the composer is focused or a slash token appears, so new skills and plugin-setting changes show up automatically
+- **Mobile new-session slash commands now respect the selected project** — the mobile composer no longer reuses the active project's command list when you switch to a different project inside the new-session flow
+- **Missing agent installs are now explicit** — Orchestra now checks for the real `claude` and `codex` CLI binaries instead of only assuming the SDK packages are present, so missing installs fail early with a clear explanation instead of an opaque startup error
+- **Route tests no longer poison later files with a fake home directory** — the commands route now accepts an injected home-directory resolver for tests, so `commands.test.ts` no longer leaks a mocked `os.homedir()` into settings, files, and filesystem tests during the full suite
+- **Queued badges no longer overstate agent state** — the StickyRunBar now counts only truly pending queue items, so messages already injected into the agent no longer keep the bar stuck on `N queued`
+- **Immediate interrupt sends no longer masquerade as queued** — client-side queue fallback tracking now skips interrupt sends and isolates bookkeeping per thread, preventing unrelated messages from inheriting stale `Queued` badges
+- **User message queue badges now prefer server truth** — once a message is linked to a queue row, the transcript waits for the authoritative queue state instead of continuing to show a stale local queued marker
 
 ### Added
 
 - **Persistent push diagnostics UI** — Settings now includes a Push Notifications section with current status, install hints, and enable/disable controls for subscribed devices
 - **Completion-push regression coverage** — added server tests for terminal thread-status transitions and WebSocket device-presence tracking, plus client tests for push-support detection
+- **Command refresh policy coverage** — added regression tests for command cache invalidation on new skills, edited `SKILL.md` files, and plugin setting toggles, plus client-side coverage for the refresh staleness window
+- **Agent availability guidance** — `/api/agents` now returns install guidance for unavailable agents, the app shows a warning banner when Claude or Codex is missing, and thread creation refuses to start an unavailable agent with a human-readable error
+- **Regression coverage for agent availability metadata** — added shared helper tests and registry tests to lock in the new missing-agent payload and install hints
+- **Queue-state regression coverage** — added tests for pending-only queue counts, server-vs-fallback badge precedence, per-thread queue fallback tracking, and interrupt send behavior
+
+## [0.1.51.1] - 2026-04-05
+
+### Fixed
+
+- **PR badge and metadata clipped in sidebar** — the thread metadata row (agent badge, worktree branch, PR badge) now handles flex overflow correctly so the PR badge is always fully visible instead of being cut off on narrower screens. The worktree branch name truncates earlier to make room, and both desktop sidebar and mobile thread list share the same fix.
 
 ## [0.1.51.0] - 2026-04-05
 
