@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ALL_EFFORT_OPTIONS, type EffortLevel, type ModelOption, type Settings } from "shared";
 import { api } from "../hooks/useApi";
+import { PushNotificationSettings } from "./PushNotificationSettings";
 import { RemoteAccessSettings } from "./RemoteAccessSettings";
 
 interface Props {
@@ -178,6 +179,9 @@ export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onD
           <div className="overflow-y-auto min-h-0 flex-1 space-y-5 pr-1">
             {/* Remote Access */}
             <RemoteAccessSettings />
+
+            {/* Push Notifications */}
+            <PushNotificationSettings />
 
             {/* Worktree Root */}
             <div>

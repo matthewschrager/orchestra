@@ -1,11 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
 import { getStoredToken } from "../lib/auth";
+import { getOrCreateDeviceId } from "../lib/deviceId";
+import { detectPushSupport, isAppleMobileDevice, isStandaloneDisplayMode } from "../lib/pushSupport";
 
 interface PushState {
   supported: boolean;
   permission: NotificationPermission | "unsupported";
   subscribed: boolean;
   loading: boolean;
+  unsupportedReason: string | null;
+  installHint: string | null;
 }
 
 /**
@@ -21,22 +25,74 @@ export function usePushNotifications(): PushState & {
     permission: "unsupported",
     subscribed: false,
     loading: false,
+    unsupportedReason: null,
+    installHint: null,
   });
 
   useEffect(() => {
-    const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
-    if (!supported) return;
+    const isAppleMobile = isAppleMobileDevice(
+      navigator.userAgent,
+      navigator.platform,
+      navigator.maxTouchPoints ?? 0,
+    );
+    const isStandalone = isStandaloneDisplayMode(
+      window.matchMedia?.("(display-mode: standalone)")?.matches ?? false,
+      "standalone" in navigator && Boolean((navigator as Navigator & { standalone?: boolean }).standalone),
+    );
+    const status = detectPushSupport({
+      hasServiceWorker: "serviceWorker" in navigator,
+      hasPushManager: "PushManager" in window,
+      hasNotification: "Notification" in window,
+      isSecureContext: window.isSecureContext,
+      isAppleMobile,
+      isStandalone,
+    });
+
+    if (!status.supported) {
+      setState((s) => ({
+        ...s,
+        supported: false,
+        permission: "unsupported",
+        unsupportedReason: status.unsupportedReason,
+        installHint: status.installHint,
+      }));
+      return;
+    }
 
     setState((s) => ({
       ...s,
       supported: true,
       permission: Notification.permission,
+      unsupportedReason: null,
+      installHint: null,
     }));
 
     // Check if already subscribed
     navigator.serviceWorker.ready.then(async (reg) => {
       const sub = await reg.pushManager.getSubscription();
       setState((s) => ({ ...s, subscribed: !!sub }));
+      if (!sub) return;
+
+      const token = getStoredToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      await fetch("/api/push/subscribe", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          endpoint: sub.endpoint,
+          keys: {
+            p256dh: arrayBufferToBase64(sub.getKey("p256dh")!),
+            auth: arrayBufferToBase64(sub.getKey("auth")!),
+          },
+          userAgent: navigator.userAgent,
+          origin: window.location.origin,
+          deviceId: getOrCreateDeviceId(),
+        }),
+      }).catch((err) => {
+        console.warn("Push subscription refresh failed:", err);
+      });
     });
   }, []);
 
@@ -83,6 +139,7 @@ export function usePushNotifications(): PushState & {
           },
           userAgent: navigator.userAgent,
           origin: window.location.origin,
+          deviceId: getOrCreateDeviceId(),
         }),
       });
 

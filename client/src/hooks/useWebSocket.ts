@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message, StreamDelta, Thread, WSClientMessage, WSServerMessage } from "shared";
+import { getOrCreateDeviceId } from "../lib/deviceId";
 
 interface UseWebSocketOpts {
   onMessage?: (msg: Message) => void;
@@ -25,7 +26,10 @@ export function useWebSocket(opts: UseWebSocketOpts = {}) {
     function connect() {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const token = localStorage.getItem("orchestra_auth_token");
-      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
+      const params = new URLSearchParams();
+      if (token) params.set("token", token);
+      params.set("deviceId", getOrCreateDeviceId());
+      const tokenParam = params.size > 0 ? `?${params.toString()}` : "";
       const url = `${protocol}//${window.location.host}/ws${tokenParam}`;
       ws = new WebSocket(url);
       wsRef.current = ws;

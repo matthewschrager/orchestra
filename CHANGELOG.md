@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.52.0] - 2026-04-06
+
+### Fixed
+
+- **Mobile push notification setup is no longer silent** — Orchestra now detects unsupported mobile/browser states, shows clear setup guidance in Settings, and explains when iPhone/iPad users need to install the app to the Home Screen or use HTTPS remote access
+- **Agent completion can now notify without an explicit question** — threads now send a push notification when a run finishes or errors, so users get a check-in moment even when the agent did not ask for input
+- **Same-device completion pushes no longer fire while the thread is visibly open** — completion/error notifications are now suppressed only while that device is actively viewing the thread, and foreground presence is tracked separately from the replay WebSocket subscription so lock-phone workflows still notify correctly
+
+### Added
+
+- **Persistent push diagnostics UI** — Settings now includes a Push Notifications section with current status, install hints, and enable/disable controls for subscribed devices
+- **Completion-push regression coverage** — added server tests for terminal thread-status transitions and WebSocket device-presence tracking, plus client tests for push-support detection
+
 ## [0.1.51.0] - 2026-04-05
 
 ### Fixed
