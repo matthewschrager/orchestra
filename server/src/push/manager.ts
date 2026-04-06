@@ -3,7 +3,8 @@ import { join } from "path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { nanoid } from "nanoid";
 import type { DB } from "../db";
-import type { AttentionItem } from "shared";
+import type { AttentionItem, Thread } from "shared";
+import { shouldNotifyThreadBecameIdle } from "./thread-status";
 
 interface VapidKeys {
   publicKey: string;
@@ -15,6 +16,7 @@ interface PushSubscriptionRow {
   endpoint: string;
   keys_p256dh: string;
   keys_auth: string;
+  device_id: string;
   user_agent: string | null;
   origin: string;
   created_at: string;
@@ -26,10 +28,12 @@ const VAPID_SUBJECT = "mailto:orchestra@localhost";
 /**
  * Manages Web Push notifications via VAPID.
  * Generates/loads VAPID keys, stores push subscriptions in SQLite,
- * and dispatches notifications when attention items are created.
+ * and dispatches notifications when attention items are created or runs finish.
  */
 export class PushManager {
   private vapidKeys: VapidKeys;
+  private lastThreadStatus = new Map<string, Thread["status"]>();
+  private activeConnections = new Map<string, { deviceId: string; threadId: string | null }>();
 
   constructor(private db: DB) {
     this.vapidKeys = this.loadOrGenerateVapidKeys();
@@ -44,14 +48,23 @@ export class PushManager {
   addSubscription(subscription: {
     endpoint: string;
     keys: { p256dh: string; auth: string };
+    deviceId?: string;
     userAgent?: string;
     origin?: string;
   }): void {
     const id = nanoid(16);
     this.db.query(
-      `INSERT OR REPLACE INTO push_subscriptions (id, endpoint, keys_p256dh, keys_auth, user_agent, origin)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(id, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth, subscription.userAgent ?? null, subscription.origin ?? "");
+      `INSERT OR REPLACE INTO push_subscriptions (id, endpoint, keys_p256dh, keys_auth, device_id, user_agent, origin)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      subscription.endpoint,
+      subscription.keys.p256dh,
+      subscription.keys.auth,
+      subscription.deviceId ?? "",
+      subscription.userAgent ?? null,
+      subscription.origin ?? "",
+    );
   }
 
   /** Remove a push subscription by endpoint. */
@@ -61,29 +74,85 @@ export class PushManager {
 
   /** Send push notification for an attention item to all subscriptions. */
   async notify(attention: AttentionItem): Promise<void> {
+    const relativePath = `/?thread=${attention.threadId}&attention=${attention.id}`;
+    await this.sendToAllSubscriptions(relativePath, {
+      title: "Orchestra — Agent needs input",
+      body: attention.prompt.slice(0, 100),
+      data: {
+        threadId: attention.threadId,
+        attentionId: attention.id,
+        kind: attention.kind,
+      },
+    });
+  }
+
+  async notifyThreadBecameIdle(thread: Thread): Promise<void> {
+    const previousStatus = this.lastThreadStatus.get(thread.id);
+    this.lastThreadStatus.set(thread.id, thread.status);
+
+    if (!shouldNotifyThreadBecameIdle(previousStatus, thread.status)) {
+      return;
+    }
+
+    const relativePath = `/?thread=${thread.id}`;
+    const title = thread.status === "error"
+      ? "Orchestra — Thread hit an error"
+      : "Orchestra — Thread is ready";
+    const body = thread.status === "error"
+      ? `${thread.title} needs review.`
+      : `${thread.title} finished its current run.`;
+
+    await this.sendToAllSubscriptions(relativePath, {
+      title,
+      body,
+      data: {
+        threadId: thread.id,
+        status: thread.status,
+      },
+    }, thread.id);
+  }
+
+  setDeviceActiveThread(connectionId: string, deviceId: string, threadId: string | null): void {
+    this.activeConnections.set(connectionId, { deviceId, threadId });
+  }
+
+  clearDeviceActiveThread(connectionId: string): void {
+    this.activeConnections.delete(connectionId);
+  }
+
+  private async sendToAllSubscriptions(
+    relativePath: string,
+    payloadBase: {
+      title: string;
+      body: string;
+      data: Record<string, unknown>;
+    },
+    suppressIfDeviceViewingThreadId?: string,
+  ): Promise<void> {
     const subscriptions = this.db.query(
       "SELECT * FROM push_subscriptions",
     ).all() as PushSubscriptionRow[];
 
     if (subscriptions.length === 0) return;
 
-    // Build relative path for deep-link
-    const relativePath = `/?thread=${attention.threadId}&attention=${attention.id}`;
+    const deliverableSubscriptions = subscriptions.filter(
+      (sub) => !this.shouldSuppressForActiveDevice(sub.device_id, suppressIfDeviceViewingThreadId),
+    );
+
+    if (deliverableSubscriptions.length === 0) return;
 
     const results = await Promise.allSettled(
-      subscriptions.map((sub) => {
+      deliverableSubscriptions.map((sub) => {
         // Per-subscription origin: compute targetUrl from stored origin
         const targetUrl = sub.origin
           ? `${sub.origin}${relativePath}`
           : relativePath; // Legacy subscriptions without origin get relative path
 
         const payload = JSON.stringify({
-          title: "Orchestra — Agent needs input",
-          body: attention.prompt.slice(0, 100),
+          title: payloadBase.title,
+          body: payloadBase.body,
           data: {
-            threadId: attention.threadId,
-            attentionId: attention.id,
-            kind: attention.kind,
+            ...payloadBase.data,
             targetUrl,
           },
         });
@@ -108,8 +177,20 @@ export class PushManager {
 
     const sent = results.filter((r) => r.status === "fulfilled").length;
     if (sent > 0) {
-      console.log(`[push] Notified ${sent}/${subscriptions.length} subscriptions`);
+      console.log(`[push] Notified ${sent}/${deliverableSubscriptions.length} subscriptions`);
     }
+  }
+
+  private shouldSuppressForActiveDevice(deviceId: string, threadId: string | undefined): boolean {
+    if (!deviceId || !threadId) return false;
+
+    for (const presence of this.activeConnections.values()) {
+      if (presence.deviceId === deviceId && presence.threadId === threadId) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private loadOrGenerateVapidKeys(): VapidKeys {

@@ -119,6 +119,13 @@ sessionManager.onAttention((_threadId, attention) => {
   });
 });
 
+// Also notify when a thread transitions into a completed idle state.
+sessionManager.onThreadUpdate((thread) => {
+  pushManager.notifyThreadBecameIdle(thread).catch((err) => {
+    console.error("[push] Thread completion notification failed:", err);
+  });
+});
+
 let authToken: string | null = null;
 authToken = getOrCreateToken(DATA_DIR);
 const sessionSecret = getOrCreateSessionSecret(DATA_DIR);
@@ -229,7 +236,7 @@ app.get("*", async (c) => {
 
 // ── Server ──────────────────────────────────────────────
 
-const wsHandler = createWSHandler(sessionManager, db, terminalManager);
+const wsHandler = createWSHandler(sessionManager, db, terminalManager, pushManager);
 
 let server: ReturnType<typeof Bun.serve>;
 try {
@@ -267,7 +274,15 @@ try {
           return new Response("Unauthorized", { status: 401 });
         }
 
-        if (server.upgrade(req, { data: { subscriptions: new Set() } }))
+        if (server.upgrade(req, {
+          data: {
+            connectionId: crypto.randomUUID(),
+            deviceId: url.searchParams.get("deviceId"),
+            activeThreadId: null,
+            subscriptions: new Set(),
+            msgTimestamps: [],
+          },
+        }))
           return undefined;
         return new Response("WebSocket upgrade failed", { status: 400 });
       }

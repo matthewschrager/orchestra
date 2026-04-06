@@ -75,6 +75,7 @@ const MIGRATIONS = [
     endpoint   TEXT NOT NULL UNIQUE,
     keys_p256dh TEXT NOT NULL,
     keys_auth   TEXT NOT NULL,
+    device_id   TEXT NOT NULL DEFAULT '',
     user_agent  TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
@@ -122,6 +123,11 @@ const COLUMN_MIGRATIONS = [
     table: "push_subscriptions",
     column: "origin",
     sql: `ALTER TABLE push_subscriptions ADD COLUMN origin TEXT DEFAULT ''`,
+  },
+  {
+    table: "push_subscriptions",
+    column: "device_id",
+    sql: `ALTER TABLE push_subscriptions ADD COLUMN device_id TEXT NOT NULL DEFAULT ''`,
   },
   {
     table: "threads",

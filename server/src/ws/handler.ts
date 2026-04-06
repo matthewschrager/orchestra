@@ -3,6 +3,7 @@ import type { DB, MessageRow, ThreadRow } from "../db";
 import { getMessages, getPendingAttention, getThread, attentionRowToApi, messageRowToApi, threadRowToApi } from "../db";
 import type { SessionManager } from "../sessions/manager";
 import type { TerminalManager } from "../terminal/manager";
+import type { PushManager } from "../push/manager";
 import type { AttentionItem, StreamDelta, WSClientMessage, WSServerMessage } from "shared";
 
 // Fix 10: Per-client rate limiting for state-changing WS messages
@@ -11,6 +12,9 @@ const RATE_LIMIT_MAX = 60; // max messages per window
 const RATE_LIMITED_TYPES = new Set(["send_message", "stop_thread", "resolve_attention", "terminal_input", "terminal_create"]);
 
 interface WSData {
+  connectionId?: string;
+  deviceId?: string | null;
+  activeThreadId?: string | null;
   subscriptions: Set<string>;
   /** Timestamps of recent rate-limited messages (sliding window) */
   msgTimestamps: number[];
@@ -20,6 +24,7 @@ export function createWSHandler(
   sessionManager: SessionManager,
   db: DB,
   terminalManager?: TerminalManager,
+  pushManager?: PushManager,
 ) {
   const clients = new Set<ServerWebSocket<WSData>>();
 
@@ -173,12 +178,9 @@ export function createWSHandler(
 
   return {
     open(ws: ServerWebSocket<WSData>) {
-      ws.data = { subscriptions: new Set(), msgTimestamps: [] };
+      ws.data.subscriptions ??= new Set();
+      ws.data.msgTimestamps ??= [];
       clients.add(ws);
-    },
-
-    close(ws: ServerWebSocket<WSData>) {
-      clients.delete(ws);
     },
 
     message(ws: ServerWebSocket<WSData>, raw: string | Buffer) {
@@ -268,6 +270,23 @@ export function createWSHandler(
 
         case "unsubscribe":
           ws.data.subscriptions.delete(msg.threadId);
+          if (ws.data.activeThreadId === msg.threadId) {
+            ws.data.activeThreadId = null;
+            if (pushManager && ws.data.connectionId) {
+              pushManager.clearDeviceActiveThread(ws.data.connectionId);
+            }
+          }
+          break;
+
+        case "set_presence":
+          ws.data.activeThreadId = msg.threadId;
+          if (pushManager && ws.data.connectionId && ws.data.deviceId) {
+            if (msg.threadId) {
+              pushManager.setDeviceActiveThread(ws.data.connectionId, ws.data.deviceId, msg.threadId);
+            } else {
+              pushManager.clearDeviceActiveThread(ws.data.connectionId);
+            }
+          }
           break;
 
         case "send_message":
@@ -334,6 +353,12 @@ export function createWSHandler(
         case "terminal_close":
           handleTerminalMessage(ws, msg);
           break;
+      }
+    },
+    close(ws) {
+      clients.delete(ws);
+      if (pushManager && ws.data.connectionId) {
+        pushManager.clearDeviceActiveThread(ws.data.connectionId);
       }
     },
   };

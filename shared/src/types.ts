@@ -184,6 +184,7 @@ export interface TurnMetrics {
 export type WSClientMessage =
   | { type: "subscribe"; threadId: string; lastSeq?: number }
   | { type: "unsubscribe"; threadId: string }
+  | { type: "set_presence"; threadId: string | null }
   | { type: "send_message"; threadId: string; content: string; attachments?: Attachment[]; interrupt?: boolean }
   | { type: "stop_thread"; threadId: string }
   | { type: "resolve_attention"; attentionId: string; resolution: AttentionResolution }

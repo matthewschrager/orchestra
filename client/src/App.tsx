@@ -337,6 +337,7 @@ function AppInner() {
   const commandFetchTimesRef = useRef<Map<string, number>>(new Map());
   const commandRequestsRef = useRef<Map<string, Promise<void>>>(new Map());
   const activeThreadRef = useRef<string | null>(null);
+  const reportedPresenceRef = useRef<string | null | undefined>(undefined);
   activeThreadRef.current = activeThreadId;
   const chatViewRef = useRef<ChatViewHandle>(null);
 
@@ -345,7 +346,10 @@ function AppInner() {
 
   // Push notifications
   const push = usePushNotifications();
-  const showPushBanner = push.supported && push.permission === "default" && !push.subscribed && !pushBannerDismissed;
+  const showPushBanner = !pushBannerDismissed && !push.subscribed && (
+    (push.supported && push.permission === "default") ||
+    (!push.supported && Boolean(push.unsupportedReason))
+  );
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
@@ -537,6 +541,39 @@ function AppInner() {
       subscribedRef.current = activeThreadId;
     }
   }, [activeThreadId, connected, send]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Report foreground presence separately from the replay subscription.
+  // This lets the server suppress same-device completion pushes only while
+  // the thread is actually visible, not merely while the WebSocket stays open.
+  useEffect(() => {
+    if (!connected) {
+      reportedPresenceRef.current = undefined;
+      return;
+    }
+
+    const publishPresence = (threadId: string | null) => {
+      const visibleThreadId = document.hidden ? null : threadId;
+      if (reportedPresenceRef.current === visibleThreadId) return;
+      send({ type: "set_presence", threadId: visibleThreadId });
+      reportedPresenceRef.current = visibleThreadId;
+    };
+
+    publishPresence(activeThreadId);
+
+    const handleVisibility = () => publishPresence(activeThreadIdRef.current);
+    const handlePageHide = () => {
+      if (reportedPresenceRef.current === null) return;
+      send({ type: "set_presence", threadId: null });
+      reportedPresenceRef.current = null;
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", handlePageHide);
+    };
+  }, [activeThreadId, connected, send]);
 
   // ── Service worker notification-click handler ─────────
   useEffect(() => {
@@ -1079,15 +1116,28 @@ function AppInner() {
 
       {showPushBanner && (
         <div className="bg-accent/10 border-b border-accent/20 px-4 py-2 text-sm flex items-center justify-between gap-3">
-          <span className="text-content-2">Get notified when agents need your input.</span>
+          <span className="text-content-2">
+            {push.supported
+              ? "Get notified when agents need your input."
+              : push.unsupportedReason}
+          </span>
           <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => push.subscribe()}
-              disabled={push.loading}
-              className="px-3 py-1 rounded-lg bg-accent hover:bg-accent/80 text-white text-xs font-medium disabled:opacity-50"
-            >
-              {push.loading ? "..." : "Enable"}
-            </button>
+            {push.supported ? (
+              <button
+                onClick={() => push.subscribe()}
+                disabled={push.loading}
+                className="px-3 py-1 rounded-lg bg-accent hover:bg-accent/80 text-white text-xs font-medium disabled:opacity-50"
+              >
+                {push.loading ? "..." : "Enable"}
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowSettings(true)}
+                className="px-3 py-1 rounded-lg bg-accent hover:bg-accent/80 text-white text-xs font-medium"
+              >
+                Details
+              </button>
+            )}
             <button
               onClick={() => {
                 setPushBannerDismissed(true);
