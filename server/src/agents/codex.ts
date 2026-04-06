@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, normalize, relative, resolve } from "node:path";
 import { extractAskUserRequest } from "./askUser";
+import { getCliVersion, hasCli } from "./cli";
 import { extractToolResultImages, normalizeToolResultContent } from "./toolResultMedia";
 import type {
   AgentAdapter,
@@ -35,34 +36,11 @@ export class CodexAdapter implements AgentAdapter {
   private readonly cumulativeUsageBySessionId = new Map<string, CodexCumulativeUsage>();
 
   async detect(): Promise<boolean> {
-    try {
-      await import("@openai/codex-sdk");
-      return true;
-    } catch {
-      return false;
-    }
+    return hasCli("codex");
   }
 
   async getVersion(): Promise<string | null> {
-    try {
-      const { readFileSync } = await import("fs");
-      const { dirname, join } = await import("path");
-      const sdkEntry = Bun.resolveSync("@openai/codex-sdk", process.cwd());
-      // Walk up to find the package.json (dist/index.js → package root)
-      let dir = dirname(sdkEntry);
-      for (let i = 0; i < 5; i++) {
-        try {
-          const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8"));
-          if (pkg.name === "@openai/codex-sdk") return pkg.version ?? null;
-        } catch {
-          // not found here, go up
-        }
-        dir = dirname(dir);
-      }
-      return null;
-    } catch {
-      return null;
-    }
+    return getCliVersion("codex");
   }
 
   start(opts: StartOpts): AgentSession {

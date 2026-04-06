@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
+  AgentStatus,
   Attachment,
   AttentionResolution,
   CleanupPushedResponse,
@@ -46,6 +47,7 @@ import { getCommandsCacheKey, shouldRefreshCommands } from "./lib/commandRefresh
 import { buildInputHistory } from "./lib/inputHistory";
 import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
 import { usePrAutoRefresh } from "./hooks/usePrAutoRefresh";
+import { consumeQueuedFallback, incrementQueuedFallback, shouldTrackQueuedFallback } from "./lib/queueFallback";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -306,7 +308,7 @@ function AppInner() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Map<string, Message[]>>(new Map());
-  const [agents, setAgents] = useState<Array<{ name: string; detected: boolean; version: string | null; models?: import("shared").ModelOption[] }>>([]);
+  const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [appSettings, setAppSettings] = useState<import("shared").Settings | null>(null);
   const [commandsByProject, setCommandsByProject] = useState<Map<string, SlashCommand[]>>(new Map());
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -350,6 +352,10 @@ function AppInner() {
   const activeCommands = useMemo(
     () => commandsByProject.get(getCommandsCacheKey(activeProjectId)) ?? [],
     [commandsByProject, activeProjectId],
+  );
+  const missingAgents = useMemo(
+    () => agents.filter((agent) => !agent.detected),
+    [agents],
   );
   const defaultDetectedAgent = useMemo(
     () => agents.find((agent) => agent.detected)?.name ?? "claude",
@@ -419,10 +425,14 @@ function AppInner() {
         next.set(msg.threadId, [...existing, msg]);
         return next;
       });
-      // Tag user messages as queued if they were sent while agent was running
-      if (msg.role === "user" && pendingQueuedCountRef.current > 0) {
-        pendingQueuedCountRef.current--;
-        dispatchStreaming({ type: "mark_queued", threadId: msg.threadId, seq: msg.seq });
+      // Client-side fallback: if WS queue state arrives after the persisted user
+      // message, temporarily mark the matching message as queued.
+      if (msg.role === "user") {
+        const { nextCounts, shouldMarkQueued } = consumeQueuedFallback(pendingQueuedCountRef.current, msg.threadId);
+        pendingQueuedCountRef.current = nextCounts;
+        if (shouldMarkQueued) {
+          dispatchStreaming({ type: "mark_queued", threadId: msg.threadId, seq: msg.seq });
+        }
       }
       // Clear streaming state when a persisted message arrives
       if (msg.role === "assistant") {
@@ -692,8 +702,9 @@ function AppInner() {
     }
   };
 
-  // Track how many of the next incoming user messages should be marked as "queued"
-  const pendingQueuedCountRef = useRef(0);
+  // Track queued-message fallback markers per thread so unrelated messages don't
+  // consume another thread's pending badge.
+  const pendingQueuedCountRef = useRef(new Map<string, number>());
 
   const handleSendMessage = async (content: string, attachments?: Attachment[], interrupt?: boolean) => {
     if (!activeThreadId) return;
@@ -703,9 +714,9 @@ function AppInner() {
       const thread = threads.find((t) => t.id === activeThreadId);
       if (!thread || thread.status !== "running") {
         turnStartRef.current = Date.now();
-      } else {
+      } else if (shouldTrackQueuedFallback(thread.status, interrupt)) {
         // Sending while running — flag next incoming user message as queued
-        pendingQueuedCountRef.current++;
+        pendingQueuedCountRef.current = incrementQueuedFallback(pendingQueuedCountRef.current, activeThreadId);
       }
       send({ type: "send_message", threadId: activeThreadId, content, attachments, interrupt: interrupt ?? false });
     } catch (err) {
@@ -1045,6 +1056,18 @@ function AppInner() {
           <button onClick={() => setError(null)} className="ml-2 underline text-red-400 hover:text-red-300">
             dismiss
           </button>
+        </div>
+      )}
+
+      {missingAgents.length > 0 && (
+        <div className="bg-amber-950/60 border-b border-amber-900/30 text-amber-200 px-4 py-2 text-sm">
+          {missingAgents.map((agent) => (
+            <div key={agent.name}>
+              <span className="font-medium">{agent.name} unavailable.</span>{" "}
+              {agent.unavailableReason ?? "Not detected."}{" "}
+              {agent.installHint}
+            </div>
+          ))}
         </div>
       )}
 

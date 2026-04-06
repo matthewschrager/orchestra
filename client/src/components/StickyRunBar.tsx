@@ -38,10 +38,9 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
 
   const modelLabel = metrics.modelName ? formatModelName(metrics.modelName) : null;
 
-  // Derive display count from queueItems if available, fall back to queuedCount
   const items = queueItems ?? [];
-  const displayCount = items.length > 0 ? items.length : queuedCount;
   const hasPending = items.some((i) => i.state === "pending");
+  const displayCount = getPendingQueueDisplayCount(items, queuedCount);
 
   // Auto-close drawer when queue empties
   if (drawerOpen && displayCount === 0) {
@@ -189,6 +188,11 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
       </div>
     </div>
   );
+}
+
+export function getPendingQueueDisplayCount(queueItems: QueuedItem[] | null | undefined, queuedCount = 0): number {
+  const pendingCount = (queueItems ?? []).filter((item) => item.state === "pending").length;
+  return pendingCount > 0 ? pendingCount : queuedCount;
 }
 
 // ── Model Name Formatting ──────────────────────────────
