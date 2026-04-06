@@ -1,6 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { CanUseTool, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ASK_USER_TOOL_NAME_ALIASES, extractAskUserRequest, isAskUserToolName } from "./askUser";
+import { getCliVersion, hasCli } from "./cli";
 import type {
   AgentAdapter,
   AgentSession,
@@ -68,24 +69,11 @@ export class ClaudeAdapter implements AgentAdapter {
   name = "claude";
 
   async detect(): Promise<boolean> {
-    try {
-      await import("@anthropic-ai/claude-agent-sdk");
-      return true;
-    } catch {
-      return false;
-    }
+    return hasCli("claude");
   }
 
   async getVersion(): Promise<string | null> {
-    try {
-      const { readFileSync } = await import("fs");
-      const { dirname, join } = await import("path");
-      const sdkEntry = Bun.resolveSync("@anthropic-ai/claude-agent-sdk", process.cwd());
-      const pkg = JSON.parse(readFileSync(join(dirname(sdkEntry), "package.json"), "utf-8"));
-      return pkg.version ?? null;
-    } catch {
-      return null;
-    }
+    return getCliVersion("claude");
   }
 
   /** Legacy per-turn session — creates a new subprocess per call */

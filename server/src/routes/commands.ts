@@ -6,6 +6,10 @@ import type { SlashCommand } from "shared";
 import type { DB } from "../db";
 import { getProject } from "../db";
 
+interface CommandRouteDeps {
+  getHomeDir?: () => string;
+}
+
 /** Built-in Orchestra commands handled by the UI itself. */
 const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/new", description: "Start a new thread", source: "builtin" },
@@ -38,10 +42,10 @@ function readEnabledPlugins(
 }
 
 /** Read installed_plugins.json and return a map of plugin key → installPath. */
-function readInstalledPlugins(): Map<string, string> {
+function readInstalledPlugins(homeDir: string): Map<string, string> {
   const result = new Map<string, string>();
   try {
-    const filePath = join(homedir(), ".claude", "plugins", "installed_plugins.json");
+    const filePath = join(homeDir, ".claude", "plugins", "installed_plugins.json");
     const data: InstalledPluginsFile = JSON.parse(readFileSync(filePath, "utf-8"));
     for (const [key, entries] of Object.entries(data.plugins)) {
       // Use the first (most recent) entry
@@ -66,13 +70,13 @@ function readInstalledPlugins(): Map<string, string> {
  * Returns null if we can't determine installed plugins (triggers full-scan fallback).
  */
 function resolveEnabledPluginPaths(
+  homeDir: string,
   projectPath: string | null,
 ): string[] | null {
-  const home = homedir();
-  const installed = readInstalledPlugins();
+  const installed = readInstalledPlugins(homeDir);
   if (installed.size === 0) return null; // No installed_plugins.json → fall back
 
-  const globalEnabled = readEnabledPlugins(join(home, ".claude", "settings.json"));
+  const globalEnabled = readEnabledPlugins(join(homeDir, ".claude", "settings.json"));
   const projectEnabled = projectPath
     ? readEnabledPlugins(join(projectPath, ".claude", "settings.json"))
     : null;
@@ -195,13 +199,12 @@ function collectCommands(
  * When projectPath is provided, the enabled plugin set is scoped to that project's
  * settings (merged with global). When null, only global settings are used.
  */
-function discoverPluginCommands(projectPath: string | null): SlashCommand[] {
-  const home = homedir();
+function discoverPluginCommands(homeDir: string, projectPath: string | null): SlashCommand[] {
   const seen = new Set<string>();
   const commands: SlashCommand[] = [];
 
   // 1. Scan enabled plugin installPaths (or full cache as fallback)
-  const enabledPaths = resolveEnabledPluginPaths(projectPath);
+  const enabledPaths = resolveEnabledPluginPaths(homeDir, projectPath);
 
   if (enabledPaths) {
     // Scoped scan: only installed + enabled plugins
@@ -212,13 +215,13 @@ function discoverPluginCommands(projectPath: string | null): SlashCommand[] {
     }
   } else {
     // Fallback: no installed_plugins.json → scan entire cache (old behavior, minus .agents/)
-    const cacheDir = join(home, ".claude", "plugins", "cache");
+    const cacheDir = join(homeDir, ".claude", "plugins", "cache");
     const files = findSkillFiles(cacheDir);
     commands.push(...collectCommands(files, seen, "plugin"));
   }
 
   // 2. Always scan user skills directory
-  const skillsDir = join(home, ".claude", "skills");
+  const skillsDir = join(homeDir, ".claude", "skills");
   const skillFiles = findSkillFiles(skillsDir);
   commands.push(...collectCommands(skillFiles, seen, "skill"));
 
@@ -227,8 +230,9 @@ function discoverPluginCommands(projectPath: string | null): SlashCommand[] {
 
 // ── Route ────────────────────────────────────────────────
 
-export function createCommandRoutes(db: DB) {
+export function createCommandRoutes(db: DB, deps: CommandRouteDeps = {}) {
   const app = new Hono();
+  const getHomeDir = deps.getHomeDir ?? homedir;
 
   // Cache per project (projectId → commands). null key = no project context.
   const cache = new Map<string | null, SlashCommand[]>();
@@ -245,9 +249,10 @@ export function createCommandRoutes(db: DB) {
 
     // Check cache (keyed by projectId, since same project = same settings)
     if (!cache.has(projectId)) {
+      const homeDir = getHomeDir();
       cache.set(projectId, [
         ...BUILTIN_COMMANDS,
-        ...discoverPluginCommands(projectPath),
+        ...discoverPluginCommands(homeDir, projectPath),
       ]);
     }
 

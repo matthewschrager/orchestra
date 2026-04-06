@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
+  AgentStatus,
   Attachment,
   AttentionResolution,
   CleanupPushedResponse,
@@ -306,7 +307,7 @@ function AppInner() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Map<string, Message[]>>(new Map());
-  const [agents, setAgents] = useState<Array<{ name: string; detected: boolean; version: string | null; models?: import("shared").ModelOption[] }>>([]);
+  const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [appSettings, setAppSettings] = useState<import("shared").Settings | null>(null);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -345,6 +346,10 @@ function AppInner() {
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
+  const missingAgents = useMemo(
+    () => agents.filter((agent) => !agent.detected),
+    [agents],
+  );
   const defaultDetectedAgent = useMemo(
     () => agents.find((agent) => agent.detected)?.name ?? "claude",
     [agents],
@@ -1022,6 +1027,18 @@ function AppInner() {
           <button onClick={() => setError(null)} className="ml-2 underline text-red-400 hover:text-red-300">
             dismiss
           </button>
+        </div>
+      )}
+
+      {missingAgents.length > 0 && (
+        <div className="bg-amber-950/60 border-b border-amber-900/30 text-amber-200 px-4 py-2 text-sm">
+          {missingAgents.map((agent) => (
+            <div key={agent.name}>
+              <span className="font-medium">{agent.name} unavailable.</span>{" "}
+              {agent.unavailableReason ?? "Not detected."}{" "}
+              {agent.installHint}
+            </div>
+          ))}
         </div>
       )}
 
