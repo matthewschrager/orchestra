@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
+  AgentStatus,
   Attachment,
   AttentionResolution,
   CleanupPushedResponse,
@@ -42,9 +43,11 @@ import { MergeAllPrsButton } from "./components/MergeAllPrsButton";
 import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
 import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal";
 import { MergeAllPrsConfirmationModal } from "./components/MergeAllPrsConfirmationModal";
+import { getCommandsCacheKey, shouldRefreshCommands } from "./lib/commandRefresh";
 import { buildInputHistory } from "./lib/inputHistory";
 import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
 import { usePrAutoRefresh } from "./hooks/usePrAutoRefresh";
+import { consumeQueuedFallback, incrementQueuedFallback, shouldTrackQueuedFallback } from "./lib/queueFallback";
 
 export function App() {
   const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
@@ -100,8 +103,21 @@ const initialStreamingState: StreamingState = {
 
 const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0, modelName: null };
 
+function threadMetricsToTurnMetrics(thread: Thread): TurnMetrics {
+  return {
+    costUsd: thread.metrics.costUsd,
+    durationMs: thread.metrics.durationMs,
+    turnCount: thread.metrics.turnCount,
+    inputTokens: thread.metrics.inputTokens,
+    outputTokens: thread.metrics.outputTokens,
+    contextWindow: thread.metrics.contextWindow,
+    modelName: thread.metrics.modelName,
+  };
+}
+
 type StreamingAction =
   | { type: "delta"; delta: StreamDelta }
+  | { type: "hydrate_metrics"; threadId: string; metrics: TurnMetrics }
   | { type: "clear_text"; threadId: string }
   | { type: "clear_tool"; threadId: string }
   | { type: "clear_all"; threadId: string }
@@ -214,6 +230,11 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
           return state;
       }
     }
+    case "hydrate_metrics": {
+      const metrics = new Map(state.metrics);
+      metrics.set(action.threadId, action.metrics);
+      return { ...state, metrics };
+    }
     case "clear_text": {
       if (!state.text.has(action.threadId)) return state;
       const text = new Map(state.text);
@@ -287,9 +308,9 @@ function AppInner() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Map<string, Message[]>>(new Map());
-  const [agents, setAgents] = useState<Array<{ name: string; detected: boolean; version: string | null; models?: import("shared").ModelOption[] }>>([]);
+  const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [appSettings, setAppSettings] = useState<import("shared").Settings | null>(null);
-  const [commands, setCommands] = useState<SlashCommand[]>([]);
+  const [commandsByProject, setCommandsByProject] = useState<Map<string, SlashCommand[]>>(new Map());
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
@@ -309,10 +330,14 @@ function AppInner() {
   );
   const [streaming, dispatchStreaming] = useReducer(streamingReducer, initialStreamingState);
   const [unreadThreadIds, setUnreadThreadIds] = useState<Set<string>>(new Set());
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const subscribedRef = useRef<string | null>(null);
   const turnStartRef = useRef<number>(0);
   const wasConnectedRef = useRef<boolean | null>(null);
+  const commandFetchTimesRef = useRef<Map<string, number>>(new Map());
+  const commandRequestsRef = useRef<Map<string, Promise<void>>>(new Map());
   const activeThreadRef = useRef<string | null>(null);
+  const reportedPresenceRef = useRef<string | null | undefined>(undefined);
   activeThreadRef.current = activeThreadId;
   const chatViewRef = useRef<ChatViewHandle>(null);
 
@@ -321,10 +346,21 @@ function AppInner() {
 
   // Push notifications
   const push = usePushNotifications();
-  const showPushBanner = push.supported && push.permission === "default" && !push.subscribed && !pushBannerDismissed;
+  const showPushBanner = !pushBannerDismissed && !push.subscribed && (
+    (push.supported && push.permission === "default") ||
+    (!push.supported && Boolean(push.unsupportedReason))
+  );
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
+  const activeCommands = useMemo(
+    () => commandsByProject.get(getCommandsCacheKey(activeProjectId)) ?? [],
+    [commandsByProject, activeProjectId],
+  );
+  const missingAgents = useMemo(
+    () => agents.filter((agent) => !agent.detected),
+    [agents],
+  );
   const defaultDetectedAgent = useMemo(
     () => agents.find((agent) => agent.detected)?.name ?? "claude",
     [agents],
@@ -334,9 +370,13 @@ function AppInner() {
   const activeStreamingText = activeThreadId ? streaming.text.get(activeThreadId) : undefined;
   const activeStreamingTool = activeThreadId ? streaming.tool.get(activeThreadId) : undefined;
   const activeStreamingToolInput = activeThreadId ? streaming.toolInput.get(activeThreadId) : undefined;
-  const activeMetrics = activeThreadId ? streaming.metrics.get(activeThreadId) ?? EMPTY_METRICS : EMPTY_METRICS;
+  const activeMetrics = activeThread
+    ? streaming.metrics.get(activeThread.id) ?? threadMetricsToTurnMetrics(activeThread)
+    : EMPTY_METRICS;
   const activeTurnEnded = activeThreadId ? streaming.turnEnded.has(activeThreadId) : false;
   const activeTodos = activeThreadId ? latestTodos.get(activeThreadId) ?? null : null;
+  const isRunning = activeThread?.status === "running";
+  const activelyWorking = isRunning && !activeTurnEnded;
 
   const activeProjectThreads = useMemo(() =>
     threads
@@ -370,6 +410,14 @@ function AppInner() {
     return foundAsk ? true : null;
   }, [activeMessages]);
 
+  const hydrateThreadMetrics = useCallback((thread: Thread) => {
+    dispatchStreaming({
+      type: "hydrate_metrics",
+      threadId: thread.id,
+      metrics: threadMetricsToTurnMetrics(thread),
+    });
+  }, []);
+
   // ── WebSocket ───────────────────────────────────────
 
   const { connected, send } = useWebSocket({
@@ -381,10 +429,14 @@ function AppInner() {
         next.set(msg.threadId, [...existing, msg]);
         return next;
       });
-      // Tag user messages as queued if they were sent while agent was running
-      if (msg.role === "user" && pendingQueuedCountRef.current > 0) {
-        pendingQueuedCountRef.current--;
-        dispatchStreaming({ type: "mark_queued", threadId: msg.threadId, seq: msg.seq });
+      // Client-side fallback: if WS queue state arrives after the persisted user
+      // message, temporarily mark the matching message as queued.
+      if (msg.role === "user") {
+        const { nextCounts, shouldMarkQueued } = consumeQueuedFallback(pendingQueuedCountRef.current, msg.threadId);
+        pendingQueuedCountRef.current = nextCounts;
+        if (shouldMarkQueued) {
+          dispatchStreaming({ type: "mark_queued", threadId: msg.threadId, seq: msg.seq });
+        }
       }
       // Clear streaming state when a persisted message arrives
       if (msg.role === "assistant") {
@@ -418,6 +470,7 @@ function AppInner() {
         // New thread from another client — add to the top
         return [thread, ...prev];
       });
+      hydrateThreadMetrics(thread);
       if (thread.status === "done" || thread.status === "error") {
         dispatchStreaming({ type: "clear_all", threadId: thread.id });
       }
@@ -430,7 +483,7 @@ function AppInner() {
           return next;
         });
       }
-    }, []),
+    }, [hydrateThreadMetrics]),
     onStreamDelta: useCallback((delta: StreamDelta) => {
       dispatchStreaming({ type: "delta", delta });
     }, []),
@@ -489,6 +542,39 @@ function AppInner() {
     }
   }, [activeThreadId, connected, send]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Report foreground presence separately from the replay subscription.
+  // This lets the server suppress same-device completion pushes only while
+  // the thread is actually visible, not merely while the WebSocket stays open.
+  useEffect(() => {
+    if (!connected) {
+      reportedPresenceRef.current = undefined;
+      return;
+    }
+
+    const publishPresence = (threadId: string | null) => {
+      const visibleThreadId = document.hidden ? null : threadId;
+      if (reportedPresenceRef.current === visibleThreadId) return;
+      send({ type: "set_presence", threadId: visibleThreadId });
+      reportedPresenceRef.current = visibleThreadId;
+    };
+
+    publishPresence(activeThreadId);
+
+    const handleVisibility = () => publishPresence(activeThreadIdRef.current);
+    const handlePageHide = () => {
+      if (reportedPresenceRef.current === null) return;
+      send({ type: "set_presence", threadId: null });
+      reportedPresenceRef.current = null;
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", handlePageHide);
+    };
+  }, [activeThreadId, connected, send]);
+
   // ── Service worker notification-click handler ─────────
   useEffect(() => {
     // Handle deep-link from push notification click
@@ -515,21 +601,57 @@ function AppInner() {
   // ── Data loading ──────────────────────────────────────
 
   useEffect(() => {
+    if (!activelyWorking) return;
+    setNowMs(Date.now());
+    const tick = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(tick);
+  }, [activelyWorking, activeThread?.id]);
+
+  useEffect(() => {
     api.listProjects().then(setProjects).catch(console.error);
-    api.listThreads().then(setThreads).catch(console.error);
+    api.listThreads().then((loadedThreads) => {
+      setThreads(loadedThreads);
+      for (const thread of loadedThreads) {
+        hydrateThreadMetrics(thread);
+      }
+    }).catch(console.error);
     api.listAgents().then(setAgents).catch(console.error);
     api.getSettings().then((s) => { setAppSettings(s); setDefaultEffortLevel(s.defaultEffortLevel); setDefaultAgent(s.defaultAgent); }).catch(console.error);
+  }, [hydrateThreadMetrics]);
+
+  const refreshCommands = useCallback((projectId: string | null, options?: { force?: boolean }) => {
+    const key = getCommandsCacheKey(projectId);
+    const inFlight = commandRequestsRef.current.get(key);
+    if (inFlight) return inFlight;
+
+    const lastFetchedAt = commandFetchTimesRef.current.get(key);
+    if (!options?.force && !shouldRefreshCommands(lastFetchedAt)) {
+      return Promise.resolve();
+    }
+
+    const request = api.listCommands(projectId ?? undefined).then((cmds) => {
+      setCommandsByProject((prev) => {
+        const next = new Map(prev);
+        next.set(key, cmds);
+        return next;
+      });
+      commandFetchTimesRef.current.set(key, Date.now());
+    }).catch(console.error).finally(() => {
+      if (commandRequestsRef.current.get(key) === request) {
+        commandRequestsRef.current.delete(key);
+      }
+    });
+
+    commandRequestsRef.current.set(key, request);
+    return request;
   }, []);
 
   // Fetch commands scoped to active project; refetch when project changes.
-  // Stale-response guard prevents a slow earlier response from overwriting a fast later one.
   useEffect(() => {
-    let stale = false;
-    api.listCommands(activeProjectId ?? undefined).then((cmds) => {
-      if (!stale) setCommands(cmds);
-    }).catch(console.error);
-    return () => { stale = true; };
-  }, [activeProjectId]);
+    void refreshCommands(activeProjectId ?? null);
+  }, [activeProjectId, refreshCommands]);
 
   // Re-fetch thread list on WS reconnection so sidebar statuses are fresh.
   // Without this, threads that changed status while disconnected appear "stuck".
@@ -538,10 +660,15 @@ function AppInner() {
     // false = was connected, then disconnected → next true is a reconnect
     if (connected && wasConnectedRef.current === false) {
       api.listProjects().then(setProjects).catch(console.error);
-      api.listThreads().then(setThreads).catch(console.error);
+      api.listThreads().then((loadedThreads) => {
+        setThreads(loadedThreads);
+        for (const thread of loadedThreads) {
+          hydrateThreadMetrics(thread);
+        }
+      }).catch(console.error);
     }
     wasConnectedRef.current = connected;
-  }, [connected]);
+  }, [connected, hydrateThreadMetrics]);
 
   usePrAutoRefresh({
     connected,
@@ -599,6 +726,7 @@ function AppInner() {
       const thread = await api.createThread({ agent, effortLevel: effortLevel ?? undefined, permissionMode: permissionMode ?? undefined, model: model ?? undefined, prompt, projectId: pid, isolate, worktreeName, baseBranch, attachments });
       // Guard against duplicate: WS broadcast from server may arrive before this HTTP response
       setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
+      hydrateThreadMetrics(thread);
       setActiveThreadId(thread.id);
       clearUnread(thread.id); // WS race: thread_updated may arrive before setActiveThreadId takes effect
       setActiveProjectId(pid);
@@ -611,8 +739,9 @@ function AppInner() {
     }
   };
 
-  // Track how many of the next incoming user messages should be marked as "queued"
-  const pendingQueuedCountRef = useRef(0);
+  // Track queued-message fallback markers per thread so unrelated messages don't
+  // consume another thread's pending badge.
+  const pendingQueuedCountRef = useRef(new Map<string, number>());
 
   const handleSendMessage = async (content: string, attachments?: Attachment[], interrupt?: boolean) => {
     if (!activeThreadId) return;
@@ -622,9 +751,9 @@ function AppInner() {
       const thread = threads.find((t) => t.id === activeThreadId);
       if (!thread || thread.status !== "running") {
         turnStartRef.current = Date.now();
-      } else {
+      } else if (shouldTrackQueuedFallback(thread.status, interrupt)) {
         // Sending while running — flag next incoming user message as queued
-        pendingQueuedCountRef.current++;
+        pendingQueuedCountRef.current = incrementQueuedFallback(pendingQueuedCountRef.current, activeThreadId);
       }
       send({ type: "send_message", threadId: activeThreadId, content, attachments, interrupt: interrupt ?? false });
     } catch (err) {
@@ -870,8 +999,12 @@ function AppInner() {
 
   // ── Render ────────────────────────────────────────────
 
-  const isRunning = activeThread?.status === "running";
-  const activelyWorking = isRunning && !activeTurnEnded;
+  const activeTurnStartedAtMs = activeThread?.metrics.activeTurnStartedAt
+    ? new Date(activeThread.metrics.activeTurnStartedAt).getTime()
+    : 0;
+  const elapsedMs = activelyWorking
+    ? Math.max(0, nowMs - (activeTurnStartedAtMs || turnStartRef.current || nowMs))
+    : activeMetrics.durationMs;
 
   return (
     <div className="h-dvh flex flex-col bg-base text-content-1 overflow-hidden">
@@ -963,6 +1096,18 @@ function AppInner() {
         </div>
       )}
 
+      {missingAgents.length > 0 && (
+        <div className="bg-amber-950/60 border-b border-amber-900/30 text-amber-200 px-4 py-2 text-sm">
+          {missingAgents.map((agent) => (
+            <div key={agent.name}>
+              <span className="font-medium">{agent.name} unavailable.</span>{" "}
+              {agent.unavailableReason ?? "Not detected."}{" "}
+              {agent.installHint}
+            </div>
+          ))}
+        </div>
+      )}
+
       {!connected && (
         <div className="bg-amber-950/60 border-b border-amber-900/30 text-amber-300 px-4 py-1.5 text-sm text-center">
           Reconnecting...
@@ -971,15 +1116,28 @@ function AppInner() {
 
       {showPushBanner && (
         <div className="bg-accent/10 border-b border-accent/20 px-4 py-2 text-sm flex items-center justify-between gap-3">
-          <span className="text-content-2">Get notified when agents need your input.</span>
+          <span className="text-content-2">
+            {push.supported
+              ? "Get notified when agents need your input."
+              : push.unsupportedReason}
+          </span>
           <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => push.subscribe()}
-              disabled={push.loading}
-              className="px-3 py-1 rounded-lg bg-accent hover:bg-accent/80 text-white text-xs font-medium disabled:opacity-50"
-            >
-              {push.loading ? "..." : "Enable"}
-            </button>
+            {push.supported ? (
+              <button
+                onClick={() => push.subscribe()}
+                disabled={push.loading}
+                className="px-3 py-1 rounded-lg bg-accent hover:bg-accent/80 text-white text-xs font-medium disabled:opacity-50"
+              >
+                {push.loading ? "..." : "Enable"}
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowSettings(true)}
+                className="px-3 py-1 rounded-lg bg-accent hover:bg-accent/80 text-white text-xs font-medium"
+              >
+                Details
+              </button>
+            )}
             <button
               onClick={() => {
                 setPushBannerDismissed(true);
@@ -1047,7 +1205,7 @@ function AppInner() {
                 currentAction={activeStreamingToolInput ? extractToolContextForBar(activeStreamingTool ?? null, activeStreamingToolInput) : null}
                 currentTool={activeStreamingTool ?? null}
                 metrics={activeMetrics}
-                elapsedMs={activelyWorking ? Date.now() - (turnStartRef.current || Date.now()) : activeMetrics.durationMs}
+                elapsedMs={elapsedMs}
                 onInterrupt={handleStopThread}
                 onScrollToBottom={() => chatViewRef.current?.scrollToBottom()}
                 todos={activeTodos}
@@ -1067,12 +1225,13 @@ function AppInner() {
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject?.name ?? null}
                 activeProjectBranch={activeProject?.currentBranch ?? null}
-                commands={commands}
+                commands={activeCommands}
                 settings={appSettings}
                 history={activeInputHistory}
                 pendingQuestion={pendingQuestion}
                 defaultEffortLevel={defaultEffortLevel}
                 defaultAgent={defaultAgent}
+                onRequestCommandRefresh={() => { void refreshCommands(activeProjectId ?? null); }}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
@@ -1110,10 +1269,11 @@ function AppInner() {
                 activeProjectId={activeProjectId}
                 activeProjectName={activeProject.name}
                 activeProjectBranch={activeProject.currentBranch}
-                commands={commands}
+                commands={activeCommands}
                 settings={appSettings}
                 defaultEffortLevel={defaultEffortLevel}
                 defaultAgent={defaultAgent}
+                onRequestCommandRefresh={() => { void refreshCommands(activeProjectId ?? null); }}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
@@ -1183,11 +1343,12 @@ function AppInner() {
             <MobileNewSession
               projects={projects}
               agents={agents}
-              commands={commands}
+              commandsByProject={commandsByProject}
               activeProjectId={activeProjectId}
               settings={appSettings}
               defaultEffortLevel={defaultEffortLevel}
               defaultAgent={defaultAgent}
+              onRequestCommandRefresh={(projectId) => { void refreshCommands(projectId); }}
               onNewThread={(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments, permissionMode, baseBranch) => {
                 handleNewThread(agent, effortLevel, model, prompt, isolate, projectId, worktreeName, attachments, permissionMode, baseBranch);
                 setMobileTab("sessions");

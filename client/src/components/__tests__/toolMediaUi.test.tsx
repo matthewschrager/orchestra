@@ -26,6 +26,16 @@ const baseThread: Thread = {
   createdAt: "2026-03-27T00:00:00.000Z",
   updatedAt: "2026-03-27T00:00:00.000Z",
   lastInteractedAt: "2026-03-27T00:00:00.000Z",
+  metrics: {
+    costUsd: 0,
+    durationMs: 0,
+    turnCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    contextWindow: 0,
+    modelName: null,
+    activeTurnStartedAt: null,
+  },
 };
 
 describe("tool media rendering", () => {

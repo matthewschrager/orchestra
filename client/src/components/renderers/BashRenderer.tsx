@@ -17,6 +17,11 @@ interface BashPreview {
   truncatedLineCount: number;
 }
 
+// Strip ANSI escape sequences and non-printable control bytes before showing
+// tool output in plain HTML. Otherwise the raw ESC byte renders as a tofu box.
+const ANSI_ESCAPE_PATTERN = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\d/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
+const NON_RENDERABLE_CONTROL_CHARS_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
+
 export function parseBash(
   input: string | null,
   output: string | null,
@@ -179,7 +184,7 @@ function parseBashOutput(
   metadata?: Record<string, unknown> | null,
 ): { cleanOutput: string; exitCode: number | null } {
   const metaExitCode = typeof metadata?.exitCode === "number" ? metadata.exitCode : null;
-  let cleanOutput = output ?? "";
+  let cleanOutput = sanitizeBashOutput(output ?? "");
   let exitCode = metaExitCode;
 
   const bracketMatch = cleanOutput.match(/\n?\[exit code:\s*(\d+)\]\s*$/i);
@@ -197,6 +202,14 @@ function parseBashOutput(
   }
 
   return { cleanOutput, exitCode };
+}
+
+function sanitizeBashOutput(output: string): string {
+  return output
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(ANSI_ESCAPE_PATTERN, "")
+    .replace(NON_RENDERABLE_CONTROL_CHARS_PATTERN, "");
 }
 
 function countOutputLines(output: string): number {

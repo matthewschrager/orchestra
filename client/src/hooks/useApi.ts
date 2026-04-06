@@ -140,7 +140,7 @@ export const api = {
     ),
 
   listAgents: () =>
-    request<Array<{ name: string; detected: boolean; version: string | null }>>("/agents"),
+    request<import("shared").AgentStatus[]>("/agents"),
 
   listCommands: (projectId?: string) =>
     request<import("shared").SlashCommand[]>(

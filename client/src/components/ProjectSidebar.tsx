@@ -273,8 +273,8 @@ export function ProjectSidebar({
                               )}
                             </div>
                             {/* Line 2: metadata */}
-                            <div className="flex items-center gap-1.5 mt-1 ml-3.5">
-                              <span className={`text-[10px] px-1 py-0.5 rounded font-mono ${
+                            <div className="flex items-center gap-1.5 mt-1 ml-3.5 min-w-0 overflow-hidden">
+                              <span className={`text-[10px] px-1 py-0.5 rounded font-mono shrink-0 ${
                                 thread.agent === "codex"
                                   ? "bg-cyan-900/40 text-cyan-300"
                                   : "bg-amber-900/40 text-amber-300"
@@ -283,15 +283,20 @@ export function ProjectSidebar({
                               </span>
                               {thread.worktree && (
                                 <span
-                                  className="inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded bg-violet-900/40 text-violet-300 max-w-[120px] font-mono"
-                                  title={thread.branch || thread.worktree}
+                                  className="inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded bg-violet-900/40 text-violet-300 max-w-[180px] min-w-0 shrink font-mono"
+                                  title={`${thread.branch || thread.worktree}${thread.baseBranch ? ` (from ${thread.baseBranch})` : ""}`}
                                 >
                                   <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 opacity-60">
                                     <path d="M5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 0 10.5 8.5H12a2.25 2.25 0 1 1 0 1.5h-1.5A4 4 0 0 1 6.5 6V5.372a2.25 2.25 0 0 1-1.5-2.122ZM8 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm5.5 7a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z" />
                                   </svg>
-                                  <span className="truncate">
+                                  <span className="truncate min-w-0">
                                     {thread.branch?.replace(/^orchestra\//, "") || "wt"}
                                   </span>
+                                  {thread.baseBranch && (
+                                    <span className="text-violet-300/50 truncate min-w-0">
+                                      ← {thread.baseBranch}
+                                    </span>
+                                  )}
                                 </span>
                               )}
                               <PrBadge

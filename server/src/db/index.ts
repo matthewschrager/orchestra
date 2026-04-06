@@ -17,6 +17,14 @@ const MIGRATIONS = [
     pid         INTEGER,
     status      TEXT NOT NULL DEFAULT 'pending',
     archived_at TEXT,
+    metrics_cost_usd REAL NOT NULL DEFAULT 0,
+    metrics_duration_ms INTEGER NOT NULL DEFAULT 0,
+    metrics_turn_count INTEGER NOT NULL DEFAULT 0,
+    metrics_input_tokens INTEGER NOT NULL DEFAULT 0,
+    metrics_output_tokens INTEGER NOT NULL DEFAULT 0,
+    metrics_context_window INTEGER NOT NULL DEFAULT 0,
+    metrics_model_name TEXT,
+    metrics_active_turn_started_at TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
@@ -67,6 +75,7 @@ const MIGRATIONS = [
     endpoint   TEXT NOT NULL UNIQUE,
     keys_p256dh TEXT NOT NULL,
     keys_auth   TEXT NOT NULL,
+    device_id   TEXT NOT NULL DEFAULT '',
     user_agent  TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
@@ -116,6 +125,11 @@ const COLUMN_MIGRATIONS = [
     sql: `ALTER TABLE push_subscriptions ADD COLUMN origin TEXT DEFAULT ''`,
   },
   {
+    table: "push_subscriptions",
+    column: "device_id",
+    sql: `ALTER TABLE push_subscriptions ADD COLUMN device_id TEXT NOT NULL DEFAULT ''`,
+  },
+  {
     table: "threads",
     column: "last_interacted_at",
     // SQLite rejects expression defaults (datetime('now')) in ALTER TABLE on non-empty tables.
@@ -152,6 +166,46 @@ const COLUMN_MIGRATIONS = [
     table: "threads",
     column: "base_branch",
     sql: `ALTER TABLE threads ADD COLUMN base_branch TEXT`,
+  },
+  {
+    table: "threads",
+    column: "metrics_cost_usd",
+    sql: `ALTER TABLE threads ADD COLUMN metrics_cost_usd REAL NOT NULL DEFAULT 0`,
+  },
+  {
+    table: "threads",
+    column: "metrics_duration_ms",
+    sql: `ALTER TABLE threads ADD COLUMN metrics_duration_ms INTEGER NOT NULL DEFAULT 0`,
+  },
+  {
+    table: "threads",
+    column: "metrics_turn_count",
+    sql: `ALTER TABLE threads ADD COLUMN metrics_turn_count INTEGER NOT NULL DEFAULT 0`,
+  },
+  {
+    table: "threads",
+    column: "metrics_input_tokens",
+    sql: `ALTER TABLE threads ADD COLUMN metrics_input_tokens INTEGER NOT NULL DEFAULT 0`,
+  },
+  {
+    table: "threads",
+    column: "metrics_output_tokens",
+    sql: `ALTER TABLE threads ADD COLUMN metrics_output_tokens INTEGER NOT NULL DEFAULT 0`,
+  },
+  {
+    table: "threads",
+    column: "metrics_context_window",
+    sql: `ALTER TABLE threads ADD COLUMN metrics_context_window INTEGER NOT NULL DEFAULT 0`,
+  },
+  {
+    table: "threads",
+    column: "metrics_model_name",
+    sql: `ALTER TABLE threads ADD COLUMN metrics_model_name TEXT`,
+  },
+  {
+    table: "threads",
+    column: "metrics_active_turn_started_at",
+    sql: `ALTER TABLE threads ADD COLUMN metrics_active_turn_started_at TEXT`,
   },
   {
     table: "message_queue",
@@ -303,6 +357,9 @@ const THREAD_COLUMNS = new Set([
   "title", "status", "worktree", "branch", "base_branch", "pid",
   "error_message", "pr_url", "archived_at", "session_id", "effort_level", "permission_mode", "model",
   "pr_status", "pr_number", "pr_status_checked_at", "last_interacted_at",
+  "metrics_cost_usd", "metrics_duration_ms", "metrics_turn_count",
+  "metrics_input_tokens", "metrics_output_tokens", "metrics_context_window",
+  "metrics_model_name", "metrics_active_turn_started_at",
 ]);
 
 export function updateProject(db: DB, id: string, fields: Partial<ProjectRow>): void {
@@ -688,6 +745,14 @@ export interface ThreadRow {
   error_message: string | null;
   session_id: string | null;
   archived_at: string | null;
+  metrics_cost_usd: number;
+  metrics_duration_ms: number;
+  metrics_turn_count: number;
+  metrics_input_tokens: number;
+  metrics_output_tokens: number;
+  metrics_context_window: number;
+  metrics_model_name: string | null;
+  metrics_active_turn_started_at: string | null;
   created_at: string;
   updated_at: string;
   last_interacted_at: string;
@@ -732,6 +797,16 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastInteractedAt: row.last_interacted_at,
+    metrics: {
+      costUsd: row.metrics_cost_usd ?? 0,
+      durationMs: row.metrics_duration_ms ?? 0,
+      turnCount: row.metrics_turn_count ?? 0,
+      inputTokens: row.metrics_input_tokens ?? 0,
+      outputTokens: row.metrics_output_tokens ?? 0,
+      contextWindow: row.metrics_context_window ?? 0,
+      modelName: row.metrics_model_name ?? null,
+      activeTurnStartedAt: row.metrics_active_turn_started_at ?? null,
+    },
   };
   // Note: pr_status_checked_at is intentionally omitted — server-internal only
 }

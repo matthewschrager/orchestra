@@ -257,7 +257,17 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
           {thread.branch && (
             <>
               <span className="text-content-3">&middot;</span>
-              <span className="font-mono text-content-2">{thread.branch}</span>
+              <span className="inline-flex items-center gap-1">
+                <span className="font-mono text-content-2">{thread.branch}</span>
+                {thread.baseBranch && (
+                  <span className="inline-flex items-center gap-0.5 text-content-3">
+                    <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="opacity-50 shrink-0">
+                      <path d="M5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 0 10.5 8.5H12a2.25 2.25 0 1 1 0 1.5h-1.5A4 4 0 0 1 6.5 6V5.372a2.25 2.25 0 0 1-1.5-2.122ZM8 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm5.5 7a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z" />
+                    </svg>
+                    <span className="font-mono">from {thread.baseBranch}</span>
+                  </span>
+                )}
+              </span>
             </>
           )}
         </div>
@@ -521,13 +531,26 @@ function ToolGroupRow({ pairs, forceExpand, latestTodoId }: { pairs: ToolPair[];
   );
 }
 
-function groupConsecutiveTools(pairs: ToolPair[]): ToolPair[][] {
+const STANDALONE_TOOL_GROUPS = new Set([
+  "Bash",
+  "Edit",
+  "MultiEdit",
+  "NotebookEdit",
+  "TodoWrite",
+  "Write",
+]);
+
+function shouldKeepStandaloneToolGroup(name: string): boolean {
+  return isAskUserTool(name) || STANDALONE_TOOL_GROUPS.has(name);
+}
+
+export function groupConsecutiveTools(pairs: ToolPair[]): ToolPair[][] {
   const groups: ToolPair[][] = [];
   let current: ToolPair[] = [];
 
   for (const pair of pairs) {
-    // Ask-user tools and TodoWrite always get their own group
-    if (isAskUserTool(pair.name) || pair.name === "TodoWrite" || pair.name === "Bash") {
+    // Keep tool actions that should stay individually visible out of grouped summaries.
+    if (shouldKeepStandaloneToolGroup(pair.name)) {
       if (current.length > 0) groups.push(current);
       groups.push([pair]);
       current = [];
@@ -897,9 +920,12 @@ function MessageBubble({ message, isQueued, queueState }: { message: Message; is
   if (trimmed === '""' && !hasAttachments) return null;
 
   if (message.role === "user") {
-    // Determine display state: prefer server-authoritative queueState, fall back to client-side isQueued
-    const showQueueBadge = queueState === "pending" || queueState === "sent" || isQueued;
-    const isSent = queueState === "sent";
+    const queueMessageId = typeof message.metadata?.queueMessageId === "string" ? message.metadata.queueMessageId : undefined;
+    const { showQueueBadge, isSent } = getUserMessageQueueDisplayState({
+      hasQueueMessageId: Boolean(queueMessageId),
+      isQueued,
+      queueState,
+    });
 
     return (
       <div className="flex flex-col items-end gap-1">
@@ -937,6 +963,32 @@ function MessageBubble({ message, isQueued, queueState }: { message: Message; is
       </div>
     </div>
   );
+}
+
+export function getUserMessageQueueDisplayState({
+  hasQueueMessageId,
+  isQueued,
+  queueState,
+}: {
+  hasQueueMessageId: boolean;
+  isQueued?: boolean;
+  queueState?: "pending" | "sent";
+}): { showQueueBadge: boolean; isSent: boolean } {
+  if (queueState === "sent") {
+    return { showQueueBadge: true, isSent: true };
+  }
+
+  if (queueState === "pending") {
+    return { showQueueBadge: true, isSent: false };
+  }
+
+  if (hasQueueMessageId) {
+    // Once the server attached a queue row, prefer waiting for the
+    // authoritative queue state over showing a possibly stale local fallback.
+    return { showQueueBadge: false, isSent: false };
+  }
+
+  return { showQueueBadge: Boolean(isQueued), isSent: false };
 }
 
 // ── Helpers ─────────────────────────────────────────────

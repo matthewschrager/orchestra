@@ -8,6 +8,7 @@ import { createWSHandler } from "../handler";
 import type { SessionManager } from "../../sessions/manager";
 import type { TerminalManager } from "../../terminal/manager";
 import type { WSServerMessage } from "shared";
+import type { PushManager } from "../../push/manager";
 
 const tmpDirs: string[] = [];
 function makeTmpDir(prefix: string): string {
@@ -64,7 +65,7 @@ describe("WS subscribe replay", () => {
     const wsHandler = createWSHandler(createSessionManagerStub(), db);
     const sent: WSServerMessage[] = [];
     const ws = {
-      data: { subscriptions: new Set<string>() },
+      data: { subscriptions: new Set<string>(), msgTimestamps: [] },
       send(payload: string) {
         sent.push(JSON.parse(payload) as WSServerMessage);
       },
@@ -101,7 +102,7 @@ describe("WS terminal wiring", () => {
     const wsHandler = createWSHandler(createSessionManagerStub(), db);
     const sent: WSServerMessage[] = [];
     const ws = {
-      data: { subscriptions: new Set<string>() },
+      data: { subscriptions: new Set<string>(), msgTimestamps: [] },
       send(payload: string) { sent.push(JSON.parse(payload) as WSServerMessage); },
     } as unknown as ServerWebSocket<{ subscriptions: Set<string> }>;
 
@@ -137,7 +138,7 @@ describe("WS terminal wiring", () => {
     const wsHandler = createWSHandler(createSessionManagerStub(), db, stubTerminalManager);
     const sent: WSServerMessage[] = [];
     const ws = {
-      data: { subscriptions: new Set<string>() },
+      data: { subscriptions: new Set<string>(), msgTimestamps: [] },
       send(payload: string) { sent.push(JSON.parse(payload) as WSServerMessage); },
     } as unknown as ServerWebSocket<{ subscriptions: Set<string> }>;
 
@@ -147,6 +148,59 @@ describe("WS terminal wiring", () => {
     const created = sent.find((m) => m.type === "terminal_created");
     expect(created).toBeDefined();
     expect((created as any).threadId).toBe("t1");
+
+    db.close();
+  });
+});
+
+describe("WS device presence", () => {
+  test("tracks and clears the visible thread for a connected device", () => {
+    const dataDir = makeTmpDir("ws-device-presence");
+    const db = createDb(dataDir);
+    db.query("INSERT INTO projects (id, name, path) VALUES ('p1', 'Project', '/tmp')").run();
+    db.query(
+      `INSERT INTO threads (id, title, agent, repo_path, project_id, status)
+       VALUES ('t1', 'Thread title', 'claude', '/tmp', 'p1', 'done')`,
+    ).run();
+
+    const calls: Array<{ kind: "set" | "clear"; connectionId: string; deviceId?: string; threadId?: string | null }> = [];
+    const pushManager = {
+      setDeviceActiveThread(connectionId: string, deviceId: string, threadId: string | null) {
+        calls.push({ kind: "set", connectionId, deviceId, threadId });
+      },
+      clearDeviceActiveThread(connectionId: string) {
+        calls.push({ kind: "clear", connectionId });
+      },
+    } as unknown as PushManager;
+
+    const wsHandler = createWSHandler(createSessionManagerStub(), db, undefined, pushManager);
+    const ws = {
+      data: {
+        connectionId: "conn-1",
+        deviceId: "device-1",
+        activeThreadId: null,
+        subscriptions: new Set<string>(),
+        msgTimestamps: [],
+      },
+      send() {},
+    } as unknown as ServerWebSocket<{
+      connectionId: string;
+      deviceId: string;
+      activeThreadId: string | null;
+      subscriptions: Set<string>;
+      msgTimestamps: number[];
+    }>;
+
+    wsHandler.open(ws);
+    wsHandler.message(ws, JSON.stringify({ type: "set_presence", threadId: "t1" }));
+    wsHandler.message(ws, JSON.stringify({ type: "set_presence", threadId: null }));
+    wsHandler.close?.(ws, 1000, "done");
+
+    expect(calls).toEqual([
+      { kind: "set", connectionId: "conn-1", deviceId: "device-1", threadId: "t1" },
+      { kind: "clear", connectionId: "conn-1" },
+      { kind: "clear", connectionId: "conn-1" },
+    ]);
 
     db.close();
   });

@@ -7,6 +7,7 @@ import {
   getSetting,
   insertMessage,
   updateThread,
+  updateThreadSilent,
   touchThreadInteraction,
   createAttentionItem,
   resolveAttentionItem,
@@ -23,7 +24,12 @@ import {
 import type { AgentRegistry } from "../agents/registry";
 import type { AgentAdapter, AgentSession, AttentionEvent, ParsedMessage, PersistentSession } from "../agents/types";
 import type { WorktreeManager } from "../worktrees/manager";
-import { isEffortLevelSupported, isPermissionModeSupported } from "shared";
+import {
+  getAgentInstallHint,
+  getAgentUnavailableReason,
+  isEffortLevelSupported,
+  isPermissionModeSupported,
+} from "shared";
 import type { Attachment, AttentionItem, AttentionResolution, EffortLevel, PermissionMode, QueuedItem, StreamDelta } from "shared";
 import { resolveAttachmentPaths } from "../routes/uploads";
 import { generateTitle } from "../titles/generator";
@@ -114,6 +120,9 @@ export class SessionManager {
   }): Promise<ThreadRow> {
     const adapter = this.registry.get(opts.agent);
     if (!adapter) throw new Error(`Unknown agent: ${opts.agent}`);
+    if (!await adapter.detect()) {
+      throw new Error(`${getAgentUnavailableReason(opts.agent)} ${getAgentInstallHint(opts.agent)}`);
+    }
     if (opts.effortLevel && !isEffortLevelSupported(opts.agent, opts.effortLevel)) {
       throw new Error(`Effort level "${opts.effortLevel}" is not supported for ${opts.agent}`);
     }
@@ -221,11 +230,12 @@ export class SessionManager {
     this.orphanPendingAttention(threadId, { type: "orphaned", reason: "session_stopped" });
 
     if (nextQueued) {
+      updateThreadSilent(this.db, threadId, this.getTurnEndedFields());
       this.deliverQueuedMessage(threadId, nextQueued);
       return;
     }
 
-    updateThread(this.db, threadId, { status: "done", pid: null });
+    updateThread(this.db, threadId, this.getTurnEndedFields({ status: "done", pid: null }));
     this.notifyThread(threadId);
   }
 
@@ -424,7 +434,7 @@ export class SessionManager {
       existing.state = "thinking";
       existing.lastMessageAt = Date.now();
       existing.queuedThisTurn = 0;
-      updateThread(this.db, threadId, { status: "running", error_message: null });
+      updateThread(this.db, threadId, this.getTurnStartedFields({ status: "running", error_message: null }));
       this.notifyThread(threadId);
 
       // Reset parser turn-level state for clean dedup
@@ -480,7 +490,7 @@ export class SessionManager {
       ?? null;
 
     // Start a new session — prefer persistent when available
-    updateThread(this.db, threadId, { status: "running", error_message: null });
+    updateThread(this.db, threadId, this.getTurnStartedFields({ status: "running", error_message: null }));
     this.notifyThread(threadId);
     if (adapter.supportsPersistent?.()) {
       this.startPersistentSession(threadId, adapter, cwd, agentPrompt, sessionId, effortLevel, model, 0, permissionMode);
@@ -623,6 +633,49 @@ export class SessionManager {
     return `${prompt}\n\n[The user has attached the following file(s):]\n${fileLines.join("\n")}`;
   }
 
+  private getTurnStartedFields(fields: Partial<ThreadRow> = {}): Partial<ThreadRow> {
+    return {
+      ...fields,
+      metrics_active_turn_started_at: new Date().toISOString(),
+      metrics_input_tokens: 0,
+      metrics_output_tokens: 0,
+    };
+  }
+
+  private getTurnEndedFields(fields: Partial<ThreadRow> = {}): Partial<ThreadRow> {
+    return {
+      ...fields,
+      metrics_active_turn_started_at: null,
+    };
+  }
+
+  private persistMetricsDelta(threadId: string, delta: StreamDelta): void {
+    if (delta.deltaType !== "metrics") return;
+
+    const thread = getThread(this.db, threadId);
+    if (!thread) return;
+
+    const fields: Partial<ThreadRow> = {};
+    if (delta.inputTokens !== undefined) fields.metrics_input_tokens = delta.inputTokens;
+    if (delta.outputTokens !== undefined) fields.metrics_output_tokens = delta.outputTokens;
+    if (delta.contextWindow !== undefined) fields.metrics_context_window = delta.contextWindow;
+    if (delta.modelName !== undefined) fields.metrics_model_name = delta.modelName ?? null;
+
+    const hasTurnData =
+      delta.finalMetrics === true ||
+      delta.costUsd !== undefined ||
+      delta.durationMs !== undefined;
+
+    if (hasTurnData) {
+      fields.metrics_cost_usd = thread.metrics_cost_usd + (delta.costUsd ?? 0);
+      fields.metrics_duration_ms = thread.metrics_duration_ms + (delta.durationMs ?? 0);
+      fields.metrics_turn_count = thread.metrics_turn_count + 1;
+    }
+
+    if (Object.keys(fields).length === 0) return;
+    updateThreadSilent(this.db, threadId, fields);
+  }
+
   /** Legacy per-turn session — creates a new subprocess for this turn */
   private startTurn(
     threadId: string,
@@ -644,7 +697,7 @@ export class SessionManager {
       resumeSessionId: resumeSessionId ?? undefined,
     });
 
-    updateThread(this.db, threadId, { pid: null, status: "running" });
+    updateThread(this.db, threadId, this.getTurnStartedFields({ pid: null, status: "running" }));
 
     const active: ActiveSession = {
       threadId,
@@ -667,11 +720,11 @@ export class SessionManager {
       console.error(`[stream] Thread ${threadId} — unhandled consumeStream error:`, err);
       if (this.sessions.get(threadId) === active) {
         this.sessions.delete(threadId);
-        updateThread(this.db, threadId, {
+        updateThread(this.db, threadId, this.getTurnEndedFields({
           status: "error",
           pid: null,
           error_message: `Unexpected stream error: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
-        });
+        }));
         this.notifyThread(threadId);
       }
     });
@@ -705,7 +758,7 @@ export class SessionManager {
       resumeSessionId: resumeSessionId ?? undefined,
     });
 
-    updateThread(this.db, threadId, { pid: null, status: "running" });
+    updateThread(this.db, threadId, this.getTurnStartedFields({ pid: null, status: "running" }));
 
     const active: ActiveSession = {
       threadId,
@@ -727,11 +780,11 @@ export class SessionManager {
       console.error(`[stream] Thread ${threadId} — unhandled persistent stream error:`, err);
       if (this.sessions.get(threadId) === active) {
         this.sessions.delete(threadId);
-        updateThread(this.db, threadId, {
+        updateThread(this.db, threadId, this.getTurnEndedFields({
           status: "error",
           pid: null,
           error_message: `Persistent session error: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
-        });
+        }));
         this.notifyThread(threadId);
       }
     });
@@ -788,6 +841,7 @@ export class SessionManager {
         // Track if this message contains a turn_end
         let isTurnEnd = false;
         for (const delta of deltas) {
+          this.persistMetricsDelta(threadId, delta);
           if (delta.deltaType === "turn_end") {
             isTurnEnd = true;
             if (delta.text) {
@@ -824,7 +878,7 @@ export class SessionManager {
             // Defensive: status may have been overwritten to "running" by sendMessage()
             // if the user answered by typing directly instead of resolving the attention item.
             // Queue drain pauses while waiting — queued messages will drain after attention resolves.
-            updateThread(this.db, threadId, { status: "waiting", pid: null });
+            updateThread(this.db, threadId, this.getTurnEndedFields({ status: "waiting", pid: null }));
             this.notifyThread(threadId);
           } else {
             // ── Queue drain for persistent sessions ──
@@ -834,15 +888,16 @@ export class SessionManager {
             if (nextQueued) {
               if (DEBUG) console.log(`[stream] Thread ${threadId} — draining queued message from SQLite`);
               try {
+                updateThreadSilent(this.db, threadId, this.getTurnEndedFields());
                 this.deliverQueuedMessage(threadId, nextQueued);
               } catch (drainErr) {
                 console.error(`[stream] Thread ${threadId} — queue drain failed:`, drainErr);
-                updateThread(this.db, threadId, { status: "done", pid: null });
+                updateThread(this.db, threadId, this.getTurnEndedFields({ status: "done", pid: null }));
                 this.notifyThread(threadId);
               }
             } else {
               // Turn completed normally — mark done but keep session alive
-              updateThread(this.db, threadId, { status: "done", pid: null });
+              updateThread(this.db, threadId, this.getTurnEndedFields({ status: "done", pid: null }));
               this.notifyThread(threadId);
             }
           }
@@ -878,7 +933,7 @@ export class SessionManager {
         const hasPendingOnDeath = getPendingAttention(this.db, threadId).length > 0;
         if (hasPendingOnDeath) {
           if (DEBUG) console.log(`[stream] Thread ${threadId} — persistent session died with pending attention, keeping "waiting"`);
-          updateThread(this.db, threadId, { status: "waiting", pid: null });
+          updateThread(this.db, threadId, this.getTurnEndedFields({ status: "waiting", pid: null }));
           this.notifyThread(threadId);
           return;
         }
@@ -894,11 +949,11 @@ export class SessionManager {
           role: "assistant",
           content: `**Session ended unexpectedly.** Send a follow-up message to resume.${queueNote}`,
         });
-        updateThread(this.db, threadId, {
+        updateThread(this.db, threadId, this.getTurnEndedFields({
           status: "error",
           pid: null,
           error_message: "Subprocess ended unexpectedly during turn",
-        });
+        }));
         this.notifyThread(threadId);
         return;
       }
@@ -915,11 +970,11 @@ export class SessionManager {
           role: "assistant",
           content: "**Agent session ended without producing a response.** This may indicate an SDK initialization failure. Try again.",
         });
-        updateThread(this.db, threadId, {
+        updateThread(this.db, threadId, this.getTurnEndedFields({
           status: "error",
           pid: null,
           error_message: `SDK produced ${messageCount} messages without a response`,
-        });
+        }));
         this.notifyThread(threadId);
         return;
       }
@@ -927,13 +982,14 @@ export class SessionManager {
       const thread = getThread(this.db, threadId);
       if (thread?.status === "waiting") {
         // Agent asked a question — don't drain queue while waiting for user answer
-        updateThread(this.db, threadId, { pid: null });
+        updateThread(this.db, threadId, this.getTurnEndedFields({ pid: null }));
       } else {
         // ── Queue drain for non-persistent sessions ──
         // Check SQLite queue before marking done. If messages are pending, start a new turn.
         const nextQueued = dequeueNextMessage(this.db, threadId);
         if (nextQueued) {
           if (DEBUG) console.log(`[stream] Thread ${threadId} — draining queued message (non-persistent), starting new turn`);
+          updateThreadSilent(this.db, threadId, this.getTurnEndedFields());
           this.deliverQueuedMessage(threadId, nextQueued);
           return; // Skip normal completion — new turn handles lifecycle
         }
@@ -942,7 +998,7 @@ export class SessionManager {
         if (orphanedCount > 0) {
           console.log(`Orphaned ${orphanedCount} attention items for thread ${threadId}`);
         }
-        updateThread(this.db, threadId, { status: "done", pid: null });
+        updateThread(this.db, threadId, this.getTurnEndedFields({ status: "done", pid: null }));
       }
       this.notifyThread(threadId);
 
@@ -966,11 +1022,11 @@ export class SessionManager {
         role: "assistant",
         content: `**Agent error:** ${errMsg}`,
       });
-      updateThread(this.db, threadId, {
+      updateThread(this.db, threadId, this.getTurnEndedFields({
         status: "error",
         pid: null,
         error_message: errMsg.slice(0, 200),
-      });
+      }));
       this.notifyThread(threadId);
 
       // For persistent sessions, attempt auto-restart with resume (circuit breaker)
@@ -1010,14 +1066,14 @@ export class SessionManager {
   ): void {
     const sessionId = this.getPersistedSessionId(threadId);
     if (!sessionId) {
-      updateThread(this.db, threadId, {
+      updateThread(this.db, threadId, this.getTurnEndedFields({
         status: "error",
         error_message: "No session to resume — send a new message to start fresh",
-      });
+      }));
       this.notifyThread(threadId);
       return;
     }
-    updateThread(this.db, threadId, { status: "running", error_message: null });
+    updateThread(this.db, threadId, this.getTurnStartedFields({ status: "running", error_message: null }));
     this.notifyThread(threadId);
     if (adapter.supportsPersistent?.()) {
       this.startPersistentSession(threadId, adapter, cwd, prompt, sessionId, this.getThreadEffortLevel(threadId), this.getThreadModel(threadId), restartCount, this.getThreadPermissionMode(threadId));
@@ -1033,7 +1089,7 @@ export class SessionManager {
     const adapter = this.registry.get(thread.agent);
     if (!adapter) {
       console.error(`[session] queued delivery failed for ${threadId}: adapter not found`);
-      updateThread(this.db, threadId, { status: "done", pid: null });
+      updateThread(this.db, threadId, this.getTurnEndedFields({ status: "done", pid: null }));
       this.notifyThread(threadId);
       this.broadcastQueueState(threadId);
       return;
@@ -1049,7 +1105,7 @@ export class SessionManager {
       existing.state = "thinking";
       existing.lastMessageAt = Date.now();
       existing.queuedThisTurn = 0;
-      updateThread(this.db, threadId, { status: "running", error_message: null });
+      updateThread(this.db, threadId, this.getTurnStartedFields({ status: "running", error_message: null }));
       this.notifyThread(threadId);
 
       (existing.session as PersistentSession).resetTurnState();
@@ -1090,7 +1146,7 @@ export class SessionManager {
     }
 
     const sessionId = this.getPersistedSessionId(threadId);
-    updateThread(this.db, threadId, { status: "running", error_message: null });
+    updateThread(this.db, threadId, this.getTurnStartedFields({ status: "running", error_message: null }));
     this.notifyThread(threadId);
     if (adapter.supportsPersistent?.()) {
       this.startPersistentSession(threadId, adapter, cwd, queued.content, sessionId, effortLevel, model, 0, permissionMode);
@@ -1177,7 +1233,7 @@ export class SessionManager {
       return true;
     } catch (err) {
       console.error(`Failed to create attention item for thread ${session.threadId}:`, err);
-      updateThread(this.db, session.threadId, { status: "error" });
+      updateThread(this.db, session.threadId, this.getTurnEndedFields({ status: "error" }));
       this.notifyThread(session.threadId);
       return false;
     }
@@ -1330,11 +1386,11 @@ export class SessionManager {
     });
 
     // 5. Mark thread as error with descriptive message
-    updateThread(this.db, threadId, {
+    updateThread(this.db, threadId, this.getTurnEndedFields({
       status: "error",
       pid: null,
       error_message: errMsg,
-    });
+    }));
     this.notifyThread(threadId);
   }
 
@@ -1366,11 +1422,11 @@ export class SessionManager {
 
     for (const thread of running) {
       this.orphanPendingAttention(thread.id, { type: "orphaned", reason: "server_restarted" });
-      updateThread(this.db, thread.id, {
+      updateThread(this.db, thread.id, this.getTurnEndedFields({
         status: "error",
         pid: null,
         error_message: "Process was orphaned (server restarted while thread was running)",
-      });
+      }));
     }
   }
 

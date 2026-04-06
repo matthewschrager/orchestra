@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ALL_EFFORT_OPTIONS, type EffortLevel, type ModelOption, type Settings } from "shared";
 import { api } from "../hooks/useApi";
+import { PushNotificationSettings } from "./PushNotificationSettings";
 import { RemoteAccessSettings } from "./RemoteAccessSettings";
 
 interface Props {
@@ -136,7 +137,7 @@ export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onD
       className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
       onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}
     >
-      <div className="bg-surface-2 border border-edge-2 rounded-2xl p-6 w-full max-w-lg shadow-2xl shadow-black/50 flex flex-col">
+      <div className="bg-surface-2 border border-edge-2 rounded-2xl p-6 w-full max-w-lg max-h-[90dvh] shadow-2xl shadow-black/50 flex flex-col overflow-hidden">
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-lg font-semibold">Settings</h3>
           <button
@@ -174,9 +175,13 @@ export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onD
         ) : settings === null ? (
           <div className="py-8 text-center text-sm text-content-3">Loading...</div>
         ) : (
-          <div className="space-y-5">
+          <>
+          <div className="overflow-y-auto min-h-0 flex-1 space-y-5 pr-1">
             {/* Remote Access */}
             <RemoteAccessSettings />
+
+            {/* Push Notifications */}
+            <PushNotificationSettings />
 
             {/* Worktree Root */}
             <div>
@@ -327,34 +332,36 @@ export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onD
               </select>
             </div>
 
-            {error && (
-              <p className="text-sm text-red-400">{error}</p>
-            )}
+          </div>
 
-            {/* Footer */}
-            <div className="flex items-center justify-between pt-2 border-t border-edge-1">
-              <div className="text-xs text-content-3">
-                {saved && (
-                  <span className="text-emerald-400">Saved</span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={onClose}
-                  className="px-4 py-2 text-sm text-content-2 hover:text-content-1 rounded-lg hover:bg-surface-3"
-                >
-                  Close
-                </button>
-                <button
-                  onClick={handleSave}
-                  disabled={!isDirty || saving}
-                  className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base"
-                >
-                  {saving ? "Saving..." : "Save"}
-                </button>
-              </div>
+          {error && (
+            <p className="text-sm text-red-400 mt-3 shrink-0 line-clamp-2" title={error}>{error}</p>
+          )}
+
+          {/* Footer */}
+          <div className="flex items-center justify-between pt-3 mt-3 border-t border-edge-1 shrink-0">
+            <div className="text-xs text-content-3">
+              {saved && (
+                <span className="text-emerald-400">Saved</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 text-sm text-content-2 hover:text-content-1 rounded-lg hover:bg-surface-3"
+              >
+                Close
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={!isDirty || saving}
+                className="px-4 py-2 bg-accent hover:bg-accent-light disabled:opacity-40 rounded-lg text-sm font-medium text-base"
+              >
+                {saving ? "Saving..." : "Save"}
+              </button>
             </div>
           </div>
+          </>
         )}
       </div>
     </div>
