@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.52.1] - 2026-04-13
+
+### Fixed
+
+- **Merge-all PR sessions now default to Codex High** — the merge-all workflow now prefers Codex at High effort instead of reusing the app-wide default detected agent, so bulk PR merges start with the stronger Codex reasoning profile by default while still falling back cleanly when Codex is unavailable
+- **Merge-all API now enforces valid agent/effort combinations** — the project route accepts an explicit effort level, defaults server-side to `codex` + `high`, and rejects unsupported combinations before starting the thread
+
+### Added
+
+- **Merge-all route regression coverage** — added route tests for the new `codex` + `high` default and for invalid effort validation on agent-specific requests
+
 ## [0.1.52.0] - 2026-04-06
 
 ### Fixed
