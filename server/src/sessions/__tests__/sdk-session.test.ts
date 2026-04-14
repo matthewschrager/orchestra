@@ -466,6 +466,21 @@ function mockParseMessage(msg: unknown): ParseResult {
       sessionId: m.session_id as string | undefined,
     };
   }
+  if (type === "codex_attention") {
+    return {
+      messages: [],
+      deltas: [],
+      attention: {
+        kind: "permission",
+        prompt: "Codex wants to run npm test",
+        metadata: {
+          source: "codex_app_server_request",
+          codexRequestId: 42,
+          codexRequestMethod: "item/commandExecution/requestApproval",
+        },
+      },
+    };
+  }
   return { messages: [], deltas: [] };
 }
 
@@ -478,6 +493,7 @@ function createPersistentMockAdapter() {
   let pushMessage: (msg: Record<string, unknown>) => void;
   let finish: () => void;
   let injectCalls: Array<{ text: string; sessionId: string; priority?: "now" | "next" }> = [];
+  let resolveAttentionCalls: Array<{ metadata: Record<string, unknown>; resolution: any }> = [];
   let startCalls: Array<{ prompt: string; resumeSessionId?: string }> = [];
   let closed = false;
   let resetCalls = 0;
@@ -543,6 +559,10 @@ function createPersistentMockAdapter() {
         async injectMessage(text: string, sessionId: string, priority?: "now" | "next"): Promise<void> {
           injectCalls.push({ text, sessionId, priority });
         },
+        async resolveAttention(metadata, resolution): Promise<boolean> {
+          resolveAttentionCalls.push({ metadata, resolution });
+          return true;
+        },
       };
     },
   };
@@ -552,6 +572,7 @@ function createPersistentMockAdapter() {
     pushMessage: (msg: Record<string, unknown>) => pushMessage(msg),
     finish: () => finish(),
     getInjectCalls: () => injectCalls,
+    getResolveAttentionCalls: () => resolveAttentionCalls,
     getStartCalls: () => startCalls,
     isClosed: () => closed,
     getResetCalls: () => resetCalls,
@@ -605,6 +626,73 @@ describe("Persistent Session lifecycle", () => {
     expect(msgs[0].content).toBe("hello persistent");
     const assistantMsg = msgs.find((m: any) => m.content === "Turn 1 response");
     expect(assistantMsg).toBeDefined();
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: raw turn.started moves an idle thread back to running", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "first turn",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-turn-started", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.01,
+      duration_ms: 10,
+      session_id: "sess-turn-started",
+      permission_denials: [],
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+    expect(getThread(db, thread.id)?.status).toBe("done");
+
+    mock.pushMessage({ type: "turn.started" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("running");
+    expect(updated?.metrics_active_turn_started_at).toBeTruthy();
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: adapter-backed attention resolves through the live session instead of sendMessage", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "start codex attention",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-codex-attention", tools: [], cwd: "/tmp" });
+    mock.pushMessage({ type: "codex_attention" });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(getThread(db, thread.id)?.status).toBe("waiting");
+    const pending = getPendingAttention(db, thread.id);
+    expect(pending).toHaveLength(1);
+
+    await sessionManager.resolveAttention(pending[0].id, { type: "user", action: "allow" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const calls = mock.getResolveAttentionCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].metadata.codexRequestMethod).toBe("item/commandExecution/requestApproval");
+    expect(calls[0].resolution).toEqual({ type: "user", action: "allow" });
+    expect(mock.getInjectCalls()).toHaveLength(0);
+    expect(getThread(db, thread.id)?.status).toBe("running");
 
     sessionManager.stopAll();
   });
