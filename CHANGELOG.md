@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.52.2] - 2026-04-14
+
+### Fixed
+
+- **Markdown screenshots now render in assistant messages** — local image paths like `/tmp/...png` in Markdown are now rewritten through `/api/files/serve`, so screenshots that already worked in tool result cards also display correctly when referenced later in assistant prose
+
+### Added
+
+- **Markdown image regression coverage** — added client tests that lock in local Markdown image proxying while leaving normal web image URLs unchanged
+
 ## [0.1.52.0] - 2026-04-06
 
 ### Fixed
