@@ -1,39 +1,25 @@
-// NOTE: @openai/codex-sdk is ESM-only (type: "module").
-// All imports MUST use await import(), never top-level import or require().
-// A top-level import would crash the server if the SDK is not installed.
-
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, normalize, relative, resolve } from "node:path";
 import { extractAskUserRequest } from "./askUser";
 import { getCliVersion, hasCli } from "./cli";
 import { extractToolResultImages, normalizeToolResultContent } from "./toolResultMedia";
+import { CodexAppServerClient } from "./codex-app-server/client";
 import type {
   AgentAdapter,
   AgentSession,
   ParsedMessage,
   ParseResult,
+  PersistentSession,
   StartOpts,
 } from "./types";
 import { gitSpawnSync } from "../utils/git";
-import { toCodexPermissionConfig, type PermissionMode } from "shared";
-
-interface CodexCumulativeUsage {
-  inputTokens: number;
-  cachedInputTokens: number;
-  outputTokens: number;
-}
 
 interface CodexParserOptions {
   cwd?: string;
-  sessionId?: string;
-  cumulativeUsageBaseline?: CodexCumulativeUsage;
-  suppressTokenMetrics?: boolean;
-  onCumulativeUsage?: (sessionId: string, usage: CodexCumulativeUsage) => void;
 }
 
 export class CodexAdapter implements AgentAdapter {
   name = "codex";
-  private readonly cumulativeUsageBySessionId = new Map<string, CodexCumulativeUsage>();
 
   async detect(): Promise<boolean> {
     return hasCli("codex");
@@ -44,56 +30,50 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   start(opts: StartOpts): AgentSession {
-    const abortController = new AbortController();
-    const cumulativeUsageBaseline = opts.resumeSessionId
-      ? this.cumulativeUsageBySessionId.get(opts.resumeSessionId)
-      : undefined;
-    const parser = new CodexParser({
-      cwd: opts.cwd,
-      sessionId: opts.resumeSessionId,
-      cumulativeUsageBaseline,
-      suppressTokenMetrics: !!opts.resumeSessionId && !cumulativeUsageBaseline,
-      onCumulativeUsage: (sessionId, usage) => {
-        this.cumulativeUsageBySessionId.set(sessionId, usage);
-      },
-    });
-
-    async function* generateEvents(): AsyncGenerator<unknown> {
-      const { Codex } = await import("@openai/codex-sdk");
-      const codex = new Codex();
-
-      const codexPerms = toCodexPermissionConfig(opts.permissionMode as PermissionMode | undefined);
-      const threadOpts = {
-        model: opts.model || undefined,
-        modelReasoningEffort: opts.effortLevel,
-        sandboxMode: codexPerms.sandboxMode as "danger-full-access" | "container-only",
-        workingDirectory: opts.cwd,
-        approvalPolicy: codexPerms.approvalPolicy as "never" | "unless-allow-listed" | "on-failure",
-      };
-
-      const thread = opts.resumeSessionId
-        ? codex.resumeThread(opts.resumeSessionId, threadOpts)
-        : codex.startThread(threadOpts);
-
-      const { events } = await thread.runStreamed(opts.prompt, {
-        signal: abortController.signal,
-      });
-
-      for await (const event of events) {
-        yield event;
-      }
-    }
-
-    return {
-      messages: generateEvents(),
-      abort: () => abortController.abort(),
-      parseMessage: (msg: unknown) => parser.handleEvent(msg),
-      sessionId: opts.resumeSessionId,
-    };
+    return this.startPersistent(opts);
   }
 
   supportsResume(): boolean {
     return true;
+  }
+
+  supportsPersistent(): boolean {
+    return true;
+  }
+
+  startPersistent(opts: StartOpts): PersistentSession {
+    const parser = new CodexParser({
+      cwd: opts.cwd,
+    });
+    const client = new CodexAppServerClient({
+      cwd: opts.cwd,
+      effortLevel: opts.effortLevel,
+      model: opts.model,
+      permissionMode: opts.permissionMode,
+      prompt: opts.prompt,
+      resumeSessionId: opts.resumeSessionId,
+    });
+
+    return {
+      messages: client.events,
+      abort: () => client.close(),
+      parseMessage: (msg: unknown) => parser.handleEvent(msg),
+      sessionId: opts.resumeSessionId,
+      close: () => client.close(),
+      resetTurnState: () => parser.resetTurnState(),
+      injectMessage: async (text: string, _sessionId: string, priority?: "now" | "next") => {
+        await client.injectMessage(text, priority);
+      },
+      setModel: async (model: string) => {
+        await client.setModel(model);
+      },
+      setPermissionMode: async (mode: string) => {
+        await client.setPermissionMode(mode);
+      },
+      resolveAttention: async (metadata, resolution) => {
+        return await client.resolveAttention(metadata, resolution);
+      },
+    };
   }
 }
 
@@ -111,33 +91,22 @@ export class CodexParser {
   private readonly fileSnapshotsByItemId = new Map<string, Map<string, string>>();
   /** Turn-level fallback snapshot when Codex only emits completed file_change items. */
   private turnBaselineByPath = new Map<string, string>();
-  /** Current Codex thread ID, used to persist cumulative usage baselines across turns. */
-  private currentSessionId: string | undefined;
-  /** Last cumulative usage snapshot surfaced by the Codex SDK for this thread. */
-  private cumulativeUsageBaseline: CodexCumulativeUsage | undefined;
-  /**
-   * Resumed sessions may not have a baseline after Orchestra restarts. In that case,
-   * suppress token metrics for the first resumed turn instead of surfacing a bogus
-   * multi-turn cumulative total.
-   */
-  private suppressTokenMetrics: boolean;
-  private readonly onCumulativeUsage?: (sessionId: string, usage: CodexCumulativeUsage) => void;
+
+  resetTurnState(): void {
+    this.lastTextByItemId.clear();
+    this.lastCommandByItemId.clear();
+    this.lastTodoSnapshotByItemId.clear();
+    this.fileSnapshotsByItemId.clear();
+    this.turnBaselineByPath = new Map<string, string>();
+  }
 
   constructor(opts: string | CodexParserOptions = process.cwd()) {
     if (typeof opts === "string") {
       this.cwd = opts;
-      this.currentSessionId = undefined;
-      this.cumulativeUsageBaseline = undefined;
-      this.suppressTokenMetrics = false;
-      this.onCumulativeUsage = undefined;
       return;
     }
 
     this.cwd = opts.cwd ?? process.cwd();
-    this.currentSessionId = opts.sessionId;
-    this.cumulativeUsageBaseline = opts.cumulativeUsageBaseline;
-    this.suppressTokenMetrics = opts.suppressTokenMetrics ?? false;
-    this.onCumulativeUsage = opts.onCumulativeUsage;
   }
 
   private readonly cwd: string;
@@ -149,15 +118,19 @@ export class CodexParser {
 
     switch (type) {
       case "thread.started":
-        this.currentSessionId = event.thread_id as string;
         return {
           messages: [],
-          deltas: [],
+          deltas: typeof event.model_name === "string"
+            ? [{ deltaType: "metrics", modelName: event.model_name }]
+            : [],
           sessionId: event.thread_id as string,
         };
 
       case "turn.started":
         return this.handleTurnStarted();
+
+      case "thread.token_usage.updated":
+        return this.handleTokenUsageUpdated(event);
 
       case "turn.completed":
         return this.handleTurnCompleted(event);
@@ -174,6 +147,33 @@ export class CodexParser {
       case "item.completed":
         return this.handleItemCompleted(event);
 
+      case "metrics.model": {
+        const modelName = event.model_name as string | undefined;
+        return modelName
+          ? { messages: [], deltas: [{ deltaType: "metrics", modelName }] }
+          : EMPTY;
+      }
+
+      case "attention.request": {
+        const attention = event.attention as {
+          kind?: "ask_user" | "permission" | "confirmation";
+          prompt?: string;
+          options?: string[];
+          metadata?: Record<string, unknown>;
+        } | undefined;
+        if (!attention?.kind || !attention.prompt) return EMPTY;
+        return {
+          messages: [],
+          deltas: [],
+          attention: {
+            kind: attention.kind,
+            prompt: attention.prompt,
+            options: attention.options,
+            metadata: attention.metadata,
+          },
+        };
+      }
+
       case "error":
         return {
           messages: [{ role: "assistant", content: `**Agent error:** ${event.message ?? "unknown error"}` }],
@@ -188,40 +188,41 @@ export class CodexParser {
 
   // ── Event handlers ──────────────────────────────────────
 
+  private handleTokenUsageUpdated(event: Record<string, unknown>): ParseResult {
+    const usage = event.usage as {
+      input_tokens?: number;
+      cached_input_tokens?: number;
+      output_tokens?: number;
+      reasoning_output_tokens?: number;
+    } | undefined;
+
+    if (!usage) return EMPTY;
+
+    return {
+      messages: [],
+      deltas: [{
+        deltaType: "metrics",
+        inputTokens: (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0),
+        // Fold reasoning tokens into outputTokens for Codex context occupancy.
+        outputTokens: (usage.output_tokens ?? 0) + (usage.reasoning_output_tokens ?? 0),
+        contextWindow: event.context_window as number | undefined,
+        modelName: event.model_name as string | undefined,
+      }],
+    };
+  }
+
   private handleTurnCompleted(event: Record<string, unknown>): ParseResult {
     const usage = event.usage as {
       input_tokens?: number;
       cached_input_tokens?: number;
       output_tokens?: number;
+      reasoning_output_tokens?: number;
     } | undefined;
     const deltas: ParseResult["deltas"] = [];
 
     if (usage) {
-      const cumulativeUsage = {
-        inputTokens: usage.input_tokens ?? 0,
-        cachedInputTokens: usage.cached_input_tokens ?? 0,
-        outputTokens: usage.output_tokens ?? 0,
-      };
-
-      // The Codex SDK's turn.completed usage is derived from the thread's cumulative
-      // token totals, not the latest request. Recover per-turn totals by diffing
-      // against the last cumulative snapshot we observed for this session.
-      //
-      // If Orchestra resumes an existing Codex session without a cached baseline
-      // (e.g. after a server restart), suppress token metrics for that turn rather
-      // than surfacing a misleading multi-turn total.
-      const turnInputTokens = this.suppressTokenMetrics
-        ? undefined
-        : this.diffUsage(
-            cumulativeUsage.inputTokens + cumulativeUsage.cachedInputTokens,
-            (this.cumulativeUsageBaseline?.inputTokens ?? 0) + (this.cumulativeUsageBaseline?.cachedInputTokens ?? 0),
-          );
-      const turnOutputTokens = this.suppressTokenMetrics
-        ? undefined
-        : this.diffUsage(
-            cumulativeUsage.outputTokens,
-            this.cumulativeUsageBaseline?.outputTokens ?? 0,
-          );
+      const turnInputTokens = (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0);
+      const turnOutputTokens = (usage.output_tokens ?? 0) + (usage.reasoning_output_tokens ?? 0);
 
       deltas.push({
         deltaType: "metrics",
@@ -231,12 +232,13 @@ export class CodexParser {
         outputTokens: turnOutputTokens,
         finalMetrics: true,
       });
-
-      if (this.currentSessionId) {
-        this.onCumulativeUsage?.(this.currentSessionId, cumulativeUsage);
-      }
-      this.cumulativeUsageBaseline = cumulativeUsage;
-      this.suppressTokenMetrics = false;
+    } else {
+      deltas.push({
+        deltaType: "metrics",
+        costUsd: undefined,
+        durationMs: undefined,
+        finalMetrics: true,
+      });
     }
     deltas.push({ deltaType: "turn_end" });
     this.resetTurnState();
@@ -259,10 +261,6 @@ export class CodexParser {
     this.turnBaselineByPath = this.captureTurnBaseline();
     this.fileSnapshotsByItemId.clear();
     return EMPTY;
-  }
-
-  private diffUsage(current: number, previous: number): number {
-    return Math.max(current - previous, 0);
   }
 
   private handleItemStarted(event: Record<string, unknown>): ParseResult {
@@ -503,7 +501,7 @@ export class CodexParser {
     item: Record<string, unknown>,
     opts?: { terminal?: boolean },
   ): ParseResult {
-    const items = (item.items as Array<{ text?: string; completed?: boolean }>) ?? [];
+    const items = (item.items as Array<{ text?: string; completed?: boolean; status?: string }>) ?? [];
     const todos = this.normalizeTodoItems(items, { activelyRunning: !opts?.terminal });
     const toolInput = JSON.stringify({ todos });
     const prev = this.lastTodoSnapshotByItemId.get(itemId);
@@ -535,23 +533,27 @@ export class CodexParser {
   }
 
   private normalizeTodoItems(
-    items: Array<{ text?: string; completed?: boolean }>,
+    items: Array<{ text?: string; completed?: boolean; status?: string }>,
     opts: { activelyRunning: boolean },
   ): Array<{ content: string; status: "pending" | "in_progress" | "completed"; activeForm: string }> {
-    // The Codex SDK exposes todo items as { text, completed } only. It does not tell us
-    // which incomplete item is currently active, so we synthesize one for live updates by
-    // promoting the first unfinished item to in_progress while the todo_list item is active.
     const firstIncompleteIndex = opts.activelyRunning
-      ? items.findIndex((item) => item.completed !== true)
+      ? items.findIndex((item) => item.completed !== true && item.status !== "completed")
       : -1;
 
     return items.map((item, index) => {
       const content = item.text ?? "";
-      const status = item.completed === true
+      const explicitStatus = item.status === "completed"
+        ? "completed"
+        : item.status === "in_progress"
+          ? "in_progress"
+          : item.status === "pending"
+            ? "pending"
+            : null;
+      const status = explicitStatus ?? (item.completed === true
         ? "completed"
         : index === firstIncompleteIndex
           ? "in_progress"
-          : "pending";
+          : "pending");
 
       return {
         content,

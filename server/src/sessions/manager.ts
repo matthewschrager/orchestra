@@ -543,6 +543,14 @@ export class SessionManager {
     // Only resume if WE actually performed the resolution (resolved_at was null before)
     const threadId = resolved.thread_id;
     const res = resolution as { type?: string; text?: string; optionIndex?: number; action?: string };
+    const metadata = existing.metadata ? JSON.parse(existing.metadata) : {};
+
+    if (metadata.source === "codex_app_server_request") {
+      await this.handleAdapterBackedAttentionResolution(threadId, metadata, resolution as AttentionResolution);
+      this.notifyAttentionResolved(attentionId, threadId);
+      return resolved;
+    }
+
     if (res.type === "user") {
       const thread = getThread(this.db, threadId);
       if (thread && (thread.status === "waiting" || thread.status === "done")) {
@@ -550,7 +558,6 @@ export class SessionManager {
         // ExitPlanMode is denied in canUseTool (Zod error workaround), so the CLI subprocess
         // never actually exits plan mode. On approval, we call setPermissionMode to flip the
         // CLI back to bypassPermissions before telling the agent to proceed.
-        const metadata = existing.metadata ? JSON.parse(existing.metadata) : {};
         if (metadata.source === "exit_plan_mode") {
           await this.handleExitPlanModeResolution(threadId, res);
           this.notifyAttentionResolved(attentionId, threadId);
@@ -816,6 +823,13 @@ export class SessionManager {
         }
 
         activeSession.lastMessageAt = Date.now();
+
+        const rawType = typeof m.type === "string" ? m.type : "";
+        if (activeSession.persistent && rawType === "turn.started" && activeSession.state !== "thinking") {
+          activeSession.state = "thinking";
+          updateThreadSilent(this.db, threadId, this.getTurnStartedFields({ status: "running", error_message: null }));
+          this.notifyThread(threadId);
+        }
 
         const { messages, deltas, attention, sessionId, error: sdkError } =
           activeSession.session.parseMessage(msg);
@@ -1273,6 +1287,34 @@ export class SessionManager {
     this.sendMessage(threadId, message);
   }
 
+  private async handleAdapterBackedAttentionResolution(
+    threadId: string,
+    metadata: Record<string, unknown>,
+    resolution: AttentionResolution,
+  ): Promise<void> {
+    const activeSession = this.sessions.get(threadId);
+    if (!activeSession?.persistent) {
+      throw new Error("No active persistent session is available to resolve this attention item");
+    }
+
+    const persistentSession = activeSession.session as PersistentSession;
+    if (!persistentSession.resolveAttention) {
+      throw new Error(`Adapter "${activeSession.adapter.name}" does not support adapter-backed attention resolution`);
+    }
+
+    const handled = await persistentSession.resolveAttention(metadata, resolution);
+    if (!handled) {
+      throw new Error("The adapter could not resolve the pending attention item");
+    }
+
+    if (this.sessions.get(threadId) === activeSession && resolution.type === "user") {
+      activeSession.state = "thinking";
+      activeSession.lastMessageAt = Date.now();
+      updateThread(this.db, threadId, { status: "running", error_message: null });
+      this.notifyThread(threadId);
+    }
+  }
+
   private persistSessionId(threadId: string, sessionId: string): void {
     this.db.query(
       "UPDATE threads SET session_id = ?, updated_at = datetime('now') WHERE id = ?",
@@ -1305,6 +1347,22 @@ export class SessionManager {
   private orphanPendingAttention(threadId: string, resolution: Extract<AttentionResolution, { type: "orphaned" }>): number {
     const pending = getPendingAttention(this.db, threadId);
     if (pending.length === 0) return 0;
+
+    const activeSession = this.sessions.get(threadId);
+    const persistentSession = activeSession?.persistent ? activeSession.session as PersistentSession : null;
+    for (const item of pending) {
+      if (!persistentSession?.resolveAttention || !item.metadata) continue;
+      let metadata: Record<string, unknown> | null = null;
+      try {
+        metadata = JSON.parse(item.metadata) as Record<string, unknown>;
+      } catch {
+        metadata = null;
+      }
+      if (metadata?.source !== "codex_app_server_request") continue;
+      persistentSession.resolveAttention(metadata, resolution).catch((err) => {
+        console.error(`[session] Failed to orphan adapter-backed attention ${item.id}:`, err);
+      });
+    }
 
     const orphaned = orphanAttentionItems(this.db, threadId, resolution.reason);
     if (orphaned === 0) return 0;

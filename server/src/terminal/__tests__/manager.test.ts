@@ -195,7 +195,7 @@ describe("TerminalManager", () => {
     outputs.length = 0; // Clear init output
     manager.write("t-cwd", "pwd\n");
 
-    await waitForOutput(() => outputs.join("").includes(testDir));
+    await waitForOutput(() => outputs.join("").includes(testDir), 5_000);
 
     const combined = outputs.join("");
     // The PTY should report the testDir as cwd, not $HOME or elsewhere

@@ -64,10 +64,10 @@ export const api = {
       body: JSON.stringify(body ?? {}),
     }),
 
-  mergeAllPrs: (projectId: string, agent: string) =>
+  mergeAllPrs: (projectId: string, agent?: string, effortLevel?: import("shared").EffortLevel | null) =>
     request<import("shared").Thread>(`/projects/${projectId}/merge-all-prs`, {
       method: "POST",
-      body: JSON.stringify({ agent }),
+      body: JSON.stringify({ agent, effortLevel }),
     }),
 
   // Threads

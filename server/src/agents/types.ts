@@ -1,4 +1,4 @@
-import type { AttentionKind, EffortLevel, StreamDelta } from "shared";
+import type { AttentionKind, AttentionResolution, EffortLevel, StreamDelta } from "shared";
 
 export interface StartOpts {
   cwd: string;
@@ -35,6 +35,9 @@ export interface PersistentSession extends AgentSession {
   /** Change the CLI subprocess permission mode (e.g., exit plan mode after user approval).
    *  Optional — only available on adapters backed by the Claude Agent SDK Query object. */
   setPermissionMode?(mode: string): Promise<void>;
+  /** Resolve an adapter-backed attention item without sending a follow-up user message.
+   *  Used for app-server approval/user-input requests that are waiting on a direct response. */
+  resolveAttention?(metadata: Record<string, unknown>, resolution: AttentionResolution): Promise<boolean>;
 }
 
 export interface ParsedMessage {

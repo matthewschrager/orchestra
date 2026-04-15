@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import type { SlashCommand } from "shared";
 import { canNavigateInputHistory, getNextInputHistoryState } from "../lib/inputHistory";
 
@@ -132,6 +132,8 @@ interface Props {
   fileSuggestions?: string[];
   fileLoading?: boolean;
   onFileQueryChange?: (query: string | null) => void;
+  /** Maximum height in pixels before the textarea starts scrolling (default: 200) */
+  maxHeight?: number;
 }
 
 export function SlashCommandInput({
@@ -148,6 +150,7 @@ export function SlashCommandInput({
   fileSuggestions = [],
   fileLoading = false,
   onFileQueryChange,
+  maxHeight = 200,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
@@ -235,6 +238,19 @@ export function SlashCommandInput({
     const item = dropdown.querySelector("[data-selected=true]") as HTMLElement | null;
     item?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex, dropdownMode]);
+
+  // Auto-resize textarea height based on content
+  useLayoutEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    // Reset to auto so scrollHeight reflects actual content size
+    ta.style.height = "auto";
+    // Clamp between the natural rows minimum and maxHeight
+    const newHeight = Math.min(ta.scrollHeight, maxHeight);
+    ta.style.height = `${newHeight}px`;
+    // Enable/disable scrolling based on whether content exceeds max
+    ta.style.overflowY = ta.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [value, maxHeight]);
 
   // Track pixel X-offset of the slash token for cursor-positioned dropdown
   const [caretLeft, setCaretLeft] = useState<number>(0);
@@ -527,7 +543,10 @@ export function SlashCommandInput({
               ? "bg-transparent text-transparent selection:bg-accent/20"
               : "bg-surface-2",
           ].join(" ")}
-          style={hasHighlights ? { caretColor: "var(--color-content-1)" } : undefined}
+          style={{
+            ...(hasHighlights ? { caretColor: "var(--color-content-1)" } : {}),
+            overflowY: "hidden",
+          }}
           onFocus={onCommandFocus}
           onKeyDown={handleKeyDown}
           onSelect={updateCursor}

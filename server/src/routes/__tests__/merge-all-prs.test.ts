@@ -192,7 +192,7 @@ describe("project PR metadata and merge-all route", () => {
     });
     const res = await app.request("/projects/proj-1/merge-all-prs", {
       method: "POST",
-      body: JSON.stringify({ agent: "codex" }),
+      body: JSON.stringify({}),
       headers: { "content-type": "application/json" },
     });
 
@@ -200,6 +200,7 @@ describe("project PR metadata and merge-all route", () => {
     expect(capturedOpts).not.toBeNull();
     expect(capturedOpts?.title).toBe("Merge all PRs (2)");
     expect(capturedOpts?.agent).toBe("codex");
+    expect(capturedOpts?.effortLevel).toBe("high");
     expect(capturedOpts?.repoPath).toBe(tempDir);
 
     const prompt = String(capturedOpts?.prompt);
@@ -216,6 +217,35 @@ describe("project PR metadata and merge-all route", () => {
     expect(body.title).toBe("Merge all PRs (2)");
     expect(body.agent).toBe("codex");
     expect(body.projectId).toBe("proj-1");
+  });
+
+  test("rejects unsupported effort level for the selected agent", async () => {
+    insertProject(db, "proj-1", tempDir, "Orchestra");
+    insertThread(db, "pr-open", "proj-1", tempDir, {
+      title: "Fix auth edge case",
+      branch: "orchestra/auth-fix",
+    });
+
+    const sessionManager = {
+      startThread: async () => {
+        throw new Error("should not be called");
+      },
+    } as unknown as SessionManager;
+
+    const app = createApp(db, sessionManager, {
+      openPrLister: async () => new Map([
+        ["orchestra/auth-fix", createPr("orchestra/auth-fix", 17, "open")],
+      ]),
+    });
+    const res = await app.request("/projects/proj-1/merge-all-prs", {
+      method: "POST",
+      body: JSON.stringify({ agent: "claude", effortLevel: "xhigh" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain('Effort level "xhigh" is not supported for claude');
   });
 
   test("rejects merge-all when there are no outstanding PRs", async () => {
