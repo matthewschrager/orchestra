@@ -365,6 +365,11 @@ function AppInner() {
     () => agents.find((agent) => agent.detected)?.name ?? "claude",
     [agents],
   );
+  const defaultMergeAllAgent = useMemo(
+    () => agents.find((agent) => agent.detected && agent.name === "codex")?.name ?? defaultDetectedAgent,
+    [agents, defaultDetectedAgent],
+  );
+  const defaultMergeAllEffort: EffortLevel | null = defaultMergeAllAgent === "codex" ? "high" : null;
   const activeMessages = (activeThreadId ? messages.get(activeThreadId) : null) ?? [];
   const activeInputHistory = useMemo(() => buildInputHistory(activeMessages), [activeMessages]);
   const activeStreamingText = activeThreadId ? streaming.text.get(activeThreadId) : undefined;
@@ -980,7 +985,7 @@ function AppInner() {
     try {
       setError(null);
       setMergingProjectId(projectId);
-      const thread = await api.mergeAllPrs(projectId, defaultDetectedAgent);
+      const thread = await api.mergeAllPrs(projectId, defaultMergeAllAgent, defaultMergeAllEffort);
       setMergeConfirmProjectId(null);
       setThreads((prev) => prev.some((t) => t.id === thread.id) ? prev : [thread, ...prev]);
       setActiveThreadId(thread.id);

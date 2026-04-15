@@ -26,7 +26,7 @@ import {
   resolveThreadBranch,
   type PrLookupInfo,
 } from "../worktrees/pr-status";
-import type { CleanupPushedResponse, PrStatus } from "shared";
+import { isEffortLevelSupported, type CleanupPushedResponse, type PrStatus } from "shared";
 import {
   persistResolvedPr,
   persistThreadBranch,
@@ -302,9 +302,12 @@ export function createProjectRoutes(
     const project = getProject(db, projectId);
     if (!project) return c.json({ error: "Not found" }, 404);
 
-    const body = await c.req.json<{ agent?: string }>().catch(() => ({}));
-    if (!body.agent) {
-      return c.json({ error: "agent is required" }, 400);
+    const body = await c.req.json<{ agent?: string; effortLevel?: import("shared").EffortLevel }>().catch(() => ({}));
+    const agent = body.agent?.trim() || "codex";
+    const effortLevel = body.effortLevel ?? (agent === "codex" ? "high" : undefined);
+
+    if (effortLevel && !isEffortLevelSupported(agent, effortLevel)) {
+      return c.json({ error: `Effort level "${effortLevel}" is not supported for ${agent}` }, 400);
     }
 
     if (!existsSync(project.path)) {
@@ -333,7 +336,8 @@ export function createProjectRoutes(
 
     try {
       const thread = await sessionManager.startThread({
-        agent: body.agent,
+        agent,
+        effortLevel,
         prompt,
         repoPath: project.path,
         projectId,
