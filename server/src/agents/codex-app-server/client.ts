@@ -216,6 +216,9 @@ export class CodexAppServerClient {
       }
 
       this.threadId = threadId;
+      if (typeof response.model === "string" && response.model) {
+        this.currentConfig.model = response.model;
+      }
       for (const event of normalizeCodexClientBootstrap(threadId, typeof response.model === "string" ? response.model : null)) {
         this.eventQueue.push(event);
       }
@@ -317,6 +320,9 @@ export class CodexAppServerClient {
 
     const normalized = normalizeCodexServerMessage(message, this.normalizerState);
     for (const event of normalized) {
+      if (event.type === "metrics.model" && event.model_name) {
+        this.currentConfig.model = event.model_name;
+      }
       this.eventQueue.push(event);
 
       if (event.type === "turn.completed" || event.type === "turn.failed") {

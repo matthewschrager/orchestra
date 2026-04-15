@@ -21,6 +21,7 @@ export const CODEX_PERMISSION_OPTIONS: PermissionOption[] = [
   { value: "bypassPermissions", label: "Full Access", description: "No sandbox, auto-approve everything" },
   { value: "acceptEdits", label: "Suggest (network disabled)", description: "Suggest changes, network disabled in sandbox" },
   { value: "default", label: "Auto Edit (network disabled)", description: "Auto-apply file changes, network disabled in sandbox" },
+  { value: "plan", label: "Plan Mode", description: "Plan first, then use structured questions and approvals before execution" },
 ];
 
 /** Get the list of permission options available for a given agent. */

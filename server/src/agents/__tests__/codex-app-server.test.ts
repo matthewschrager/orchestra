@@ -61,6 +61,31 @@ describe("Codex app-server protocol helpers", () => {
     });
   });
 
+  test("adds plan collaboration mode for Codex plan turns", () => {
+    const turnParams = buildTurnStartParams("thread-1", "Plan it", {
+      cwd: "/repo",
+      model: "gpt-5.4",
+      permissionMode: "plan",
+      effortLevel: "max",
+    });
+
+    expect(turnParams).toMatchObject({
+      threadId: "thread-1",
+      cwd: "/repo",
+      model: "gpt-5.4",
+      approvalPolicy: "on-request",
+      effort: "xhigh",
+      collaborationMode: {
+        mode: "plan",
+        settings: {
+          model: "gpt-5.4",
+          reasoning_effort: "xhigh",
+          developer_instructions: null,
+        },
+      },
+    });
+  });
+
   test("normalizes plan updates into todo_list items", () => {
     const state = createCodexNormalizerState();
     const events = normalizeCodexServerMessage({

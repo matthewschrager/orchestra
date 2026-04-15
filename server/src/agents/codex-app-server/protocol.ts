@@ -102,7 +102,15 @@ export interface CodexTurnOverrides {
         excludeSlashTmp: boolean;
       };
   model?: string;
-  effort?: "low" | "medium" | "high";
+  effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+  collaborationMode?: {
+    mode: "plan";
+    settings: {
+      model: string;
+      reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh" | null;
+      developer_instructions: string | null;
+    };
+  };
 }
 
 interface CodexNormalizerState {
@@ -164,6 +172,11 @@ export function buildTurnStartParams(
   const effort = toCodexReasoningEffort(config.effortLevel);
   if (effort) {
     params.effort = effort;
+  }
+
+  const collaborationMode = buildCollaborationMode(config, effort);
+  if (collaborationMode) {
+    params.collaborationMode = collaborationMode;
   }
 
   return params;
@@ -505,15 +518,38 @@ function makeTextInput(text: string): Record<string, unknown> {
   };
 }
 
-function toCodexReasoningEffort(effort?: string): "low" | "medium" | "high" | undefined {
+function toCodexReasoningEffort(
+  effort?: string,
+): "minimal" | "low" | "medium" | "high" | "xhigh" | undefined {
   switch (effort) {
+    case "minimal":
     case "low":
     case "medium":
     case "high":
       return effort;
+    case "max":
+      return "xhigh";
     default:
       return undefined;
   }
+}
+
+function buildCollaborationMode(
+  config: CodexThreadConfig,
+  effort?: "minimal" | "low" | "medium" | "high" | "xhigh",
+): CodexTurnOverrides["collaborationMode"] | undefined {
+  if (config.permissionMode !== "plan" || !config.model) {
+    return undefined;
+  }
+
+  return {
+    mode: "plan",
+    settings: {
+      model: config.model,
+      reasoning_effort: effort ?? null,
+      developer_instructions: null,
+    },
+  };
 }
 
 function normalizePlanStatus(value: unknown): "pending" | "in_progress" | "completed" {
