@@ -924,9 +924,13 @@ export class SessionManager {
       // CRITICAL: Final identity check after loop
       if (this.sessions.get(threadId) !== activeSession) return;
 
-      // ── Persistent session: iterator end = subprocess died ──
+      // ── Persistent session: iterator ended (subprocess may or may not have exited) ──
       if (activeSession.persistent) {
         this.sessions.delete(threadId);
+        // Ensure the subprocess is killed — the iterator can end even if the process
+        // is still alive (e.g., readLoop EOF while process is blocked on an API call).
+        // close() is idempotent so this is safe even if handleFatal already called it.
+        try { (activeSession.session as PersistentSession).close(); } catch {}
         this.clearMainWorktreeLock(threadId);
 
         if (activeSession.aborted) {
@@ -1028,6 +1032,11 @@ export class SessionManager {
 
       // Real SDK error
       this.sessions.delete(threadId);
+      // Close the old session to kill the subprocess — without this, the process
+      // is orphaned (still running but unreachable) when auto-restart creates a new one.
+      if (activeSession.persistent) {
+        try { (activeSession.session as PersistentSession).close(); } catch {}
+      }
       this.clearMainWorktreeLock(threadId);
       this.orphanPendingAttention(threadId, { type: "orphaned", reason: "agent_error" });
 
@@ -1460,11 +1469,29 @@ export class SessionManager {
       const timeoutMs = this.getInactivityTimeoutMs();
       for (const [threadId, session] of this.sessions) {
         const elapsed = now - session.lastMessageAt;
-        if (elapsed > timeoutMs) {
-          const elapsedSec = Math.round(elapsed / 1000);
-          console.warn(`[health] Thread ${threadId} inactive for ${elapsedSec}s (limit: ${Math.round(timeoutMs / 1000)}s) — aborting`);
-          this.timeoutThread(threadId, elapsedSec);
+        if (elapsed <= timeoutMs) continue;
+
+        // Persistent sessions in idle/waiting state are between turns.
+        // Gracefully close them to free resources (kill the subprocess) but
+        // don't surface an error — the thread is already "done"/"waiting".
+        if (session.persistent && (session.state === "idle" || session.state === "waiting")) {
+          if (DEBUG) console.log(`[health] Thread ${threadId} — closing idle persistent session (${session.state} for ${Math.round(elapsed / 1000)}s)`);
+          const wasWaiting = session.state === "waiting";
+          this.sessions.delete(threadId);
+          session.aborted = true;
+          try { (session.session as PersistentSession).close(); } catch {}
+          this.clearMainWorktreeLock(threadId);
+          if (wasWaiting) {
+            this.orphanPendingAttention(threadId, { type: "orphaned", reason: "session_timed_out" });
+            updateThread(this.db, threadId, this.getTurnEndedFields({ status: "done", pid: null }));
+            this.notifyThread(threadId);
+          }
+          continue;
         }
+
+        const elapsedSec = Math.round(elapsed / 1000);
+        console.warn(`[health] Thread ${threadId} inactive for ${elapsedSec}s (limit: ${Math.round(timeoutMs / 1000)}s) — aborting`);
+        this.timeoutThread(threadId, elapsedSec);
       }
       // Housekeeping: clean up delivered queue entries older than 1 hour
       cleanDeliveredQueue(this.db);

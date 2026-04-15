@@ -81,6 +81,9 @@ export class CodexAppServerClient {
   private activeTurnId: string | null = null;
   private currentConfig: CodexThreadConfig;
   private pendingPriorityNowInput: string | null = null;
+  /** Tracks an in-flight startTurn triggered by the interrupt→turn.completed flow.
+   *  injectMessage awaits this to prevent concurrent turn/start requests. */
+  private pendingTurnStartPromise: Promise<void> | null = null;
 
   constructor(private readonly opts: CodexStartSessionOptions) {
     this.events = this.eventQueue;
@@ -95,6 +98,11 @@ export class CodexAppServerClient {
 
   async injectMessage(text: string, priority: "now" | "next" = "next"): Promise<void> {
     await this.readyPromise;
+    // Serialize behind any in-flight turn start from the interrupt→turn.completed flow.
+    // Without this, a queue-drain injectMessage could race with the deferred startTurn.
+    if (this.pendingTurnStartPromise) {
+      await this.pendingTurnStartPromise;
+    }
     if (!this.threadId) {
       throw new Error("Codex thread is not ready");
     }
@@ -330,7 +338,14 @@ export class CodexAppServerClient {
         const nextInput = this.pendingPriorityNowInput;
         this.pendingPriorityNowInput = null;
         if (nextInput) {
-          await this.startTurn(nextInput);
+          // CRITICAL: Do NOT await startTurn here — we are inside the readLoop's
+          // onLine handler. startTurn sends turn/start to stdin and awaits the
+          // response from stdout, but the readLoop can't read that response until
+          // this handler returns. Awaiting here causes a permanent deadlock.
+          // Fire-and-forget; injectMessage serializes behind pendingTurnStartPromise.
+          this.pendingTurnStartPromise = this.startTurn(nextInput)
+            .catch((err) => { if (!this.closed) this.handleFatal(err); })
+            .finally(() => { this.pendingTurnStartPromise = null; });
         }
       }
     }

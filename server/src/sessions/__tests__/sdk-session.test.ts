@@ -1469,4 +1469,150 @@ describe("Persistent Session lifecycle", () => {
 
     sessionManager.stopAll();
   });
+
+  test("persistent session: close() is called when iterator ends mid-turn (subprocess cleanup)", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "cleanup test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Start working
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-cleanup", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Working..." }] },
+      session_id: "sess-cleanup",
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Verify session is active
+    expect(sessionManager.isRunning(thread.id)).toBe(true);
+    expect(mock.isClosed()).toBe(false);
+
+    // Iterator ends mid-turn (simulates subprocess dying while still running)
+    mock.finish();
+    await new Promise((r) => setTimeout(r, 100));
+
+    // close() should have been called on the session to kill the subprocess
+    expect(mock.isClosed()).toBe(true);
+
+    // Thread should be in error state
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("error");
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: close() is called when consumeStream catches an error", async () => {
+    // When consumeStream catches an error from the iterator, the old session must
+    // be closed to kill the subprocess. Without this, the process is orphaned.
+    const mock = createPersistentMockAdapter();
+
+    let callCount = 0;
+    const origStartPersistent = mock.adapter.startPersistent!.bind(mock.adapter);
+    mock.adapter.startPersistent = (opts: StartOpts) => {
+      callCount++;
+      const session = origStartPersistent(opts);
+      if (callCount === 1) {
+        // First session: override the iterator to throw after emitting a message
+        session.messages = (async function* () {
+          yield { type: "system", subtype: "init", session_id: "sess-err", tools: [], cwd: "/tmp" };
+          await new Promise((r) => setTimeout(r, 20));
+          throw new Error("Simulated SDK error");
+        })();
+      }
+      return session;
+    };
+
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "error cleanup test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Wait for the error to be caught and processed
+    await new Promise((r) => setTimeout(r, 300));
+
+    // The first session's close() should have been called
+    expect(mock.isClosed()).toBe(true);
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: idle session cleaned up by health check without error", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "idle cleanup test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    // Complete a turn → state becomes idle
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-idle", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Done" }] },
+      session_id: "sess-idle",
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.01,
+      duration_ms: 100,
+      session_id: "sess-idle",
+      permission_denials: [],
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Thread should be "done" and session still alive
+    let updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("done");
+    expect(sessionManager.isRunning(thread.id)).toBe(true);
+
+    // Backdate lastMessageAt to simulate 1 hour of inactivity
+    const mgr = sessionManager as any;
+    const activeSession = mgr.sessions.get(thread.id);
+    expect(activeSession).toBeDefined();
+    expect(activeSession.state).toBe("idle");
+    activeSession.lastMessageAt = Date.now() - 60 * 60 * 1000;
+
+    // Manually trigger the health check interval callback
+    const timeoutMs = mgr.getInactivityTimeoutMs();
+    const now = Date.now();
+    for (const [threadId, session] of mgr.sessions) {
+      const elapsed = now - session.lastMessageAt;
+      if (elapsed <= timeoutMs) continue;
+      if (session.persistent && (session.state === "idle" || session.state === "waiting")) {
+        mgr.sessions.delete(threadId);
+        session.aborted = true;
+        try { session.session.close(); } catch {}
+        mgr.clearMainWorktreeLock(threadId);
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Session should be gone
+    expect(sessionManager.isRunning(thread.id)).toBe(false);
+
+    // Thread should still be "done" — NOT "error" (graceful cleanup)
+    updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("done");
+
+    // close() should have been called
+    expect(mock.isClosed()).toBe(true);
+
+    sessionManager.stopAll();
+  });
 });
