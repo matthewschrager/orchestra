@@ -644,6 +644,7 @@ export class SessionManager {
     return {
       ...fields,
       metrics_active_turn_started_at: new Date().toISOString(),
+      metrics_context_tokens: 0,
       metrics_input_tokens: 0,
       metrics_output_tokens: 0,
     };
@@ -663,6 +664,11 @@ export class SessionManager {
     if (!thread) return;
 
     const fields: Partial<ThreadRow> = {};
+    if (delta.contextTokens !== undefined) {
+      fields.metrics_context_tokens = delta.contextTokens;
+    } else if (delta.inputTokens !== undefined && delta.outputTokens !== undefined) {
+      fields.metrics_context_tokens = delta.inputTokens + delta.outputTokens;
+    }
     if (delta.inputTokens !== undefined) fields.metrics_input_tokens = delta.inputTokens;
     if (delta.outputTokens !== undefined) fields.metrics_output_tokens = delta.outputTokens;
     if (delta.contextWindow !== undefined) fields.metrics_context_window = delta.contextWindow;

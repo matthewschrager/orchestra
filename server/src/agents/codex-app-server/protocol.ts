@@ -60,6 +60,7 @@ export type CodexNormalizedEvent =
   | {
       type: "thread.token_usage.updated";
       usage: {
+        total_tokens: number;
         input_tokens: number;
         cached_input_tokens: number;
         output_tokens: number;
@@ -359,6 +360,7 @@ function normalizeTokenUsage(params: Record<string, unknown>): CodexNormalizedEv
   return {
     type: "thread.token_usage.updated",
     usage: {
+      total_tokens: numberOrZero(last.totalTokens),
       input_tokens: numberOrZero(last.inputTokens),
       cached_input_tokens: numberOrZero(last.cachedInputTokens),
       output_tokens: numberOrZero(last.outputTokens),

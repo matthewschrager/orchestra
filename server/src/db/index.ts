@@ -20,6 +20,7 @@ const MIGRATIONS = [
     metrics_cost_usd REAL NOT NULL DEFAULT 0,
     metrics_duration_ms INTEGER NOT NULL DEFAULT 0,
     metrics_turn_count INTEGER NOT NULL DEFAULT 0,
+    metrics_context_tokens INTEGER NOT NULL DEFAULT 0,
     metrics_input_tokens INTEGER NOT NULL DEFAULT 0,
     metrics_output_tokens INTEGER NOT NULL DEFAULT 0,
     metrics_context_window INTEGER NOT NULL DEFAULT 0,
@@ -181,6 +182,11 @@ const COLUMN_MIGRATIONS = [
     table: "threads",
     column: "metrics_turn_count",
     sql: `ALTER TABLE threads ADD COLUMN metrics_turn_count INTEGER NOT NULL DEFAULT 0`,
+  },
+  {
+    table: "threads",
+    column: "metrics_context_tokens",
+    sql: `ALTER TABLE threads ADD COLUMN metrics_context_tokens INTEGER NOT NULL DEFAULT 0`,
   },
   {
     table: "threads",
@@ -357,7 +363,7 @@ const THREAD_COLUMNS = new Set([
   "title", "status", "worktree", "branch", "base_branch", "pid",
   "error_message", "pr_url", "archived_at", "session_id", "effort_level", "permission_mode", "model",
   "pr_status", "pr_number", "pr_status_checked_at", "last_interacted_at",
-  "metrics_cost_usd", "metrics_duration_ms", "metrics_turn_count",
+  "metrics_cost_usd", "metrics_duration_ms", "metrics_turn_count", "metrics_context_tokens",
   "metrics_input_tokens", "metrics_output_tokens", "metrics_context_window",
   "metrics_model_name", "metrics_active_turn_started_at",
 ]);
@@ -748,6 +754,7 @@ export interface ThreadRow {
   metrics_cost_usd: number;
   metrics_duration_ms: number;
   metrics_turn_count: number;
+  metrics_context_tokens: number;
   metrics_input_tokens: number;
   metrics_output_tokens: number;
   metrics_context_window: number;
@@ -801,6 +808,7 @@ export function threadRowToApi(row: ThreadRow): import("shared").Thread {
       costUsd: row.metrics_cost_usd ?? 0,
       durationMs: row.metrics_duration_ms ?? 0,
       turnCount: row.metrics_turn_count ?? 0,
+      contextTokens: row.metrics_context_tokens ?? 0,
       inputTokens: row.metrics_input_tokens ?? 0,
       outputTokens: row.metrics_output_tokens ?? 0,
       contextWindow: row.metrics_context_window ?? 0,

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.53.1] - 2026-04-14
+
+### Fixed
+
+- **Codex context usage now matches Codex itself instead of a local approximation** — Orchestra now carries Codex app-server `totalTokens` through the server, persistence layer, and client metrics state, so Codex threads use the same context-occupancy number the Codex app/CLI uses instead of reconstructing it from token breakdown fields
+- **Claude live context tracking keeps its streaming behavior** — the run bar now uses the explicit Codex occupancy metric only for Codex threads, while Claude continues using live `input + output` updates so streaming token usage does not freeze mid-turn
+
+### Added
+
+- **Regression coverage for explicit Codex context occupancy** — added protocol, parser, persistence, and run-bar tests that lock in the new `contextTokens` plumbing and the Codex-specific effective-context calculation
+
 ## [0.1.53.0] - 2026-04-14
 
 ### Fixed

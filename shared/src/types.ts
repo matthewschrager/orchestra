@@ -64,7 +64,11 @@ export interface PersistedThreadMetrics {
   costUsd: number;
   durationMs: number;
   turnCount: number;
+  /** Actual tokens occupying the model context window for the latest request */
+  contextTokens: number;
+  /** Per-request input tokens from the latest primary-model API call */
   inputTokens: number;
+  /** Per-request output tokens from the latest primary-model API call */
   outputTokens: number;
   contextWindow: number;
   modelName: string | null;
@@ -147,9 +151,11 @@ export interface StreamDelta {
   costUsd?: number;
   durationMs?: number;
   sessionId?: string;
-  /** Per-request input tokens (including cache reads) — actual context occupancy */
+  /** Actual tokens occupying the model context window for this request */
+  contextTokens?: number;
+  /** Per-request input tokens (including cache reads) */
   inputTokens?: number;
-  /** Per-request output tokens — actual context occupancy */
+  /** Per-request output tokens */
   outputTokens?: number;
   /** Model context window size (from the primary model used) */
   contextWindow?: number;
@@ -169,7 +175,9 @@ export interface TurnMetrics {
   costUsd: number;
   durationMs: number;
   turnCount: number;
-  /** Per-request input tokens from latest primary-model API call (actual context occupancy) */
+  /** Actual tokens occupying the model context window for the latest request */
+  contextTokens: number;
+  /** Per-request input tokens from latest primary-model API call */
   inputTokens: number;
   /** Per-request output tokens from latest primary-model API call */
   outputTokens: number;
