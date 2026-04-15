@@ -28,4 +28,22 @@ describe("MarkdownContent local file links", () => {
     expect(html).toContain('href="https://example.com/docs"');
     expect(html).not.toContain("/api/files/serve");
   });
+
+  test("rewrites absolute local markdown images to the file proxy", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent content={"![before](/tmp/before-typing.png)"} />,
+    );
+
+    expect(html).toContain('src="/api/files/serve?path=%2Ftmp%2Fbefore-typing.png"');
+    expect(html).toContain('alt="before"');
+  });
+
+  test("leaves normal web images alone", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent content={"![logo](https://example.com/logo.png)"} />,
+    );
+
+    expect(html).toContain('src="https://example.com/logo.png"');
+    expect(html).not.toContain("/api/files/serve?path=");
+  });
 });

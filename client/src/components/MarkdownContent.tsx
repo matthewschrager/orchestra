@@ -9,6 +9,7 @@ import { wrapAsciiArt } from "../lib/asciiArt";
 import {
   buildVscodeUrl,
   fileServeUrl,
+  isImageFile,
   isLocalhostHostname,
   isServableFilePath,
   parseLocalFileHref,
@@ -136,6 +137,25 @@ function MarkdownLink({ href, children, ...props }: ComponentProps<"a">) {
   );
 }
 
+function MarkdownImage({ src, alt, ...props }: ComponentProps<"img">) {
+  let resolvedSrc = src;
+  const localFile = parseLocalFileHref(src);
+
+  if (localFile && isImageFile(localFile.path)) {
+    resolvedSrc = fileServeUrl(localFile.path);
+  }
+
+  return (
+    <img
+      src={resolvedSrc}
+      alt={alt ?? ""}
+      loading="lazy"
+      className="max-w-full rounded my-2"
+      {...props}
+    />
+  );
+}
+
 const components: Components = {
   code({ className, children, ...props }) {
     return <code className="md-inline-code" {...props}>{children}</code>;
@@ -152,6 +172,9 @@ const components: Components = {
   },
   a({ href, children, ...props }) {
     return <MarkdownLink href={href} {...props}>{children}</MarkdownLink>;
+  },
+  img({ src, alt, ...props }) {
+    return <MarkdownImage src={src} alt={alt} {...props} />;
   },
 };
 

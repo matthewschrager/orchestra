@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.52.1] - 2026-04-13
+## [0.1.52.4] - 2026-04-14
 
 ### Fixed
 
@@ -10,6 +10,22 @@
 ### Added
 
 - **Merge-all route regression coverage** — added route tests for the new `codex` + `high` default and for invalid effort validation on agent-specific requests
+
+## [0.1.52.3] - 2026-04-14
+
+### Changed
+
+- **Input box grows with your prompt** — the composer textarea now auto-expands vertically as you type multi-line prompts, up to ~10 lines (200px), before scrolling internally. No more squinting at a 2-line box while writing detailed instructions.
+
+## [0.1.52.2] - 2026-04-14
+
+### Fixed
+
+- **Markdown screenshots now render in assistant messages** — local image paths like `/tmp/...png` in Markdown are now rewritten through `/api/files/serve`, so screenshots that already worked in tool result cards also display correctly when referenced later in assistant prose
+
+### Added
+
+- **Markdown image regression coverage** — added client tests that lock in local Markdown image proxying while leaving normal web image URLs unchanged
 
 ## [0.1.52.0] - 2026-04-06
 
