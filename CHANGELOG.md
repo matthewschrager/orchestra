@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.52.3] - 2026-04-14
+
+### Changed
+
+- **Input box grows with your prompt** — the composer textarea now auto-expands vertically as you type multi-line prompts, up to ~10 lines (200px), before scrolling internally. No more squinting at a 2-line box while writing detailed instructions.
+
 ## [0.1.52.2] - 2026-04-14
 
 ### Fixed
