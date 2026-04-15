@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.53.1] - 2026-04-14
+## [0.1.54.1] - 2026-04-15
 
 ### Fixed
 
@@ -10,6 +10,14 @@
 ### Added
 
 - **Regression coverage for explicit Codex context occupancy** — added protocol, parser, persistence, and run-bar tests that lock in the new `contextTokens` plumbing and the Codex-specific effective-context calculation
+
+## [0.1.54.0] - 2026-04-15
+
+### Fixed
+
+- **Codex threads no longer deadlock on interrupt messages** — `handleStdoutLine` was awaiting `startTurn()` inside the read loop, causing a permanent deadlock when the response could never be read. The follow-up turn is now started asynchronously with serialization to prevent concurrent turn starts.
+- **Orphaned Codex subprocesses are now killed during auto-restart** — when `consumeStream` caught an error and triggered auto-restart, the old session's subprocess was never closed. The process stayed alive indefinitely with zero pipe connections to Orchestra. Both the error catch path and the iterator-completed path now call `close()` before cleanup.
+- **Idle persistent sessions no longer spam the health check log** — the health check logged "aborting" every 30 seconds for idle Codex sessions but `timeoutThread()` returned early, leaving the session in the map forever. The health check now gracefully closes idle sessions to free resources without showing an error to the user.
 
 ## [0.1.53.0] - 2026-04-14
 
