@@ -74,6 +74,7 @@ function createMockAdapter(
               messages: [],
               deltas: [{
                 deltaType: "metrics",
+                contextTokens: m.context_tokens as number | undefined,
                 inputTokens: m.input_tokens as number | undefined,
                 outputTokens: m.output_tokens as number | undefined,
                 contextWindow: m.context_window as number | undefined,
@@ -449,6 +450,7 @@ function mockParseMessage(msg: unknown): ParseResult {
       messages: [],
       deltas: [{
         deltaType: "metrics",
+        contextTokens: m.context_tokens as number | undefined,
         inputTokens: m.input_tokens as number | undefined,
         outputTokens: m.output_tokens as number | undefined,
         contextWindow: m.context_window as number | undefined,
@@ -776,6 +778,7 @@ describe("Persistent Session lifecycle", () => {
     const updated = getThread(db, thread.id);
     expect(updated?.status).toBe("running");
     expect(updated?.metrics_active_turn_started_at).toBeTruthy();
+    expect(updated?.metrics_context_tokens).toBe(10000);
     expect(updated?.metrics_input_tokens).toBe(8800);
     expect(updated?.metrics_output_tokens).toBe(1200);
     expect(updated?.metrics_context_window).toBe(200000);

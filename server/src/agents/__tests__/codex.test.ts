@@ -49,11 +49,12 @@ describe("CodexParser", () => {
     expect(result.deltas).toHaveLength(0);
   });
 
-  test("thread.token_usage.updated reports context-backed metrics and includes reasoning tokens", () => {
+  test("thread.token_usage.updated reports explicit context occupancy separately from token breakdowns", () => {
     const parser = createParser();
     const result = parser.handleEvent({
       type: "thread.token_usage.updated",
       usage: {
+        total_tokens: 6400,
         input_tokens: 1200,
         cached_input_tokens: 300,
         output_tokens: 200,
@@ -66,8 +67,9 @@ describe("CodexParser", () => {
     expect(result.messages).toHaveLength(0);
     expect(result.deltas).toEqual([{
       deltaType: "metrics",
+      contextTokens: 6400,
       inputTokens: 1500,
-      outputTokens: 275,
+      outputTokens: 200,
       contextWindow: 200_000,
       modelName: "gpt-5-codex",
     }]);
@@ -77,7 +79,7 @@ describe("CodexParser", () => {
     const parser = createParser();
     const result = parser.handleEvent({
       type: "turn.completed",
-      usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 50 },
+      usage: { total_tokens: 2200, input_tokens: 100, cached_input_tokens: 20, output_tokens: 50 },
     });
 
     expect(result.messages).toHaveLength(0);
@@ -87,6 +89,7 @@ describe("CodexParser", () => {
     expect(metricsDelta).toBeDefined();
     // Codex doesn't provide USD cost
     expect(metricsDelta!.costUsd).toBeUndefined();
+    expect(metricsDelta!.contextTokens).toBe(2200);
     expect(metricsDelta!.inputTokens).toBe(120);
     expect(metricsDelta!.outputTokens).toBe(50);
     expect(metricsDelta!.finalMetrics).toBe(true);
@@ -102,11 +105,12 @@ describe("CodexParser", () => {
 
     const result = parser.handleEvent({
       type: "turn.completed",
-      usage: { input_tokens: 160, cached_input_tokens: 25, output_tokens: 65 },
+      usage: { total_tokens: 3100, input_tokens: 160, cached_input_tokens: 25, output_tokens: 65 },
     });
 
     const metricsDelta = result.deltas.find((d) => d.deltaType === "metrics");
     expect(metricsDelta).toBeDefined();
+    expect(metricsDelta!.contextTokens).toBe(3100);
     expect(metricsDelta!.inputTokens).toBe(185);
     expect(metricsDelta!.outputTokens).toBe(65);
     expect(metricsDelta!.finalMetrics).toBe(true);

@@ -190,6 +190,7 @@ export class CodexParser {
 
   private handleTokenUsageUpdated(event: Record<string, unknown>): ParseResult {
     const usage = event.usage as {
+      total_tokens?: number;
       input_tokens?: number;
       cached_input_tokens?: number;
       output_tokens?: number;
@@ -202,9 +203,10 @@ export class CodexParser {
       messages: [],
       deltas: [{
         deltaType: "metrics",
+        contextTokens: usage.total_tokens
+          ?? (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0) + (usage.output_tokens ?? 0) + (usage.reasoning_output_tokens ?? 0),
         inputTokens: (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0),
-        // Fold reasoning tokens into outputTokens for Codex context occupancy.
-        outputTokens: (usage.output_tokens ?? 0) + (usage.reasoning_output_tokens ?? 0),
+        outputTokens: usage.output_tokens ?? 0,
         contextWindow: event.context_window as number | undefined,
         modelName: event.model_name as string | undefined,
       }],
@@ -213,6 +215,7 @@ export class CodexParser {
 
   private handleTurnCompleted(event: Record<string, unknown>): ParseResult {
     const usage = event.usage as {
+      total_tokens?: number;
       input_tokens?: number;
       cached_input_tokens?: number;
       output_tokens?: number;
@@ -221,13 +224,16 @@ export class CodexParser {
     const deltas: ParseResult["deltas"] = [];
 
     if (usage) {
+      const turnContextTokens = usage.total_tokens
+        ?? (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0) + (usage.output_tokens ?? 0) + (usage.reasoning_output_tokens ?? 0);
       const turnInputTokens = (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0);
-      const turnOutputTokens = (usage.output_tokens ?? 0) + (usage.reasoning_output_tokens ?? 0);
+      const turnOutputTokens = usage.output_tokens ?? 0;
 
       deltas.push({
         deltaType: "metrics",
         costUsd: undefined,
         durationMs: undefined,
+        contextTokens: turnContextTokens,
         inputTokens: turnInputTokens,
         outputTokens: turnOutputTokens,
         finalMetrics: true,

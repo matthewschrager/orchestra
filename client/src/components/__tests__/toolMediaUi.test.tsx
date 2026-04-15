@@ -30,6 +30,7 @@ const baseThread: Thread = {
     costUsd: 0,
     durationMs: 0,
     turnCount: 0,
+    contextTokens: 0,
     inputTokens: 0,
     outputTokens: 0,
     contextWindow: 0,
