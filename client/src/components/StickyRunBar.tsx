@@ -215,17 +215,6 @@ function ContextWindowIndicator({ metrics }: { metrics: TurnMetrics }) {
 
   const { totalTokens, contextWindow, pct } = summary;
 
-  if (!contextWindow || contextWindow <= 0) {
-    return (
-      <span
-        className="text-[10px] tabular-nums text-content-3"
-        title={`${formatTokenCount(totalTokens)} tokens this turn`}
-      >
-        {formatTokenCount(totalTokens)}
-      </span>
-    );
-  }
-
   // Color thresholds: green → yellow → orange → red
   const barColor =
     pct >= 90 ? "bg-red-500" :
@@ -261,13 +250,16 @@ function formatTokenCount(n: number): string {
 }
 
 function getTokenUsageSummary(metrics: TurnMetrics): { totalTokens: number; contextWindow: number; pct: number } | null {
+  // Only show this widget when we know the model's context window. Some adapters
+  // only expose aggregate turn token totals, which can far exceed any single
+  // request's context occupancy and would be misleading here.
+  const contextWindow = metrics.contextWindow;
+  if (contextWindow <= 0) return null;
+
   const totalTokens = metrics.inputTokens + metrics.outputTokens;
   if (totalTokens <= 0) return null;
 
-  const contextWindow = metrics.contextWindow;
-  const pct = contextWindow > 0
-    ? Math.min((totalTokens / contextWindow) * 100, 100)
-    : 0;
+  const pct = Math.min((totalTokens / contextWindow) * 100, 100);
 
   return { totalTokens, contextWindow, pct };
 }

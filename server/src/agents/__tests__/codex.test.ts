@@ -21,6 +21,7 @@ describe("CodexAdapter", () => {
     const adapter = new CodexAdapter();
     expect(adapter.name).toBe("codex");
     expect(adapter.supportsResume()).toBe(true);
+    expect(adapter.supportsPersistent?.()).toBe(true);
   });
 });
 
@@ -32,11 +33,12 @@ describe("CodexParser", () => {
     const result = parser.handleEvent({
       type: "thread.started",
       thread_id: "thread-abc-123",
+      model_name: "gpt-5-codex",
     });
 
     expect(result.sessionId).toBe("thread-abc-123");
     expect(result.messages).toHaveLength(0);
-    expect(result.deltas).toHaveLength(0);
+    expect(result.deltas).toEqual([{ deltaType: "metrics", modelName: "gpt-5-codex" }]);
   });
 
   test("turn.started returns empty result", () => {
@@ -45,6 +47,30 @@ describe("CodexParser", () => {
 
     expect(result.messages).toHaveLength(0);
     expect(result.deltas).toHaveLength(0);
+  });
+
+  test("thread.token_usage.updated reports context-backed metrics and includes reasoning tokens", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "thread.token_usage.updated",
+      usage: {
+        input_tokens: 1200,
+        cached_input_tokens: 300,
+        output_tokens: 200,
+        reasoning_output_tokens: 75,
+      },
+      context_window: 200_000,
+      model_name: "gpt-5-codex",
+    });
+
+    expect(result.messages).toHaveLength(0);
+    expect(result.deltas).toEqual([{
+      deltaType: "metrics",
+      inputTokens: 1500,
+      outputTokens: 275,
+      contextWindow: 200_000,
+      modelName: "gpt-5-codex",
+    }]);
   });
 
   test("turn.completed on a new session produces first-turn token metrics and turn_end deltas", () => {
@@ -69,14 +95,9 @@ describe("CodexParser", () => {
     expect(turnEnd).toBeDefined();
   });
 
-  test("turn.completed on a resumed session diffs against the cumulative baseline", () => {
+  test("turn.completed on a resumed session reports the turn's aggregate token usage directly", () => {
     const parser = createParser({
       sessionId: "thread-abc",
-      cumulativeUsageBaseline: {
-        inputTokens: 100,
-        cachedInputTokens: 20,
-        outputTokens: 50,
-      },
     });
 
     const result = parser.handleEvent({
@@ -86,27 +107,23 @@ describe("CodexParser", () => {
 
     const metricsDelta = result.deltas.find((d) => d.deltaType === "metrics");
     expect(metricsDelta).toBeDefined();
-    expect(metricsDelta!.inputTokens).toBe(65);
-    expect(metricsDelta!.outputTokens).toBe(15);
+    expect(metricsDelta!.inputTokens).toBe(185);
+    expect(metricsDelta!.outputTokens).toBe(65);
     expect(metricsDelta!.finalMetrics).toBe(true);
   });
 
-  test("turn.completed on a resumed session with no baseline suppresses token metrics", () => {
-    const parser = createParser({
-      sessionId: "thread-abc",
-      suppressTokenMetrics: true,
-    });
-
+  test("turn.completed without usage still emits finalMetrics and turn_end", () => {
+    const parser = createParser();
     const result = parser.handleEvent({
       type: "turn.completed",
-      usage: { input_tokens: 2_000_000, cached_input_tokens: 500_000, output_tokens: 250_000 },
+      turn_id: "turn-1",
+      status: "completed",
     });
 
-    const metricsDelta = result.deltas.find((d) => d.deltaType === "metrics");
-    expect(metricsDelta).toBeDefined();
-    expect(metricsDelta!.inputTokens).toBeUndefined();
-    expect(metricsDelta!.outputTokens).toBeUndefined();
-    expect(metricsDelta!.finalMetrics).toBe(true);
+    expect(result.deltas).toEqual([
+      { deltaType: "metrics", costUsd: undefined, durationMs: undefined, finalMetrics: true },
+      { deltaType: "turn_end" },
+    ]);
   });
 
   test("turn.failed produces error and turn_end", () => {
@@ -135,6 +152,28 @@ describe("CodexParser", () => {
     expect(result.error).toBe("Connection lost");
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0].content).toContain("Connection lost");
+  });
+
+  test("attention.request surfaces an attention event without extra messages", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "attention.request",
+      attention: {
+        kind: "permission",
+        prompt: "Codex wants to run bun test",
+        options: ["Allow", "Deny"],
+        metadata: { source: "codex_app_server_request", codexRequestId: 7 },
+      },
+    });
+
+    expect(result.messages).toHaveLength(0);
+    expect(result.deltas).toHaveLength(0);
+    expect(result.attention).toEqual({
+      kind: "permission",
+      prompt: "Codex wants to run bun test",
+      options: ["Allow", "Deny"],
+      metadata: { source: "codex_app_server_request", codexRequestId: 7 },
+    });
   });
 
   // ── Agent message (text streaming) ─────────────────────
@@ -923,5 +962,26 @@ describe("CodexParser", () => {
 
     expect(result.messages).toHaveLength(0);
     expect(result.deltas).toHaveLength(0);
+  });
+
+  test("todo_list respects explicit in_progress status when present", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.updated",
+      item: {
+        id: "todo-1",
+        type: "todo_list",
+        items: [
+          { text: "Inspect transport", status: "completed", completed: true },
+          { text: "Wire metrics", status: "in_progress", completed: false },
+          { text: "Run tests", status: "pending", completed: false },
+        ],
+      },
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].toolName).toBe("TodoWrite");
+    expect(result.messages[0].toolInput).toContain('"status":"in_progress"');
+    expect(result.messages[0].toolInput).toContain('"status":"pending"');
   });
 });

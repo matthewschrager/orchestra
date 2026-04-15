@@ -170,7 +170,7 @@ describe("PATCH /threads/:id (permissionMode)", () => {
     expect(body.permissionMode).toBe("plan");
   });
 
-  test("rejects unsupported permission mode for Codex", async () => {
+  test("accepts plan permission mode for Codex", async () => {
     insertThread(db, { id: "t-2", agent: "codex" });
     const app = makeApp();
 
@@ -180,9 +180,9 @@ describe("PATCH /threads/:id (permissionMode)", () => {
       headers: { "Content-Type": "application/json" },
     });
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.error).toContain("not supported");
+    expect(body.permissionMode).toBe("plan");
   });
 
   test("clears permission mode with null", async () => {
@@ -328,7 +328,7 @@ describe("PATCH /threads/:id (validation-first)", () => {
 
     const res = await app.request("/threads/t-2", {
       method: "PATCH",
-      body: JSON.stringify({ effortLevel: "low", permissionMode: "plan" }),
+      body: JSON.stringify({ effortLevel: "low", permissionMode: "invalid-mode" }),
       headers: { "Content-Type": "application/json" },
     });
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.53.0] - 2026-04-14
+
+### Fixed
+
+- **Codex context usage is now real instead of nonsense** — Orchestra now reads Codex app-server token-usage updates, so the run bar shows actual per-request context occupancy instead of impossible multi-million-token turn totals
+- **Codex approvals and structured user questions now round-trip through Orchestra** — app-server approval requests and `request_user_input` prompts are persisted in the attention inbox, can be resolved from the UI, and correctly resume the live Codex turn
+- **Codex plan mode now actually unlocks structured questioning** — Codex threads configured for `Plan Mode` now start turns with the app-server collaboration mode Codex expects, so the model can ask structured follow-up questions instead of claiming the tool is unavailable
+
+### Added
+
+- **Persistent Codex app-server transport** — Orchestra now runs Codex through `codex app-server` instead of the older SDK wrapper, preserving thread state, context-window metrics, approvals, and follow-up turns through one host-facing protocol
+- **Codex app-server regression coverage** — added protocol, session, route, permission, and terminal test coverage for the new Codex transport and the newly supported plan-mode path
+
 ## [0.1.52.4] - 2026-04-14
 
 ### Fixed

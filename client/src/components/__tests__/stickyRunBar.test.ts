@@ -53,16 +53,12 @@ describe("getTokenUsageSummary", () => {
     expect(getTokenUsageSummary(baseMetrics)).toBeNull();
   });
 
-  test("returns token totals without a context window", () => {
+  test("returns null when no context window is available", () => {
     expect(getTokenUsageSummary({
       ...baseMetrics,
       inputTokens: 12_000,
       outputTokens: 345,
-    })).toEqual({
-      totalTokens: 12_345,
-      contextWindow: 0,
-      pct: 0,
-    });
+    })).toBeNull();
   });
 
   test("includes context-window percentage when available", () => {

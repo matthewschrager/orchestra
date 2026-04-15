@@ -29,6 +29,7 @@ describe("permission mode helpers", () => {
       "bypassPermissions",
       "acceptEdits",
       "default",
+      "plan",
     ]);
   });
 
@@ -40,7 +41,7 @@ describe("permission mode helpers", () => {
   test("validates permission mode support by agent", () => {
     expect(isPermissionModeSupported("claude", "bypassPermissions")).toBe(true);
     expect(isPermissionModeSupported("claude", "plan")).toBe(true);
-    expect(isPermissionModeSupported("codex", "plan")).toBe(false);
+    expect(isPermissionModeSupported("codex", "plan")).toBe(true);
     expect(isPermissionModeSupported("codex", "bypassPermissions")).toBe(true);
     expect(isPermissionModeSupported("codex", "acceptEdits")).toBe(true);
     expect(isPermissionModeSupported("codex", "default")).toBe(true);
@@ -63,6 +64,7 @@ describe("permission mode helpers", () => {
     expect(getPermissionModeLabel("acceptEdits", "claude")).toBe("Accept Edits");
     expect(getPermissionModeLabel("plan", "claude")).toBe("Plan Mode");
     expect(getPermissionModeLabel("bypassPermissions", "codex")).toBe("Full Access");
+    expect(getPermissionModeLabel("plan", "codex")).toBe("Plan Mode");
   });
 
   test("returns the mode string for unknown modes", () => {
