@@ -171,6 +171,44 @@ describe("tool media rendering", () => {
     expect(agentPair!.output).toBeNull(); // No result yet → isActive=true
   });
 
+  test("pairs Agent tool messages by subagent id when results finish out of order", () => {
+    const msg = (id: string, seq: number, overrides: Partial<Message>): Message => ({
+      id, threadId: baseThread.id, seq, role: "tool", content: "",
+      toolName: null, toolInput: null, toolOutput: null, metadata: null,
+      createdAt: baseThread.createdAt, ...overrides,
+    });
+    const messages: Message[] = [
+      msg("a1", 1, {
+        toolName: "Agent",
+        toolInput: '{"description":"Inspect auth"}',
+        metadata: { subagentId: "agent-auth" },
+      }),
+      msg("a2", 2, {
+        toolName: "Agent",
+        toolInput: '{"description":"Inspect billing"}',
+        metadata: { subagentId: "agent-billing" },
+      }),
+      msg("ar2", 3, {
+        toolName: "Agent",
+        toolOutput: "Billing findings",
+        metadata: { subagentId: "agent-billing" },
+      }),
+      msg("ar1", 4, {
+        toolName: "Agent",
+        toolOutput: "Auth findings",
+        metadata: { subagentId: "agent-auth" },
+      }),
+    ];
+
+    const pairs = pairTools(messages);
+    const agentPairs = pairs.filter((p) => p.name === "Agent");
+    expect(agentPairs).toHaveLength(2);
+    expect(agentPairs[0].input).toContain("Inspect auth");
+    expect(agentPairs[0].output).toBe("Auth findings");
+    expect(agentPairs[1].input).toContain("Inspect billing");
+    expect(agentPairs[1].output).toBe("Billing findings");
+  });
+
   test("renders inline tool images", () => {
     const markup = renderToStaticMarkup(
       <ToolMediaRenderer

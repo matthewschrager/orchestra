@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.54.2] - 2026-04-15
+
+### Fixed
+
+- **Codex subagents now render like Claude subagents in the transcript** — Codex `spawn_agent` and single-target `wait_agent` events are normalized onto the existing `Agent` UI path, so subagents display as linked status cards instead of raw tool rows and still pair correctly when results finish out of order
+- **Terminal cwd regression test is no longer sensitive to local shell startup files** — the terminal manager test suite now pins `/bin/sh` so slow interactive `zsh` init does not make the cwd assertion time out on developer machines
+
+### Added
+
+- **Regression coverage for Codex subagent rendering and pairing** — added parser and UI tests that lock in Codex `spawn_agent` parsing, `wait_agent` normalization, and subagent-id-aware pairing behavior
+
 ## [0.1.54.1] - 2026-04-15
 
 ### Fixed

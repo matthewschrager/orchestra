@@ -605,6 +605,37 @@ describe("CodexParser", () => {
     expect(result.deltas[1].toolInput).toContain("Which branch should I use?");
   });
 
+  test("item.started (spawn_agent) produces Agent start and normalized input", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.started",
+      item: {
+        id: "mcp-spawn-1",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "spawn_agent",
+        arguments: {
+          agent_type: "explorer",
+          message: "Inspect the auth module and report back",
+        },
+        status: "in_progress",
+      },
+    });
+
+    expect(result.messages).toHaveLength(0);
+    expect(result.deltas).toEqual([
+      { deltaType: "tool_start", toolName: "Agent" },
+      {
+        deltaType: "tool_input",
+        toolInput: JSON.stringify({
+          description: "Inspect the auth module and report back",
+          prompt: "Inspect the auth module and report back",
+          subagent_type: "explorer",
+        }),
+      },
+    ]);
+  });
+
   test("item.completed (mcp_tool_call ask-user alias) emits canonical tool message and attention", () => {
     const parser = createParser();
     const result = parser.handleEvent({
@@ -655,6 +686,105 @@ describe("CodexParser", () => {
           ],
         },
       },
+    });
+  });
+
+  test("item.completed (spawn_agent) produces an Agent tool message with subagent metadata", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.completed",
+      item: {
+        id: "mcp-spawn-2",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "spawn_agent",
+        arguments: {
+          agent_type: "explorer",
+          message: "Inspect the auth module and report back",
+        },
+        result: {
+          structured_content: {
+            agent: {
+              id: "agent-42",
+            },
+          },
+        },
+        status: "completed",
+      },
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]).toMatchObject({
+      role: "tool",
+      toolName: "Agent",
+      toolInput: JSON.stringify({
+        description: "Inspect the auth module and report back",
+        prompt: "Inspect the auth module and report back",
+        subagent_type: "explorer",
+      }),
+      toolOutput: undefined,
+      metadata: {
+        sourceToolName: "spawn_agent",
+        subagentId: "agent-42",
+      },
+    });
+  });
+
+  test("item.completed (wait_agent single target) produces an Agent result", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.completed",
+      item: {
+        id: "mcp-wait-1",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "wait_agent",
+        arguments: {
+          targets: ["agent-42"],
+        },
+        result: {
+          content: [{ type: "text", text: "Auth module findings" }],
+        },
+        status: "completed",
+      },
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]).toMatchObject({
+      role: "tool",
+      toolName: "Agent",
+      toolInput: null,
+      toolOutput: "Auth module findings",
+      metadata: {
+        sourceToolName: "wait_agent",
+        subagentId: "agent-42",
+      },
+    });
+  });
+
+  test("item.completed (wait_agent multiple targets) stays as raw wait_agent", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.completed",
+      item: {
+        id: "mcp-wait-2",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "wait_agent",
+        arguments: {
+          targets: ["agent-1", "agent-2"],
+        },
+        result: {
+          content: [{ type: "text", text: "one of them finished" }],
+        },
+        status: "completed",
+      },
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]).toMatchObject({
+      role: "tool",
+      toolName: "wait_agent",
     });
   });
 
