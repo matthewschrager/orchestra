@@ -45,9 +45,12 @@ orchestra/
 │       │   ├── uploads.ts  File upload + serve API
 │       │   ├── files.ts    Local file proxy (image serving)
 │       │   ├── settings.ts Settings CRUD API
-│       │   └── tailscale.ts Tailscale status API
+│       │   ├── tailscale.ts Tailscale status API
+│       │   └── diagnostics.ts LSP plugin diagnostics API
 │       ├── push/           Web Push notification management
 │       │   └── manager.ts  VAPID keys, subscriptions, dispatch
+│       ├── lsp/            LSP plugin PATH doctor
+│       │   └── doctor.ts   Parse enabled plugins + marketplace manifests, probe PATH
 │       ├── tailscale/      Tailscale detection
 │       │   └── detector.ts CLI detection, IP/hostname, serve config parsing
 │       ├── titles/         AI title generation
@@ -87,6 +90,7 @@ orchestra/
 │       │   ├── AttentionInbox.tsx  Attention queue inbox
 │       │   ├── SettingsPanel.tsx   Settings modal dialog
 │       │   ├── RemoteAccessSettings.tsx Remote Access (Tailscale guided setup)
+│       │   ├── LspDiagnosticsSection.tsx LSP plugin PATH warning card
 │       │   ├── MobileThreadHeader.tsx Mobile sticky header with editable title
 │       │   ├── EditableTitle.tsx   Click-to-edit title (shared mobile/desktop)
 │       │   ├── MobileNav.tsx       Bottom tab navigation
@@ -138,7 +142,7 @@ feature/bar ──PR──┘              (batched when stable)
 
 ## Key design decisions
 
-- Agents use `@anthropic-ai/claude-agent-sdk` (pinned v0.2.81) — SDK manages subprocess lifecycle internally
+- Agents use `@anthropic-ai/claude-agent-sdk` (pinned v0.2.111) — SDK manages subprocess lifecycle internally
 - **Persistent sessions**: Claude Code sessions use a long-lived `Query` object per thread, and Codex sessions use a long-lived `codex app-server` connection per thread. Both stay alive between turns, persist `session_id` to the database, and transition `thinking → idle/waiting → thinking`. Claude falls back to legacy `resume` if its subprocess crashes. Codex reuses the app-server thread and resolves approvals and structured user input directly over the live transport. Abort: persistent sessions use `close()`, legacy uses AbortController; `aborted` flag distinguishes user-stop from SDK error.
 - **Message queuing**: Messages sent while an agent is working are queued in SQLite and delivered to the live persistent session on the next turn. Claude injects follow-ups via `streamInput()`. Codex injects follow-ups via app-server `turn/start`, and interrupt sends use `turn/interrupt` before starting the replacement turn. Queue depth limit: 5 per turn.
 - Session options: `permissionMode` per-thread (default: `bypassPermissions` for worktree-isolated, `acceptEdits` for non-isolated), `cwd` per-call for multi-project isolation. Permission modes: `bypassPermissions`, `acceptEdits`, `default`, `plan`. Codex maps these onto app-server `approvalPolicy`, `sandboxPolicy`, and `collaborationMode` for plan turns.
@@ -154,6 +158,7 @@ feature/bar ──PR──┘              (batched when stable)
 - Inactivity timeout (default 30 min, configurable via Settings) replaces PID-based health check for hung SDK iterators
 - Integrated terminal: xterm.js v6 (client) + Bun native PTY via `Bun.spawn({ terminal })` (server); PTY persists per-thread; desktop only
 - Settings: key-value `settings` table in SQLite; GET/PATCH `/api/settings`; gear icon in sidebar; `autoScrollThreads` controls whether thread views follow new output by default; `defaultEffortLevel` pre-selects effort in new-thread forms (validated against agent support, falls back to agent default if unsupported); `defaultAgent` pre-selects agent in new-thread forms (validated against detected agents, hidden when only one agent available)
+- LSP plugin doctor: because Claude sessions pass `settingSources: ["user", "project", "local"]` to inherit CLI skills/plugins, any enabled `*-lsp@*` plugin in `~/.claude/settings.json` causes the SDK to spawn a language-server binary on first matching file access. If the binary isn't on PATH the turn fails with an unrecoverable error. `server/src/lsp/doctor.ts` runs on startup, parses marketplace manifests, probes each command via `Bun.which()`, and caches results. Exposed via `GET /api/diagnostics/lsp` (`?refresh=1`) and rendered as a warning card in Settings. Respects `$CLAUDE_CONFIG_DIR`. API returns `resolved: boolean` rather than an absolute path to avoid leaking the server's home directory.
 
 ## Testing
 
@@ -161,7 +166,7 @@ feature/bar ──PR──┘              (batched when stable)
 bun test                        # Run all tests
 ```
 
-Tests cover renderer parsing functions (including Todo payload variants, Bash preview truncation, diff precision on large files, and sticky run-bar token summaries), server-side Claude and Codex message parsing, Tailscale auth/origin hardening flows, filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, settings CRUD (worktreeRoot validation, inactivityTimeoutMinutes bounds, autoScrollThreads validation, remoteUrl HTTPS enforcement, defaultEffortLevel validation, defaultAgent validation), PR status utilities (URL number extraction, stale guard timing), and worktree status (diff stats parsing, branch/no-branch scenarios).
+Tests cover renderer parsing functions (including Todo payload variants, Bash preview truncation, diff precision on large files, and sticky run-bar token summaries), server-side Claude and Codex message parsing, Tailscale auth/origin hardening flows, filesystem route behavior, attention queue CRUD operations, slash command input logic, thread archive with worktree cleanup, settings CRUD (worktreeRoot validation, inactivityTimeoutMinutes bounds, autoScrollThreads validation, remoteUrl HTTPS enforcement, defaultEffortLevel validation, defaultAgent validation), PR status utilities (URL number extraction, stale guard timing), worktree status (diff stats parsing, branch/no-branch scenarios), and LSP plugin doctor (plugin-ID parsing, enablement heuristics, manifest-missing surfacing, install-hint lookup, marketplace manifest loading against tmpdir fixtures, route shape contracts).
 
 ## Skill routing
 
