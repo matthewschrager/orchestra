@@ -9,7 +9,7 @@ const baseSettings: Settings = {
   remoteUrl: "",
   defaultModelClaude: "",
   defaultModelCodex: "",
-  defaultEffortLevel: "",
+  defaultEffortLevel: "xhigh",
   defaultAgent: "",
 };
 

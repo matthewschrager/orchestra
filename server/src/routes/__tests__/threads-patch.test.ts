@@ -238,7 +238,7 @@ describe("PATCH /threads/:id (effortLevel)", () => {
     expect(body.effortLevel).toBe("high");
   });
 
-  test("rejects unsupported effort level for Claude", async () => {
+  test("allows xhigh effort level for Claude", async () => {
     insertThread(db, { id: "t-2", agent: "claude" });
     const app = makeApp();
 
@@ -248,9 +248,9 @@ describe("PATCH /threads/:id (effortLevel)", () => {
       headers: { "Content-Type": "application/json" },
     });
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.error).toContain("not supported");
+    expect(body.effortLevel).toBe("xhigh");
   });
 
   test("allows Codex-specific effort levels", async () => {

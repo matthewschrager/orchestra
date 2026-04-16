@@ -106,17 +106,26 @@ describe("effort level session plumbing", () => {
     sessionManager.stopAll();
   });
 
-  test("rejects unsupported effort for claude", async () => {
-    const adapter = createCapturingAdapter("claude", []);
-    const { repoDir, sessionManager } = setupSessionManager(adapter);
+  test("persists and reuses claude effort level across resumed turns", async () => {
+    const seenOpts: StartOpts[] = [];
+    const adapter = createCapturingAdapter("claude", seenOpts);
+    const { db, repoDir, sessionManager } = setupSessionManager(adapter);
 
-    await expect(sessionManager.startThread({
+    const thread = await sessionManager.startThread({
       agent: "claude",
       effortLevel: "xhigh",
-      prompt: "unsupported",
+      prompt: "first turn",
       repoPath: repoDir,
       projectId: "proj1",
-    })).rejects.toThrow('Effort level "xhigh" is not supported for claude');
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    sessionManager.sendMessage(thread.id, "follow-up");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const row = db.query("SELECT effort_level FROM threads WHERE id = ?").get(thread.id) as { effort_level: string | null };
+    expect(row.effort_level).toBe("xhigh");
+    expect(seenOpts.map((opts) => opts.effortLevel)).toEqual(["xhigh", "xhigh"]);
 
     sessionManager.stopAll();
   });

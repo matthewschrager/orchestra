@@ -341,12 +341,12 @@ describe("PATCH /settings", () => {
     expect(body.remoteUrl).toBe("");
   });
 
-  test("GET returns default defaultEffortLevel (empty string)", async () => {
+  test("GET returns default defaultEffortLevel (xhigh)", async () => {
     const db = createTestDb();
     const { app } = createApp(db);
     const res = await app.request("/settings");
     const body = await res.json();
-    expect(body.defaultEffortLevel).toBe("");
+    expect(body.defaultEffortLevel).toBe("xhigh");
   });
 
   test("PATCH defaultEffortLevel accepts valid effort level", async () => {
@@ -377,7 +377,7 @@ describe("PATCH /settings", () => {
     }
   });
 
-  test("PATCH defaultEffortLevel accepts empty string (to clear)", async () => {
+  test("PATCH defaultEffortLevel accepts empty string and falls back to xhigh", async () => {
     const db = createTestDb();
     const { app } = createApp(db);
     // Set a value first
@@ -394,7 +394,7 @@ describe("PATCH /settings", () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.defaultEffortLevel).toBe("");
+    expect(body.defaultEffortLevel).toBe("xhigh");
   });
 
   test("PATCH defaultEffortLevel rejects invalid level", async () => {

@@ -219,7 +219,7 @@ describe("project PR metadata and merge-all route", () => {
     expect(body.projectId).toBe("proj-1");
   });
 
-  test("rejects unsupported effort level for the selected agent", async () => {
+  test("accepts xhigh effort level for Claude", async () => {
     insertProject(db, "proj-1", tempDir, "Orchestra");
     insertThread(db, "pr-open", "proj-1", tempDir, {
       title: "Fix auth edge case",
@@ -227,9 +227,40 @@ describe("project PR metadata and merge-all route", () => {
     });
 
     const sessionManager = {
-      startThread: async () => {
-        throw new Error("should not be called");
-      },
+      startThread: async ({ effortLevel }: { effortLevel?: import("shared").EffortLevel }) => ({
+        id: "merge-thread",
+        title: "Merge all PRs (1)",
+        agent: "claude",
+        effort_level: effortLevel ?? null,
+        permission_mode: null,
+        model: null,
+        project_id: "proj-1",
+        repo_path: tempDir,
+        worktree: null,
+        branch: null,
+        base_branch: null,
+        pr_url: null,
+        pr_status: null,
+        pr_number: null,
+        pid: null,
+        status: "running",
+        session_id: null,
+        archived_at: null,
+        error_message: null,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        last_interacted_at: "2026-01-01T00:00:00Z",
+        metrics_cost_usd: 0,
+        metrics_duration_ms: 0,
+        metrics_turn_count: 0,
+        metrics_context_tokens: 0,
+        metrics_input_tokens: 0,
+        metrics_output_tokens: 0,
+        metrics_context_window: 0,
+        metrics_model_name: null,
+        metrics_active_turn_started_at: null,
+      }),
+      notifyThread: () => {},
     } as unknown as SessionManager;
 
     const app = createApp(db, sessionManager, {
@@ -243,9 +274,10 @@ describe("project PR metadata and merge-all route", () => {
       headers: { "content-type": "application/json" },
     });
 
-    expect(res.status).toBe(400);
-    const body = await res.json() as { error: string };
-    expect(body.error).toContain('Effort level "xhigh" is not supported for claude');
+    expect(res.status).toBe(201);
+    const body = await res.json() as { effortLevel: string | null; agent: string };
+    expect(body.agent).toBe("claude");
+    expect(body.effortLevel).toBe("xhigh");
   });
 
   test("rejects merge-all when there are no outstanding PRs", async () => {
