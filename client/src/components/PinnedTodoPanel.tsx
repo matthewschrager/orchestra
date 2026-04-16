@@ -56,9 +56,10 @@ export function PinnedTodoPanel({ todos, isRunning, turnEnded }: Props) {
         </span>
       </button>
 
-      {/* Task list — collapsible */}
+      {/* Task list — collapsible, capped at ~40vh so long lists scroll
+          instead of pushing the input off-screen */}
       {!collapsed && (
-        <div className="px-3 pb-2">
+        <div className="px-3 pb-2 max-h-[40vh] overflow-y-auto">
           <TodoItemList items={todos} compact />
         </div>
       )}
