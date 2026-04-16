@@ -180,4 +180,8 @@ export const api = {
   // Tailscale
   getTailscaleStatus: (refresh = false) =>
     request<import("shared").TailscaleStatus>(`/tailscale/status${refresh ? "?refresh=1" : ""}`),
+
+  // Diagnostics
+  getLspDiagnostics: (refresh = false) =>
+    request<import("shared").LspDiagnosticsResponse>(`/diagnostics/lsp${refresh ? "?refresh=1" : ""}`),
 };
