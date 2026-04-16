@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.55.0] - 2026-04-16
+
+### Added
+
+- **Claude fallback model discovery now includes Opus 4.7** — brand-new Orchestra installs can pick `claude-opus-4-7` before the Claude SDK populates its dynamic supported-model cache
+
+### Changed
+
+- **Claude now accepts Extra High reasoning end to end** — `xhigh` is available in shared effort metadata, accepted by the settings and thread update routes, and forwarded through the Claude adapter for both fresh and persistent sessions
+- **Fresh installs now default to Extra High effort** — when no saved setting exists, Orchestra preselects `xhigh` instead of leaving the effort blank
+
+### Fixed
+
+- **Claude support is pinned to a newer agent SDK build** — Orchestra now installs `@anthropic-ai/claude-agent-sdk` `0.2.111`, which tracks the newer Claude model and reasoning surface
+- **Terminal cwd regression coverage is stable on macOS temp paths** — the PTY cwd assertion now compares against the canonical temp directory path and allows a longer shell startup window
+
 ## [0.1.54.2] - 2026-04-15
 
 ### Fixed
