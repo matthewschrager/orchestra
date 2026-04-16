@@ -272,10 +272,11 @@ export function createThreadRoutes(
     return c.json(threadRowToApi(updated));
   });
 
-  // Update thread title, model, permissionMode, or effortLevel
+  // Update thread title, agent, model, permissionMode, or effortLevel
   app.patch("/:id", async (c) => {
-    const { title, model, permissionMode, effortLevel } = await c.req.json<{
+    const { title, agent, model, permissionMode, effortLevel } = await c.req.json<{
       title?: string;
+      agent?: string;
       model?: string | null;
       permissionMode?: import("shared").PermissionMode | null;
       effortLevel?: import("shared").EffortLevel | null;
@@ -283,6 +284,10 @@ export function createThreadRoutes(
     const threadId = c.req.param("id");
     const thread = getThread(db, threadId);
     if (!thread) return c.json({ error: "Not found" }, 404);
+
+    if (agent !== undefined && (model !== undefined || permissionMode !== undefined || effortLevel !== undefined)) {
+      return c.json({ error: "Agent switch must be submitted separately from model, permission mode, or effort changes" }, 400);
+    }
 
     // ── Validate ALL fields before any writes ──
     if (model !== undefined && model !== null && model !== "") {
@@ -307,6 +312,18 @@ export function createThreadRoutes(
     if (title) {
       updateThread(db, threadId, { title });
       sessionManager.notifyThread(threadId);
+    }
+
+    if (agent !== undefined) {
+      try {
+        await sessionManager.changeAgent(threadId, agent);
+      } catch (err) {
+        const message = (err as Error).message;
+        if (message.includes("mid-turn")) {
+          return c.json({ error: message }, 409);
+        }
+        return c.json({ error: message }, 400);
+      }
     }
 
     if (model !== undefined) {

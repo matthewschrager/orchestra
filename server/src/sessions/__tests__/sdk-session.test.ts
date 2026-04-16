@@ -2,7 +2,7 @@ import { describe, expect, test, afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { createDb, getThread, getPendingAttention } from "../../db";
+import { createAttentionItem, createDb, enqueueMessage, getPendingAttention, getThread, countPendingQueue } from "../../db";
 import { SessionManager } from "../manager";
 import { AgentRegistry } from "../../agents/registry";
 import { WorktreeManager } from "../../worktrees/manager";
@@ -751,6 +751,89 @@ describe("Persistent Session lifecycle", () => {
     sessionManager.stopAll();
   });
 
+  test("changeAgent clears queued work, orphans attention, and tears down the live session", async () => {
+    const mock = createPersistentMockAdapter();
+    const dbDir = makeTmpDir("db-switch");
+    const repoDir = makeTmpDir("repo-switch");
+    const db = createDb(dbDir);
+    db.query(
+      "INSERT INTO projects (id, name, path) VALUES ('proj1', 'Test Project', ?)",
+    ).run(repoDir);
+
+    const registry = new AgentRegistry();
+    (registry as any).adapters = new Map();
+    registry.register(mock.adapter);
+    registry.register({
+      name: "codex",
+      detect: async () => true,
+      getVersion: async () => "test-codex",
+      supportsResume: () => true,
+      supportsPersistent: () => true,
+      start() {
+        throw new Error("codex adapter should not start during agent switch test");
+      },
+    });
+
+    const wtManager = new WorktreeManager(db);
+    const sessionManager = new SessionManager(db, registry, wtManager, join(dbDir, "uploads"));
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "start switchable thread",
+      repoPath: repoDir,
+      projectId: "proj1",
+      model: "mock-model",
+      permissionMode: "acceptEdits",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-switch", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-switch",
+      permission_denials: [],
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    enqueueMessage(db, thread.id, "queued follow-up");
+    createAttentionItem(db, {
+      threadId: thread.id,
+      kind: "permission",
+      prompt: "Need approval",
+      metadata: { source: "codex_app_server_request", codexRequestId: 7 },
+    });
+
+    await sessionManager.changeAgent(thread.id, "codex");
+    await new Promise((r) => setTimeout(r, 50));
+
+    const updated = getThread(db, thread.id);
+    expect(updated?.agent).toBe("codex");
+    expect(updated?.model).toBeNull();
+    expect(updated?.permission_mode).toBe("bypassPermissions");
+    expect(updated?.session_id).toBeNull();
+    expect(updated?.status).toBe("done");
+    expect(countPendingQueue(db, thread.id)).toBe(0);
+    expect(getPendingAttention(db, thread.id)).toHaveLength(0);
+    expect(mock.getResolveAttentionCalls()).toHaveLength(1);
+    expect(mock.isClosed()).toBe(true);
+    expect(sessionManager.isRunning(thread.id)).toBe(false);
+
+    const switchMessage = db.query(
+      "SELECT role, content, metadata FROM messages WHERE thread_id = ? ORDER BY seq DESC LIMIT 1",
+    ).get(thread.id) as { role: string; content: string; metadata: string | null };
+    expect(switchMessage.role).toBe("system");
+    expect(switchMessage.content).toContain("Switched from mock to codex");
+    expect(JSON.parse(switchMessage.metadata ?? "{}")).toMatchObject({
+      kind: "agent_switch",
+      fromAgent: "mock",
+      toAgent: "codex",
+      discardedQueuedMessages: 1,
+      orphanedAttentionCount: 1,
+    });
+
+    sessionManager.stopAll();
+  });
+
   test("persistent session: persists live token usage while a turn is still running", async () => {
     const mock = createPersistentMockAdapter();
     const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
@@ -1466,6 +1549,134 @@ describe("Persistent Session lifecycle", () => {
     expect(attention.length).toBe(1);
     expect(attention[0].kind).toBe("confirmation");
     expect(JSON.parse(attention[0].metadata)).toEqual({ source: "exit_plan_mode" });
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: close() is called when iterator ends mid-turn (subprocess cleanup)", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "cleanup test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-cleanup", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Working..." }] },
+      session_id: "sess-cleanup",
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(sessionManager.isRunning(thread.id)).toBe(true);
+    expect(mock.isClosed()).toBe(false);
+
+    mock.finish();
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(mock.isClosed()).toBe(true);
+
+    const updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("error");
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: close() is called when consumeStream catches an error", async () => {
+    const mock = createPersistentMockAdapter();
+
+    let callCount = 0;
+    const origStartPersistent = mock.adapter.startPersistent!.bind(mock.adapter);
+    mock.adapter.startPersistent = (opts: StartOpts) => {
+      callCount++;
+      const session = origStartPersistent(opts);
+      if (callCount === 1) {
+        session.messages = (async function* () {
+          yield { type: "system", subtype: "init", session_id: "sess-err", tools: [], cwd: "/tmp" };
+          await new Promise((r) => setTimeout(r, 20));
+          throw new Error("Simulated SDK error");
+        })();
+      }
+      return session;
+    };
+
+    const { repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    await sessionManager.startThread({
+      agent: "mock",
+      prompt: "error cleanup test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    expect(mock.isClosed()).toBe(true);
+
+    sessionManager.stopAll();
+  });
+
+  test("persistent session: idle session cleaned up by health check without error", async () => {
+    const mock = createPersistentMockAdapter();
+    const { db, repoDir, sessionManager } = setupSessionManager(mock.adapter);
+
+    const thread = await sessionManager.startThread({
+      agent: "mock",
+      prompt: "idle cleanup test",
+      repoPath: repoDir,
+      projectId: "proj1",
+    });
+
+    mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-idle", tools: [], cwd: "/tmp" });
+    mock.pushMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Done" }] },
+      session_id: "sess-idle",
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.01,
+      duration_ms: 100,
+      session_id: "sess-idle",
+      permission_denials: [],
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    let updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("done");
+    expect(sessionManager.isRunning(thread.id)).toBe(true);
+
+    const mgr = sessionManager as any;
+    const activeSession = mgr.sessions.get(thread.id);
+    expect(activeSession).toBeDefined();
+    expect(activeSession.state).toBe("idle");
+    activeSession.lastMessageAt = Date.now() - 60 * 60 * 1000;
+
+    const timeoutMs = mgr.getInactivityTimeoutMs();
+    const now = Date.now();
+    for (const [threadId, session] of mgr.sessions) {
+      const elapsed = now - session.lastMessageAt;
+      if (elapsed <= timeoutMs) continue;
+      if (session.persistent && (session.state === "idle" || session.state === "waiting")) {
+        mgr.sessions.delete(threadId);
+        session.aborted = true;
+        try { session.session.close(); } catch {}
+        mgr.clearMainWorktreeLock(threadId);
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(sessionManager.isRunning(thread.id)).toBe(false);
+
+    updated = getThread(db, thread.id);
+    expect(updated?.status).toBe("done");
+    expect(mock.isClosed()).toBe(true);
 
     sessionManager.stopAll();
   });

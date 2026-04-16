@@ -5,6 +5,7 @@ interface MobileThreadHeaderProps {
   thread: Thread;
   onBack: () => void;
   onSaveTitle: (newTitle: string) => void;
+  onRequestAgentSwitch?: () => void;
 }
 
 function StatusDot({ status }: { status: Thread["status"] }) {
@@ -25,7 +26,7 @@ function StatusDot({ status }: { status: Thread["status"] }) {
   return <span className="h-2 w-2 rounded-full bg-content-3 shrink-0" />;
 }
 
-export function MobileThreadHeader({ thread, onBack, onSaveTitle }: MobileThreadHeaderProps) {
+export function MobileThreadHeader({ thread, onBack, onSaveTitle, onRequestAgentSwitch }: MobileThreadHeaderProps) {
   const effortLabel = getEffortLabel(thread.agent, thread.effortLevel);
 
   return (
@@ -62,6 +63,21 @@ export function MobileThreadHeader({ thread, onBack, onSaveTitle }: MobileThread
         </div>
       </div>
 
+      {onRequestAgentSwitch && (
+        <button
+          onClick={onRequestAgentSwitch}
+          className="rounded-lg p-2 text-content-3 hover:bg-surface-3 hover:text-content-1 shrink-0"
+          aria-label="Switch agent"
+          title="Switch agent"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M16 3h5v5" />
+            <path d="M8 21H3v-5" />
+            <path d="M21 3l-7 7" />
+            <path d="M3 21l7-7" />
+          </svg>
+        </button>
+      )}
       <StatusDot status={thread.status} />
     </div>
   );

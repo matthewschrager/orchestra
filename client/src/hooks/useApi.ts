@@ -118,6 +118,7 @@ export const api = {
 
   updateThread: (id: string, fields: {
     title?: string;
+    agent?: string;
     model?: string | null;
     permissionMode?: import("shared").PermissionMode | null;
     effortLevel?: import("shared").EffortLevel | null;

@@ -18,7 +18,9 @@ interface Props {
   pendingQuestion?: boolean | null;
   defaultEffortLevel?: EffortLevel | "";
   defaultAgent?: string;
+  canSwitchAgent?: boolean;
   onRequestCommandRefresh?: () => void;
+  onRequestAgentSwitch?: () => void;
   onSend: (content: string, attachments?: Attachment[], interrupt?: boolean) => void;
   onNewThread: (agent: string, effortLevel: EffortLevel | null, model: string | null, prompt: string, isolate: boolean, projectId?: string, worktreeName?: string, attachments?: Attachment[], permissionMode?: PermissionMode | null, baseBranch?: string) => void;
   onStop: () => void;
@@ -48,7 +50,7 @@ function usePendingField<T extends string>(
   return [pending, setPending];
 }
 
-export function InputBar({ agents, thread, activeProjectId, activeProjectName, activeProjectBranch, commands, settings, history, pendingQuestion, defaultEffortLevel, defaultAgent, onRequestCommandRefresh, onSend, onNewThread, onStop }: Props) {
+export function InputBar({ agents, thread, activeProjectId, activeProjectName, activeProjectBranch, commands, settings, history, pendingQuestion, defaultEffortLevel, defaultAgent, canSwitchAgent = false, onRequestCommandRefresh, onRequestAgentSwitch, onSend, onNewThread, onStop }: Props) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"reply" | "new">("reply");
   const [mobileConfigExpanded, setMobileConfigExpanded] = useState(false);
@@ -436,14 +438,26 @@ export function InputBar({ agents, thread, activeProjectId, activeProjectName, a
             </select>
           </ConfigChip>
         ) : (
-          <span className={`text-[11px] font-medium pl-1.5 pr-2 py-0.5 rounded-md inline-flex items-center gap-1 ${
-            activeAgent === "codex"
-              ? "bg-cyan-400/10 text-cyan-400"
-              : "bg-amber-400/10 text-amber-400"
-          }`} title="Agent (read-only)">
-            <IconAgent />
-            {activeAgent}
-          </span>
+          <>
+            <span className={`text-[11px] font-medium pl-1.5 pr-2 py-0.5 rounded-md inline-flex items-center gap-1 ${
+              activeAgent === "codex"
+                ? "bg-cyan-400/10 text-cyan-400"
+                : "bg-amber-400/10 text-amber-400"
+            }`} title="Agent">
+              <IconAgent />
+              {activeAgent}
+            </span>
+            {canSwitchAgent && onRequestAgentSwitch && (
+              <button
+                type="button"
+                onClick={onRequestAgentSwitch}
+                className="text-[11px] text-content-3 hover:text-content-1 px-1.5 py-0.5 rounded-md hover:bg-surface-2 transition-colors"
+                title="Switch agent"
+              >
+                Switch
+              </button>
+            )}
+          </>
         )}
 
         <ConfigDivider />

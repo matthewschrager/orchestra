@@ -27,6 +27,7 @@ import type { WorktreeManager } from "../worktrees/manager";
 import {
   getAgentInstallHint,
   getAgentUnavailableReason,
+  getDefaultPermissionMode,
   isEffortLevelSupported,
   isPermissionModeSupported,
 } from "shared";
@@ -158,12 +159,12 @@ export class SessionManager {
 
     // Validate and build prompt with attachment references
     const validAttachments = this.validateAttachments(opts.attachments);
-    let agentPrompt = this.buildPromptWithAttachments(opts.prompt, validAttachments);
-
-    // Inject isolation preamble for worktree-isolated threads (first message only)
-    if (worktree) {
-      agentPrompt = `${this.buildIsolationPreamble(cwd)}\n\n${agentPrompt}`;
-    }
+    const agentPrompt = this.preparePromptForSession(
+      { worktree },
+      cwd,
+      this.buildPromptWithAttachments(opts.prompt, validAttachments),
+      null,
+    );
 
     // Persist user prompt as first message (with attachment metadata)
     this.persistMessage(threadId, {
@@ -317,6 +318,106 @@ export class SessionManager {
     this.notifyThread(threadId);
   }
 
+  async changeAgent(threadId: string, nextAgent: string): Promise<void> {
+    const thread = getThread(this.db, threadId);
+    if (!thread) throw new Error(`Thread ${threadId} not found`);
+    if (thread.agent === nextAgent) return;
+
+    const adapter = this.registry.get(nextAgent);
+    if (!adapter) throw new Error(`Unknown agent: ${nextAgent}`);
+    if (!await adapter.detect()) {
+      throw new Error(`${getAgentUnavailableReason(nextAgent)} ${getAgentInstallHint(nextAgent)}`);
+    }
+
+    const active = this.sessions.get(threadId);
+    if (active?.state === "thinking") {
+      throw new Error("Cannot change agent while agent is mid-turn");
+    }
+
+    const pendingAttention = getPendingAttention(this.db, threadId);
+    const switchedAt = new Date().toISOString();
+    const nextEffortLevel = isEffortLevelSupported(nextAgent, thread.effort_level) ? thread.effort_level : null;
+    const nextPermissionMode = getDefaultPermissionMode(nextAgent, Boolean(thread.worktree));
+    const systemMessageBase = {
+      id: nanoid(12),
+      thread_id: threadId,
+      role: "system",
+      content: `Switched from ${thread.agent} to ${nextAgent}. Future messages start a fresh ${nextAgent} session in the same worktree. Earlier messages remain visible but are not loaded into the new agent's context automatically.`,
+      tool_name: null,
+      tool_input: null,
+      tool_output: null,
+      metadata: JSON.stringify({
+        kind: "agent_switch",
+        fromAgent: thread.agent,
+        toAgent: nextAgent,
+        switchedAt,
+      }),
+      queue_message_id: null,
+      created_at: switchedAt,
+    };
+
+    const commitSwitch = this.db.transaction(() => {
+      const orphanedAttentionCount = orphanAttentionItems(this.db, threadId, "agent_switch");
+      const clearedQueueCount = clearPendingQueue(this.db, threadId);
+      updateThread(this.db, threadId, this.getTurnEndedFields({
+        agent: nextAgent,
+        model: null,
+        effort_level: nextEffortLevel,
+        permission_mode: nextPermissionMode,
+        session_id: null,
+        status: "done",
+        pid: null,
+        error_message: null,
+      }));
+      const metadata = JSON.stringify({
+        kind: "agent_switch",
+        fromAgent: thread.agent,
+        toAgent: nextAgent,
+        switchedAt,
+        discardedQueuedMessages: clearedQueueCount,
+        orphanedAttentionCount,
+      });
+      const seq = insertMessage(this.db, {
+        ...systemMessageBase,
+        metadata,
+      });
+      return {
+        orphanedAttentionCount,
+        clearedQueueCount,
+        systemMessage: {
+          ...systemMessageBase,
+          metadata,
+          seq,
+        } satisfies MessageRow,
+      };
+    });
+
+    const { orphanedAttentionCount, clearedQueueCount, systemMessage } = commitSwitch();
+
+    if (active) {
+      this.resolveAdapterBackedAttentionOrphans(active, pendingAttention, { type: "orphaned", reason: "agent_switch" });
+      active.queuedThisTurn = 0;
+      this.teardownSession(threadId);
+    }
+
+    if (orphanedAttentionCount > 0) {
+      for (const item of pendingAttention) {
+        this.notifyAttentionResolved(item.id, threadId);
+      }
+    }
+
+    for (const fn of this.messageListeners) {
+      try {
+        fn(threadId, systemMessage);
+      } catch {}
+    }
+
+    this.notifyThread(threadId);
+    if (clearedQueueCount > 0) {
+      this.broadcastQueueState(threadId);
+    }
+  }
+
   sendMessage(threadId: string, content: string, attachments?: Attachment[], opts?: { internal?: boolean; interrupt?: boolean }): void {
     if (DEBUG) console.log(`[session] sendMessage thread=${threadId} content=${content.slice(0, 60)} interrupt=${!!opts?.interrupt}`);
     const thread = getThread(this.db, threadId) as ThreadRow | null;
@@ -421,11 +522,9 @@ export class SessionManager {
       touchThreadInteraction(this.db, threadId);
     }
 
-    // Build prompt with attachment references
-    const agentPrompt = this.buildPromptWithAttachments(content, validAttachments);
-
     // Get the cwd — use worktree if isolated, otherwise repo_path
     const cwd = thread.worktree || thread.repo_path;
+    const builtPrompt = this.buildPromptWithAttachments(content, validAttachments);
 
     // ── PERSISTENT PATH: inject into living subprocess (idle/waiting state) ──
     if (existing?.persistent) {
@@ -445,13 +544,22 @@ export class SessionManager {
         // No session_id — can't inject. Fall back to restart.
         console.warn(`[session] No sessionId for persistent inject on ${threadId}, falling back to restart`);
         this.teardownSession(threadId);
-        this.startTurn(threadId, adapter, cwd, agentPrompt, null, effortLevel, model, permissionMode);
+        this.startTurn(
+          threadId,
+          adapter,
+          cwd,
+          this.preparePromptForSession(thread, cwd, builtPrompt, null),
+          null,
+          effortLevel,
+          model,
+          permissionMode,
+        );
         return;
       }
 
       // Wrap injectMessage in try/catch to handle both sync throws and async rejections (#3)
       try {
-        const injectPromise = (existing.session as PersistentSession).injectMessage(agentPrompt, sessionId);
+        const injectPromise = (existing.session as PersistentSession).injectMessage(builtPrompt, sessionId);
         injectPromise.catch((err) => {
           // Check if session was stopped while inject was pending (#6)
           if (existing.aborted || !this.sessions.has(threadId)) {
@@ -460,14 +568,14 @@ export class SessionManager {
           }
           console.error(`[session] streamInput failed for ${threadId}, falling back to resume:`, err);
           this.teardownSession(threadId);
-          this.restartWithResume(threadId, adapter, cwd, agentPrompt);
+          this.restartWithResume(threadId, adapter, cwd, builtPrompt);
         });
       } catch (err) {
         // Synchronous throw from injectMessage (#3) — same fallback path
         if (existing.aborted || !this.sessions.has(threadId)) return;
         console.error(`[session] streamInput threw synchronously for ${threadId}, falling back to resume:`, err);
         this.teardownSession(threadId);
-        this.restartWithResume(threadId, adapter, cwd, agentPrompt);
+        this.restartWithResume(threadId, adapter, cwd, builtPrompt);
       }
       return;
     }
@@ -488,6 +596,7 @@ export class SessionManager {
     const sessionId = existing?.sessionId
       ?? this.getPersistedSessionId(threadId)
       ?? null;
+    const agentPrompt = this.preparePromptForSession(thread, cwd, builtPrompt, sessionId);
 
     // Start a new session — prefer persistent when available
     updateThread(this.db, threadId, this.getTurnStartedFields({ status: "running", error_message: null }));
@@ -603,6 +712,16 @@ export class SessionManager {
     return attachments.filter((a) => SessionManager.NANOID_RE.test(a.id));
   }
 
+  private preparePromptForSession(
+    thread: Pick<ThreadRow, "worktree">,
+    cwd: string,
+    prompt: string,
+    resumeSessionId: string | null,
+  ): string {
+    if (!thread.worktree || resumeSessionId) return prompt;
+    return `${this.buildIsolationPreamble(cwd)}\n\n${prompt}`;
+  }
+
   /** Build isolation preamble for worktree-isolated agent sessions.
    *  Gives the agent operational context about Orchestra to avoid accidental interference. */
   buildIsolationPreamble(cwd: string): string {
@@ -654,6 +773,29 @@ export class SessionManager {
       ...fields,
       metrics_active_turn_started_at: null,
     };
+  }
+
+  private resolveAdapterBackedAttentionOrphans(
+    activeSession: ActiveSession,
+    pending: AttentionRow[],
+    resolution: Extract<AttentionResolution, { type: "orphaned" }>,
+  ): void {
+    const persistentSession = activeSession.persistent ? activeSession.session as PersistentSession : null;
+    if (!persistentSession?.resolveAttention) return;
+
+    for (const item of pending) {
+      if (!item.metadata) continue;
+      let metadata: Record<string, unknown> | null = null;
+      try {
+        metadata = JSON.parse(item.metadata) as Record<string, unknown>;
+      } catch {
+        metadata = null;
+      }
+      if (metadata?.source !== "codex_app_server_request") continue;
+      persistentSession.resolveAttention(metadata, resolution).catch((err) => {
+        console.error(`[session] Failed to orphan adapter-backed attention ${item.id}:`, err);
+      });
+    }
   }
 
   private persistMetricsDelta(threadId: string, delta: StreamDelta): void {
@@ -927,6 +1069,7 @@ export class SessionManager {
       // ── Persistent session: iterator end = subprocess died ──
       if (activeSession.persistent) {
         this.sessions.delete(threadId);
+        try { (activeSession.session as PersistentSession).close(); } catch {}
         this.clearMainWorktreeLock(threadId);
 
         if (activeSession.aborted) {
@@ -1028,6 +1171,9 @@ export class SessionManager {
 
       // Real SDK error
       this.sessions.delete(threadId);
+      if (activeSession.persistent) {
+        try { (activeSession.session as PersistentSession).close(); } catch {}
+      }
       this.clearMainWorktreeLock(threadId);
       this.orphanPendingAttention(threadId, { type: "orphaned", reason: "agent_error" });
 
@@ -1129,9 +1275,28 @@ export class SessionManager {
         console.warn(`[session] No sessionId for queued delivery on ${threadId}, falling back to restart`);
         this.teardownSession(threadId);
         if (adapter.supportsPersistent?.()) {
-          this.startPersistentSession(threadId, adapter, cwd, queued.content, null, effortLevel, model, 0, permissionMode);
+          this.startPersistentSession(
+            threadId,
+            adapter,
+            cwd,
+            this.preparePromptForSession(thread, cwd, queued.content, null),
+            null,
+            effortLevel,
+            model,
+            0,
+            permissionMode,
+          );
         } else {
-          this.startTurn(threadId, adapter, cwd, queued.content, null, effortLevel, model, permissionMode);
+          this.startTurn(
+            threadId,
+            adapter,
+            cwd,
+            this.preparePromptForSession(thread, cwd, queued.content, null),
+            null,
+            effortLevel,
+            model,
+            permissionMode,
+          );
         }
         this.broadcastQueueState(threadId);
         return;
@@ -1163,9 +1328,28 @@ export class SessionManager {
     updateThread(this.db, threadId, this.getTurnStartedFields({ status: "running", error_message: null }));
     this.notifyThread(threadId);
     if (adapter.supportsPersistent?.()) {
-      this.startPersistentSession(threadId, adapter, cwd, queued.content, sessionId, effortLevel, model, 0, permissionMode);
+      this.startPersistentSession(
+        threadId,
+        adapter,
+        cwd,
+        this.preparePromptForSession(thread, cwd, queued.content, sessionId),
+        sessionId,
+        effortLevel,
+        model,
+        0,
+        permissionMode,
+      );
     } else {
-      this.startTurn(threadId, adapter, cwd, queued.content, sessionId, effortLevel, model, permissionMode);
+      this.startTurn(
+        threadId,
+        adapter,
+        cwd,
+        this.preparePromptForSession(thread, cwd, queued.content, sessionId),
+        sessionId,
+        effortLevel,
+        model,
+        permissionMode,
+      );
     }
     this.broadcastQueueState(threadId);
   }
@@ -1460,11 +1644,26 @@ export class SessionManager {
       const timeoutMs = this.getInactivityTimeoutMs();
       for (const [threadId, session] of this.sessions) {
         const elapsed = now - session.lastMessageAt;
-        if (elapsed > timeoutMs) {
-          const elapsedSec = Math.round(elapsed / 1000);
-          console.warn(`[health] Thread ${threadId} inactive for ${elapsedSec}s (limit: ${Math.round(timeoutMs / 1000)}s) — aborting`);
-          this.timeoutThread(threadId, elapsedSec);
+        if (elapsed <= timeoutMs) continue;
+
+        if (session.persistent && (session.state === "idle" || session.state === "waiting")) {
+          if (DEBUG) console.log(`[health] Thread ${threadId} — closing idle persistent session (${session.state} for ${Math.round(elapsed / 1000)}s)`);
+          const wasWaiting = session.state === "waiting";
+          this.sessions.delete(threadId);
+          session.aborted = true;
+          try { (session.session as PersistentSession).close(); } catch {}
+          this.clearMainWorktreeLock(threadId);
+          if (wasWaiting) {
+            this.orphanPendingAttention(threadId, { type: "orphaned", reason: "session_timed_out" });
+            updateThread(this.db, threadId, this.getTurnEndedFields({ status: "done", pid: null }));
+            this.notifyThread(threadId);
+          }
+          continue;
         }
+
+        const elapsedSec = Math.round(elapsed / 1000);
+        console.warn(`[health] Thread ${threadId} inactive for ${elapsedSec}s (limit: ${Math.round(timeoutMs / 1000)}s) — aborting`);
+        this.timeoutThread(threadId, elapsedSec);
       }
       // Housekeeping: clean up delivered queue entries older than 1 hour
       cleanDeliveredQueue(this.db);

@@ -354,7 +354,7 @@ export function deleteProject(db: DB, id: string): void {
 // Fix 7: Column allowlists prevent SQL injection via dynamic column names
 const PROJECT_COLUMNS = new Set(["name"]);
 const THREAD_COLUMNS = new Set([
-  "title", "status", "worktree", "branch", "base_branch", "pid",
+  "title", "agent", "status", "worktree", "branch", "base_branch", "pid",
   "error_message", "pr_url", "archived_at", "session_id", "effort_level", "permission_mode", "model",
   "pr_status", "pr_number", "pr_status_checked_at", "last_interacted_at",
   "metrics_cost_usd", "metrics_duration_ms", "metrics_turn_count",
