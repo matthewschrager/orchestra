@@ -35,6 +35,7 @@ Have a feature idea while walking the dog? Spin up a new thread from your phone,
 - **Worktree isolation** — One-click per-thread worktree isolation, with convenience functions for managing many worktrees simultaneously
 - **Parallel Dev Made Easy** — Isolated worktrees by default, one-click to merge all outstanding PRs, one-click to delete all threads with merged PRs, etc. 
 - **Multi-agent** — Bring your own CLIs; Claude Code and Codex adapters included, easy to add more
+- **In-thread agent switching** — Move a thread from one detected agent to another without starting a new thread or leaving the current worktree
 - **Integrated terminal** — xterm.js terminal per thread, backed by a real PTY on the server
 - **Token auth** — Secure remote access with bearer token auth
 - **PWA** — Installable on mobile for a native-app feel

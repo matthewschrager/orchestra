@@ -9,6 +9,7 @@ import { SubAgentCard } from "./renderers/SubAgentCard";
 import { TodoCard } from "./renderers/TodoCard";
 import { ToolMediaRenderer, hasToolImages } from "./renderers/ToolMediaRenderer";
 import { extractQuestionPreview, formatAnswers, isAskUserTool, parseQuestions, type ParsedQuestion } from "../lib/askUser";
+import { getLatestAgentSwitchSeq, isAgentSwitchMessage } from "../lib/agentSwitch";
 import { isImageFile } from "../lib/fileUtils";
 import { MessageAttachments } from "./AttachmentPreview";
 import { EditableTitle } from "./EditableTitle";
@@ -78,29 +79,33 @@ export const ChatView = forwardRef<ChatViewHandle, Props>(function ChatView(
   const pendingInitialScrollRef = useRef(true);
 
   const grouped = useMemo(() => groupMessages(messages), [messages]);
+  const latestSwitchSeq = useMemo(() => getLatestAgentSwitchSeq(messages), [messages]);
 
   // Find the ID of the latest TodoWrite message for prominent rendering
   const latestTodoId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].seq <= latestSwitchSeq) break;
       if (messages[i].toolName === "TodoWrite" && messages[i].toolInput) return messages[i].id;
     }
     return null;
-  }, [messages]);
+  }, [messages, latestSwitchSeq]);
 
   // Detect which ask-user tool messages have been answered (user replied after them)
   const answeredQuestionIds = useMemo(() => {
     const ids = new Set<string>();
-    let lastUserSeq = -1;
+    let lastUserSeq = latestSwitchSeq;
     for (const msg of messages) {
+      if (msg.seq <= latestSwitchSeq) continue;
       if (msg.role === "user") lastUserSeq = msg.seq;
     }
     for (const msg of messages) {
+      if (msg.seq <= latestSwitchSeq) continue;
       if (isAskUserTool(msg.toolName) && msg.toolInput && !msg.toolOutput && msg.seq < lastUserSeq) {
         ids.add(msg.id);
       }
     }
     return ids;
-  }, [messages]);
+  }, [messages, latestSwitchSeq]);
 
   const measureAtBottom = useCallback((el: HTMLDivElement) => (
     el.scrollHeight - el.scrollTop - el.clientHeight < 100
@@ -963,7 +968,33 @@ function MessageBubble({ message, isQueued, queueState }: { message: Message; is
     );
   }
 
-  // Assistant message
+  if (isAgentSwitchMessage(message)) {
+    const fromAgent = typeof message.metadata?.fromAgent === "string" ? message.metadata.fromAgent : "previous agent";
+    const toAgent = typeof message.metadata?.toAgent === "string" ? message.metadata.toAgent : "new agent";
+    return (
+      <div className="w-full py-3">
+        <div className="flex items-center gap-3 text-[11px] text-content-3">
+          <div className="h-px flex-1 bg-edge-1" />
+          <div className="min-w-0 rounded-full border border-edge-1 bg-surface-3/80 px-3 py-1 text-center">
+            <div className="font-medium text-content-2">Agent switch</div>
+            <div className="mt-0.5">
+              <span className="text-content-3">{fromAgent}</span>
+              <span className="mx-1.5 text-content-3/60">→</span>
+              <span className="text-content-1">{toAgent}</span>
+            </div>
+          </div>
+          <div className="h-px flex-1 bg-edge-1" />
+        </div>
+        {trimmed && (
+          <div className="mt-2 text-center text-xs text-content-3">
+            {message.content}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Assistant/system message
   return (
     <div className="max-w-[80%]">
       <div className="bg-surface-3 rounded-lg px-4 py-3 text-sm border-l-2 border-l-accent/20">

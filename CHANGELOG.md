@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0.0] - 2026-04-16
+
+### Added
+
+- **Threads can now switch agents without starting over** — each thread now has a dedicated switch flow that lets you move from one detected agent to another, keep the same worktree and transcript, and start the next turn with a fresh session under the new agent
+- **Agent-switch boundaries are now explicit in the transcript** — Orchestra inserts a visible system divider when the thread changes agents, warns that prior conversation context is not automatically loaded, and clears stale pinned TODO and ask-user state from the old agent session
+- **Regression coverage for thread-level agent switching** — added route and session tests that lock in agent updates, mid-turn rejection, queue cleanup, attention orphaning, and live-session teardown during a switch
+
+### Fixed
+
+- **Worktree-isolated fresh sessions keep Orchestra’s safety preamble after agent resets** — when a thread starts a brand new session in an isolated worktree, including after an agent switch or fresh fallback, the isolation instructions are injected again instead of only on the first thread turn
+
 ## [0.1.54.2] - 2026-04-15
 
 ### Fixed

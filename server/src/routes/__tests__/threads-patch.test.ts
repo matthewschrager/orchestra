@@ -41,6 +41,7 @@ function insertThread(db: Database, overrides: Partial<Record<string, string | n
 }
 
 function createMockSessionManager(testDb?: Database, opts?: {
+  changeAgentError?: string;
   changeModelError?: string;
   changePermissionModeError?: string;
   changeEffortLevelError?: string;
@@ -50,6 +51,15 @@ function createMockSessionManager(testDb?: Database, opts?: {
     notifiedThreadIds,
     stopThread: () => {},
     notifyThread: (id: string) => { notifiedThreadIds.push(id); },
+    changeAgent: async (threadId: string, agent: string) => {
+      if (opts?.changeAgentError) throw new Error(opts.changeAgentError);
+      if (testDb) {
+        testDb.query(
+          "UPDATE threads SET agent = ?, model = NULL, permission_mode = 'bypassPermissions', session_id = NULL, updated_at = datetime('now') WHERE id = ?",
+        ).run(agent, threadId);
+      }
+      notifiedThreadIds.push(threadId);
+    },
     changeModel: async (threadId: string, model: string | null) => {
       if (opts?.changeModelError) throw new Error(opts.changeModelError);
       if (testDb) testDb.query("UPDATE threads SET model = ?, updated_at = datetime('now') WHERE id = ?").run(model, threadId);
@@ -201,6 +211,79 @@ describe("PATCH /threads/:id (permissionMode)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.permissionMode).toBeNull();
+  });
+});
+
+describe("PATCH /threads/:id (agent)", () => {
+  let db: Database;
+
+  function makeApp(sessionManager?: SessionManager) {
+    const sm = sessionManager ?? createMockSessionManager(db) as unknown as SessionManager;
+    const app = new Hono();
+    app.route("/threads", createThreadRoutes(
+      db,
+      sm,
+      { cleanup: async () => {} } as unknown as WorktreeManager,
+      { closeForThread: () => {} } as unknown as TerminalManager,
+    ));
+    return app;
+  }
+
+  beforeEach(() => {
+    db = createTestDb();
+  });
+
+  test("switches thread agent and broadcasts update", async () => {
+    insertThread(db, { id: "t-agent", agent: "claude" });
+    const sessionManager = createMockSessionManager(db);
+    const app = makeApp(sessionManager as unknown as SessionManager);
+
+    const res = await app.request("/threads/t-agent", {
+      method: "PATCH",
+      body: JSON.stringify({ agent: "codex" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.agent).toBe("codex");
+    expect(body.model).toBeNull();
+    expect(body.permissionMode).toBe("bypassPermissions");
+    expect(sessionManager.notifiedThreadIds).toContain("t-agent");
+  });
+
+  test("returns 409 when switching agents mid-turn", async () => {
+    insertThread(db, { id: "t-busy", agent: "claude" });
+    const app = makeApp(createMockSessionManager(db, {
+      changeAgentError: "Cannot change agent while agent is mid-turn",
+    }) as unknown as SessionManager);
+
+    const res = await app.request("/threads/t-busy", {
+      method: "PATCH",
+      body: JSON.stringify({ agent: "codex" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: "Cannot change agent while agent is mid-turn",
+    });
+  });
+
+  test("rejects combining agent switch with other config updates", async () => {
+    insertThread(db, { id: "t-mixed", agent: "claude" });
+    const app = makeApp();
+
+    const res = await app.request("/threads/t-mixed", {
+      method: "PATCH",
+      body: JSON.stringify({ agent: "codex", model: "gpt-5.4" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Agent switch must be submitted separately from model, permission mode, or effort changes",
+    });
   });
 });
 

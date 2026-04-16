@@ -41,10 +41,12 @@ import { parseTodos } from "./components/renderers/TodoRenderer";
 import { OrchestraLogo } from "./components/OrchestraLogo";
 import { MergeAllPrsButton } from "./components/MergeAllPrsButton";
 import { PinnedTodoPanel } from "./components/PinnedTodoPanel";
+import { SwitchAgentModal } from "./components/SwitchAgentModal";
 import { CleanupConfirmationModal } from "./components/CleanupConfirmationModal";
 import { MergeAllPrsConfirmationModal } from "./components/MergeAllPrsConfirmationModal";
 import { getCommandsCacheKey, shouldRefreshCommands } from "./lib/commandRefresh";
 import { buildInputHistory } from "./lib/inputHistory";
+import { getLatestAgentSwitchSeq } from "./lib/agentSwitch";
 import { getEffectiveOutstandingPrCount } from "./lib/prCounts";
 import { usePrAutoRefresh } from "./hooks/usePrAutoRefresh";
 import { consumeQueuedFallback, incrementQueuedFallback, shouldTrackQueuedFallback } from "./lib/queueFallback";
@@ -309,6 +311,10 @@ function AppInner() {
     } | null;
   }
 
+  interface SwitchAgentModalState {
+    threadId: string;
+  }
+
   const [projects, setProjects] = useState<ProjectWithStatus[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -322,7 +328,9 @@ function AppInner() {
   const [showAddProject, setShowAddProject] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [cleanupModal, setCleanupModal] = useState<CleanupModalState | null>(null);
+  const [switchAgentModal, setSwitchAgentModal] = useState<SwitchAgentModalState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [mergingProjectId, setMergingProjectId] = useState<string | null>(null);
   const [mergeConfirmProjectId, setMergeConfirmProjectId] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"inbox" | "sessions" | "new">("sessions");
@@ -359,6 +367,10 @@ function AppInner() {
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null;
+  const detectedAlternativeAgents = useMemo(
+    () => agents.filter((agent) => agent.detected && agent.name !== activeThread?.agent),
+    [agents, activeThread?.agent],
+  );
   const activeCommands = useMemo(
     () => commandsByProject.get(getCommandsCacheKey(activeProjectId)) ?? [],
     [commandsByProject, activeProjectId],
@@ -407,12 +419,20 @@ function AppInner() {
     return getEffectiveOutstandingPrCount(activeProject, activeProjectThreads);
   }, [activeProject, activeProjectThreads]);
 
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
   // Detect unanswered ask-user tool calls — check if there's one after the last user message
   const pendingQuestion = useMemo(() => {
     if (!activeMessages.length) return null;
+    const latestSwitchSeq = getLatestAgentSwitchSeq(activeMessages);
     let foundAsk = false;
     for (let i = activeMessages.length - 1; i >= 0; i--) {
       const msg = activeMessages[i];
+      if (msg.seq <= latestSwitchSeq) return null;
       if (msg.role === "user") return foundAsk ? true : null;
       if (isAskUserTool(msg.toolName) && msg.toolInput && !msg.toolOutput) {
         foundAsk = true;
@@ -807,6 +827,28 @@ function AppInner() {
     }
   }, [activeThreadId]);
 
+  const handleRequestAgentSwitch = useCallback(() => {
+    if (!activeThread) return;
+    setSwitchAgentModal({ threadId: activeThread.id });
+  }, [activeThread]);
+
+  const handleConfirmAgentSwitch = useCallback(async (nextAgent: string) => {
+    const threadId = switchAgentModal?.threadId;
+    if (!threadId) return;
+    setError(null);
+    const updated = await api.updateThread(threadId, { agent: nextAgent });
+    setThreads((prev) => prev.map((thread) => thread.id === updated.id ? updated : thread));
+    setLatestTodos((prev) => {
+      if (!prev.has(updated.id)) return prev;
+      const next = new Map(prev);
+      next.delete(updated.id);
+      return next;
+    });
+    dispatchStreaming({ type: "clear_all", threadId: updated.id });
+    setSwitchAgentModal(null);
+    setToast(`Switched to ${updated.agent}, fresh session`);
+  }, [switchAgentModal?.threadId]);
+
   const handleAddProject = async (path: string) => {
     try {
       setError(null);
@@ -1195,6 +1237,7 @@ function AppInner() {
                   setMobileTab("sessions");
                 }}
                 onSaveTitle={handleSaveTitle}
+                onRequestAgentSwitch={detectedAlternativeAgents.length > 0 ? handleRequestAgentSwitch : undefined}
               />
               <ChatView
                 ref={chatViewRef}
@@ -1243,7 +1286,9 @@ function AppInner() {
                 pendingQuestion={pendingQuestion}
                 defaultEffortLevel={defaultEffortLevel}
                 defaultAgent={defaultAgent}
+                canSwitchAgent={detectedAlternativeAgents.length > 0}
                 onRequestCommandRefresh={() => { void refreshCommands(activeProjectId ?? null); }}
+                onRequestAgentSwitch={handleRequestAgentSwitch}
                 onSend={handleSendMessage}
                 onNewThread={handleNewThread}
                 onStop={handleStopThread}
@@ -1414,6 +1459,32 @@ function AppInner() {
           />
         );
       })()}
+
+      {switchAgentModal && (() => {
+        const thread = threads.find((candidate) => candidate.id === switchAgentModal.threadId);
+        if (!thread) return null;
+        const queuedCount = (streaming.queueItems.get(thread.id) ?? []).filter((item) => item.state === "pending").length;
+        const pendingAttentionCount = attention.items.filter((item) => item.threadId === thread.id && !item.resolvedAt).length;
+        return (
+          <SwitchAgentModal
+            thread={thread}
+            agents={agents}
+            queuedCount={queuedCount}
+            pendingAttentionCount={pendingAttentionCount}
+            onConfirm={handleConfirmAgentSwitch}
+            onCancel={() => setSwitchAgentModal(null)}
+          />
+        );
+      })()}
+
+      {toast && (
+        <div
+          aria-live="polite"
+          className="fixed bottom-20 left-1/2 z-50 -translate-x-1/2 rounded-full border border-emerald-500/20 bg-emerald-950/90 px-4 py-2 text-sm text-emerald-200 shadow-xl"
+        >
+          {toast}
+        </div>
+      )}
 
       {/* Settings Panel */}
       {showSettings && (
