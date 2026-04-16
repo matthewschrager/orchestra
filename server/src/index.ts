@@ -12,6 +12,8 @@ import { createPushRoutes } from "./routes/push";
 import { createUploadRoutes } from "./routes/uploads";
 import { createSettingsRoutes, getWorktreeRoot } from "./routes/settings";
 import { createFileRoutes } from "./routes/files";
+import { createDiagnosticsRoutes } from "./routes/diagnostics";
+import { runAndCacheLspDoctor } from "./lsp/doctor";
 import { PushManager } from "./push/manager";
 import { createWSHandler } from "./ws/handler";
 import { SessionManager } from "./sessions/manager";
@@ -221,6 +223,7 @@ app.route("/api/uploads", createUploadRoutes(uploadsDir));
 app.route("/api/settings", createSettingsRoutes(db, worktreeManager));
 app.route("/api/files", createFileRoutes());
 app.route("/api/tailscale", createTailscaleRoutes(tailscaleDetector, db));
+app.route("/api/diagnostics", createDiagnosticsRoutes());
 
 // Status endpoint (must be before static/SPA fallback)
 app.get("/api/status", (c) => {
@@ -369,6 +372,19 @@ tailscaleDetector.detect().then((ts) => {
 }).catch(() => {
   // Tailscale detection is best-effort — never block startup
 });
+
+// ── LSP plugin PATH doctor ────────────────────────────────
+// Orchestra inherits CLI-enabled plugins via `settingSources: ["user", ...]`.
+// If the user enabled an `*-lsp@*` plugin but doesn't have the language-server
+// binary on PATH, the SDK will fail mid-turn on first matching file access.
+// Run the doctor once on startup so the warning is visible in server logs and
+// surfaced in the Settings panel before it blows up a session.
+try {
+  runAndCacheLspDoctor();
+} catch (err) {
+  // Don't cast to Error — preserve the original throw value and stack.
+  console.error("[lsp-doctor] Startup check failed:", err);
+}
 
 // ── Periodic attention expiry ─────────────────────────────
 const EXPIRY_INTERVAL_MS = 60 * 60 * 1000; // every hour
