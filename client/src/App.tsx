@@ -103,13 +103,14 @@ const initialStreamingState: StreamingState = {
   queueItems: new Map(),
 };
 
-const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0, modelName: null };
+const EMPTY_METRICS: TurnMetrics = { costUsd: 0, durationMs: 0, turnCount: 0, contextTokens: 0, inputTokens: 0, outputTokens: 0, contextWindow: 0, modelName: null };
 
 function threadMetricsToTurnMetrics(thread: Thread): TurnMetrics {
   return {
     costUsd: thread.metrics.costUsd,
     durationMs: thread.metrics.durationMs,
     turnCount: thread.metrics.turnCount,
+    contextTokens: thread.metrics.contextTokens,
     inputTokens: thread.metrics.inputTokens,
     outputTokens: thread.metrics.outputTokens,
     contextWindow: thread.metrics.contextWindow,
@@ -178,6 +179,11 @@ function streamingReducer(state: StreamingState, action: StreamingAction): Strea
             costUsd: prev.costUsd + (delta.costUsd ?? 0),
             durationMs: prev.durationMs + (delta.durationMs ?? 0),
             turnCount: prev.turnCount + (hasTurnData ? 1 : 0),
+            contextTokens: delta.contextTokens ?? (
+              delta.inputTokens !== undefined && delta.outputTokens !== undefined
+                ? delta.inputTokens + delta.outputTokens
+                : prev.contextTokens
+            ),
             inputTokens: delta.inputTokens ?? prev.inputTokens,
             outputTokens: delta.outputTokens ?? prev.outputTokens,
             contextWindow: Math.max(delta.contextWindow ?? 0, prev.contextWindow),
@@ -1248,6 +1254,7 @@ function AppInner() {
                 onSaveTitle={handleSaveTitle}
               />
               <StickyRunBar
+                agentName={activeThread?.agent ?? null}
                 isRunning={isRunning}
                 turnEnded={activeTurnEnded}
                 currentAction={activeStreamingToolInput ? extractToolContextForBar(activeStreamingTool ?? null, activeStreamingToolInput) : null}

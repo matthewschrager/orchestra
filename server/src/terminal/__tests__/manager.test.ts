@@ -6,6 +6,7 @@ import { join } from "path";
 
 let manager: TerminalManager;
 let testDir: string;
+const originalShell = process.env.SHELL;
 
 async function waitForOutput(
   predicate: () => boolean,
@@ -20,6 +21,9 @@ async function waitForOutput(
 }
 
 beforeEach(() => {
+  // Keep terminal tests deterministic: interactive shells like zsh may spend
+  // seconds in user init files, which makes cwd assertions flaky.
+  process.env.SHELL = "/bin/sh";
   manager = new TerminalManager();
   testDir = mkdtempSync(join(tmpdir(), "terminal-test-"));
 });
@@ -30,6 +34,11 @@ afterEach(() => {
     rmdirSync(testDir);
   } catch {
     /* may already be cleaned */
+  }
+  if (originalShell === undefined) {
+    delete process.env.SHELL;
+  } else {
+    process.env.SHELL = originalShell;
   }
 });
 

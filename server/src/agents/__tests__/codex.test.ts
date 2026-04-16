@@ -49,11 +49,12 @@ describe("CodexParser", () => {
     expect(result.deltas).toHaveLength(0);
   });
 
-  test("thread.token_usage.updated reports context-backed metrics and includes reasoning tokens", () => {
+  test("thread.token_usage.updated reports explicit context occupancy separately from token breakdowns", () => {
     const parser = createParser();
     const result = parser.handleEvent({
       type: "thread.token_usage.updated",
       usage: {
+        total_tokens: 6400,
         input_tokens: 1200,
         cached_input_tokens: 300,
         output_tokens: 200,
@@ -66,8 +67,9 @@ describe("CodexParser", () => {
     expect(result.messages).toHaveLength(0);
     expect(result.deltas).toEqual([{
       deltaType: "metrics",
+      contextTokens: 6400,
       inputTokens: 1500,
-      outputTokens: 275,
+      outputTokens: 200,
       contextWindow: 200_000,
       modelName: "gpt-5-codex",
     }]);
@@ -77,7 +79,7 @@ describe("CodexParser", () => {
     const parser = createParser();
     const result = parser.handleEvent({
       type: "turn.completed",
-      usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 50 },
+      usage: { total_tokens: 2200, input_tokens: 100, cached_input_tokens: 20, output_tokens: 50 },
     });
 
     expect(result.messages).toHaveLength(0);
@@ -87,6 +89,7 @@ describe("CodexParser", () => {
     expect(metricsDelta).toBeDefined();
     // Codex doesn't provide USD cost
     expect(metricsDelta!.costUsd).toBeUndefined();
+    expect(metricsDelta!.contextTokens).toBe(2200);
     expect(metricsDelta!.inputTokens).toBe(120);
     expect(metricsDelta!.outputTokens).toBe(50);
     expect(metricsDelta!.finalMetrics).toBe(true);
@@ -102,11 +105,12 @@ describe("CodexParser", () => {
 
     const result = parser.handleEvent({
       type: "turn.completed",
-      usage: { input_tokens: 160, cached_input_tokens: 25, output_tokens: 65 },
+      usage: { total_tokens: 3100, input_tokens: 160, cached_input_tokens: 25, output_tokens: 65 },
     });
 
     const metricsDelta = result.deltas.find((d) => d.deltaType === "metrics");
     expect(metricsDelta).toBeDefined();
+    expect(metricsDelta!.contextTokens).toBe(3100);
     expect(metricsDelta!.inputTokens).toBe(185);
     expect(metricsDelta!.outputTokens).toBe(65);
     expect(metricsDelta!.finalMetrics).toBe(true);
@@ -601,6 +605,37 @@ describe("CodexParser", () => {
     expect(result.deltas[1].toolInput).toContain("Which branch should I use?");
   });
 
+  test("item.started (spawn_agent) produces Agent start and normalized input", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.started",
+      item: {
+        id: "mcp-spawn-1",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "spawn_agent",
+        arguments: {
+          agent_type: "explorer",
+          message: "Inspect the auth module and report back",
+        },
+        status: "in_progress",
+      },
+    });
+
+    expect(result.messages).toHaveLength(0);
+    expect(result.deltas).toEqual([
+      { deltaType: "tool_start", toolName: "Agent" },
+      {
+        deltaType: "tool_input",
+        toolInput: JSON.stringify({
+          description: "Inspect the auth module and report back",
+          prompt: "Inspect the auth module and report back",
+          subagent_type: "explorer",
+        }),
+      },
+    ]);
+  });
+
   test("item.completed (mcp_tool_call ask-user alias) emits canonical tool message and attention", () => {
     const parser = createParser();
     const result = parser.handleEvent({
@@ -651,6 +686,105 @@ describe("CodexParser", () => {
           ],
         },
       },
+    });
+  });
+
+  test("item.completed (spawn_agent) produces an Agent tool message with subagent metadata", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.completed",
+      item: {
+        id: "mcp-spawn-2",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "spawn_agent",
+        arguments: {
+          agent_type: "explorer",
+          message: "Inspect the auth module and report back",
+        },
+        result: {
+          structured_content: {
+            agent: {
+              id: "agent-42",
+            },
+          },
+        },
+        status: "completed",
+      },
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]).toMatchObject({
+      role: "tool",
+      toolName: "Agent",
+      toolInput: JSON.stringify({
+        description: "Inspect the auth module and report back",
+        prompt: "Inspect the auth module and report back",
+        subagent_type: "explorer",
+      }),
+      toolOutput: undefined,
+      metadata: {
+        sourceToolName: "spawn_agent",
+        subagentId: "agent-42",
+      },
+    });
+  });
+
+  test("item.completed (wait_agent single target) produces an Agent result", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.completed",
+      item: {
+        id: "mcp-wait-1",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "wait_agent",
+        arguments: {
+          targets: ["agent-42"],
+        },
+        result: {
+          content: [{ type: "text", text: "Auth module findings" }],
+        },
+        status: "completed",
+      },
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]).toMatchObject({
+      role: "tool",
+      toolName: "Agent",
+      toolInput: null,
+      toolOutput: "Auth module findings",
+      metadata: {
+        sourceToolName: "wait_agent",
+        subagentId: "agent-42",
+      },
+    });
+  });
+
+  test("item.completed (wait_agent multiple targets) stays as raw wait_agent", () => {
+    const parser = createParser();
+    const result = parser.handleEvent({
+      type: "item.completed",
+      item: {
+        id: "mcp-wait-2",
+        type: "mcp_tool_call",
+        server: "my-server",
+        tool: "wait_agent",
+        arguments: {
+          targets: ["agent-1", "agent-2"],
+        },
+        result: {
+          content: [{ type: "text", text: "one of them finished" }],
+        },
+        status: "completed",
+      },
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]).toMatchObject({
+      role: "tool",
+      toolName: "wait_agent",
     });
   });
 

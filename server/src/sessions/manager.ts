@@ -763,6 +763,7 @@ export class SessionManager {
     return {
       ...fields,
       metrics_active_turn_started_at: new Date().toISOString(),
+      metrics_context_tokens: 0,
       metrics_input_tokens: 0,
       metrics_output_tokens: 0,
     };
@@ -805,6 +806,11 @@ export class SessionManager {
     if (!thread) return;
 
     const fields: Partial<ThreadRow> = {};
+    if (delta.contextTokens !== undefined) {
+      fields.metrics_context_tokens = delta.contextTokens;
+    } else if (delta.inputTokens !== undefined && delta.outputTokens !== undefined) {
+      fields.metrics_context_tokens = delta.inputTokens + delta.outputTokens;
+    }
     if (delta.inputTokens !== undefined) fields.metrics_input_tokens = delta.inputTokens;
     if (delta.outputTokens !== undefined) fields.metrics_output_tokens = delta.outputTokens;
     if (delta.contextWindow !== undefined) fields.metrics_context_window = delta.contextWindow;
@@ -1066,9 +1072,12 @@ export class SessionManager {
       // CRITICAL: Final identity check after loop
       if (this.sessions.get(threadId) !== activeSession) return;
 
-      // ── Persistent session: iterator end = subprocess died ──
+      // ── Persistent session: iterator ended (subprocess may or may not have exited) ──
       if (activeSession.persistent) {
         this.sessions.delete(threadId);
+        // Ensure the subprocess is killed — the iterator can end even if the process
+        // is still alive (e.g., readLoop EOF while process is blocked on an API call).
+        // close() is idempotent so this is safe even if handleFatal already called it.
         try { (activeSession.session as PersistentSession).close(); } catch {}
         this.clearMainWorktreeLock(threadId);
 
@@ -1171,6 +1180,8 @@ export class SessionManager {
 
       // Real SDK error
       this.sessions.delete(threadId);
+      // Close the old session to kill the subprocess — without this, the process
+      // is orphaned (still running but unreachable) when auto-restart creates a new one.
       if (activeSession.persistent) {
         try { (activeSession.session as PersistentSession).close(); } catch {}
       }
@@ -1646,6 +1657,9 @@ export class SessionManager {
         const elapsed = now - session.lastMessageAt;
         if (elapsed <= timeoutMs) continue;
 
+        // Persistent sessions in idle/waiting state are between turns.
+        // Gracefully close them to free resources (kill the subprocess) but
+        // don't surface an error — the thread is already "done"/"waiting".
         if (session.persistent && (session.state === "idle" || session.state === "waiting")) {
           if (DEBUG) console.log(`[health] Thread ${threadId} — closing idle persistent session (${session.state} for ${Math.round(elapsed / 1000)}s)`);
           const wasWaiting = session.state === "waiting";

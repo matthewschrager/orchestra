@@ -417,15 +417,23 @@ export function pairTools(toolMsgs: Message[]): ToolPair[] {
     const msg = toolMsgs[i];
     // tool_use: has toolInput, no toolOutput
     if (msg.toolInput && !msg.toolOutput) {
+      const subagentPairKey = getSubagentPairKey(msg);
       // For Agent tools, sub-agent internal tool events appear between the
       // Agent tool_use and its tool_result, so scan forward to find the match.
       let matchIdx = -1;
       for (let j = i + 1; j < toolMsgs.length; j++) {
         if (consumed.has(j)) continue;
         const candidate = toolMsgs[j];
+        const candidateSubagentKey = getSubagentPairKey(candidate);
         if (
           (candidate.toolOutput || hasToolImages(candidate.metadata)) &&
-          (!candidate.toolName || candidate.toolName === msg.toolName)
+          (!candidate.toolName || candidate.toolName === msg.toolName) &&
+          (
+            !subagentPairKey ||
+            !candidate.toolName ||
+            candidateSubagentKey === null ||
+            candidateSubagentKey === subagentPairKey
+          )
         ) {
           matchIdx = j;
           break;
@@ -1052,6 +1060,12 @@ function shortenPath(p: string): string {
   const parts = p.split("/").filter(Boolean);
   if (parts.length <= 3) return p;
   return parts.slice(-3).join("/");
+}
+
+function getSubagentPairKey(message: Pick<Message, "toolName" | "metadata">): string | null {
+  if (message.toolName !== "Agent") return null;
+  const id = message.metadata?.subagentId;
+  return typeof id === "string" && id ? id : null;
 }
 
 function extractToolContext(toolName: string, input: string): string {

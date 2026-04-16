@@ -74,6 +74,7 @@ function createMockAdapter(
               messages: [],
               deltas: [{
                 deltaType: "metrics",
+                contextTokens: m.context_tokens as number | undefined,
                 inputTokens: m.input_tokens as number | undefined,
                 outputTokens: m.output_tokens as number | undefined,
                 contextWindow: m.context_window as number | undefined,
@@ -449,6 +450,7 @@ function mockParseMessage(msg: unknown): ParseResult {
       messages: [],
       deltas: [{
         deltaType: "metrics",
+        contextTokens: m.context_tokens as number | undefined,
         inputTokens: m.input_tokens as number | undefined,
         outputTokens: m.output_tokens as number | undefined,
         contextWindow: m.context_window as number | undefined,
@@ -859,6 +861,7 @@ describe("Persistent Session lifecycle", () => {
     const updated = getThread(db, thread.id);
     expect(updated?.status).toBe("running");
     expect(updated?.metrics_active_turn_started_at).toBeTruthy();
+    expect(updated?.metrics_context_tokens).toBe(10000);
     expect(updated?.metrics_input_tokens).toBe(8800);
     expect(updated?.metrics_output_tokens).toBe(1200);
     expect(updated?.metrics_context_window).toBe(200000);
@@ -1564,6 +1567,7 @@ describe("Persistent Session lifecycle", () => {
       projectId: "proj1",
     });
 
+    // Start working
     mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-cleanup", tools: [], cwd: "/tmp" });
     mock.pushMessage({
       type: "assistant",
@@ -1579,7 +1583,6 @@ describe("Persistent Session lifecycle", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     expect(mock.isClosed()).toBe(true);
-
     const updated = getThread(db, thread.id);
     expect(updated?.status).toBe("error");
 
@@ -1587,6 +1590,8 @@ describe("Persistent Session lifecycle", () => {
   });
 
   test("persistent session: close() is called when consumeStream catches an error", async () => {
+    // When consumeStream catches an error from the iterator, the old session must
+    // be closed to kill the subprocess. Without this, the process is orphaned.
     const mock = createPersistentMockAdapter();
 
     let callCount = 0;
@@ -1595,6 +1600,7 @@ describe("Persistent Session lifecycle", () => {
       callCount++;
       const session = origStartPersistent(opts);
       if (callCount === 1) {
+        // First session: override the iterator to throw after emitting a message
         session.messages = (async function* () {
           yield { type: "system", subtype: "init", session_id: "sess-err", tools: [], cwd: "/tmp" };
           await new Promise((r) => setTimeout(r, 20));
@@ -1631,6 +1637,7 @@ describe("Persistent Session lifecycle", () => {
       projectId: "proj1",
     });
 
+    // Complete a turn → state becomes idle
     mock.pushMessage({ type: "system", subtype: "init", session_id: "sess-idle", tools: [], cwd: "/tmp" });
     mock.pushMessage({
       type: "assistant",
@@ -1647,16 +1654,19 @@ describe("Persistent Session lifecycle", () => {
     });
     await new Promise((r) => setTimeout(r, 100));
 
+    // Thread should be "done" and session still alive
     let updated = getThread(db, thread.id);
     expect(updated?.status).toBe("done");
     expect(sessionManager.isRunning(thread.id)).toBe(true);
 
+    // Backdate lastMessageAt to simulate 1 hour of inactivity
     const mgr = sessionManager as any;
     const activeSession = mgr.sessions.get(thread.id);
     expect(activeSession).toBeDefined();
     expect(activeSession.state).toBe("idle");
     activeSession.lastMessageAt = Date.now() - 60 * 60 * 1000;
 
+    // Manually trigger the health check interval callback
     const timeoutMs = mgr.getInactivityTimeoutMs();
     const now = Date.now();
     for (const [threadId, session] of mgr.sessions) {

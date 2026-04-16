@@ -121,6 +121,7 @@ describe("Codex app-server protocol helpers", () => {
       params: {
         tokenUsage: {
           last: {
+            totalTokens: 1600,
             inputTokens: 1000,
             cachedInputTokens: 250,
             outputTokens: 200,
@@ -134,6 +135,7 @@ describe("Codex app-server protocol helpers", () => {
     expect(events).toEqual([{
       type: "thread.token_usage.updated",
       usage: {
+        total_tokens: 1600,
         input_tokens: 1000,
         cached_input_tokens: 250,
         output_tokens: 200,

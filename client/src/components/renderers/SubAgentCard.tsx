@@ -7,12 +7,26 @@ export function parseAgentPrompt(input: string | null): ParsedAgent | null {
   if (!input) return null;
   try {
     const parsed = JSON.parse(input);
-    const description: string = parsed.description || parsed.prompt?.slice(0, 120) || "Sub-agent task";
-    const subagentType: string | undefined = parsed.subagent_type || parsed.subagentType;
+    const prompt = extractPrompt(parsed);
+    const description: string = parsed.description || prompt?.slice(0, 120) || "Sub-agent task";
+    const subagentType: string | undefined = parsed.subagent_type || parsed.subagentType || parsed.agent_type || parsed.agentType;
     return { description, subagentType };
   } catch {
     return { description: "Sub-agent task", subagentType: undefined };
   }
+}
+
+function extractPrompt(parsed: Record<string, unknown>): string | null {
+  if (typeof parsed.prompt === "string" && parsed.prompt.trim()) return parsed.prompt.trim();
+  if (typeof parsed.message === "string" && parsed.message.trim()) return parsed.message.trim();
+  if (!Array.isArray(parsed.items)) return null;
+
+  for (const item of parsed.items) {
+    if (!item || typeof item !== "object") continue;
+    const text = (item as { text?: unknown }).text;
+    if (typeof text === "string" && text.trim()) return text.trim();
+  }
+  return null;
 }
 
 interface Props {

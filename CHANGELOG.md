@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.1.54.2] - 2026-04-15
+
+### Fixed
+
+- **Codex subagents now render like Claude subagents in the transcript** — Codex `spawn_agent` and single-target `wait_agent` events are normalized onto the existing `Agent` UI path, so subagents display as linked status cards instead of raw tool rows and still pair correctly when results finish out of order
+- **Terminal cwd regression test is no longer sensitive to local shell startup files** — the terminal manager test suite now pins `/bin/sh` so slow interactive `zsh` init does not make the cwd assertion time out on developer machines
+
+### Added
+
+- **Regression coverage for Codex subagent rendering and pairing** — added parser and UI tests that lock in Codex `spawn_agent` parsing, `wait_agent` normalization, and subagent-id-aware pairing behavior
+
+## [0.1.54.1] - 2026-04-15
+
+### Fixed
+
+- **Codex context usage now matches Codex itself instead of a local approximation** — Orchestra now carries Codex app-server `totalTokens` through the server, persistence layer, and client metrics state, so Codex threads use the same context-occupancy number the Codex app/CLI uses instead of reconstructing it from token breakdown fields
+- **Claude live context tracking keeps its streaming behavior** — the run bar now uses the explicit Codex occupancy metric only for Codex threads, while Claude continues using live `input + output` updates so streaming token usage does not freeze mid-turn
+
+### Added
+
+- **Regression coverage for explicit Codex context occupancy** — added protocol, parser, persistence, and run-bar tests that lock in the new `contextTokens` plumbing and the Codex-specific effective-context calculation
+
+## [0.1.54.0] - 2026-04-15
+
+### Fixed
+
+- **Codex threads no longer deadlock on interrupt messages** — `handleStdoutLine` was awaiting `startTurn()` inside the read loop, causing a permanent deadlock when the response could never be read. The follow-up turn is now started asynchronously with serialization to prevent concurrent turn starts.
+- **Orphaned Codex subprocesses are now killed during auto-restart** — when `consumeStream` caught an error and triggered auto-restart, the old session's subprocess was never closed. The process stayed alive indefinitely with zero pipe connections to Orchestra. Both the error catch path and the iterator-completed path now call `close()` before cleanup.
+- **Idle persistent sessions no longer spam the health check log** — the health check logged "aborting" every 30 seconds for idle Codex sessions but `timeoutThread()` returned early, leaving the session in the map forever. The health check now gracefully closes idle sessions to free resources without showing an error to the user.
+
 ## [0.1.53.0] - 2026-04-14
 
 ### Fixed

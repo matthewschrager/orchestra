@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { QueuedItem, TodoItem, TurnMetrics } from "shared";
 
 interface Props {
+  agentName?: string | null;
   isRunning: boolean;
   turnEnded: boolean;
   currentAction: string | null;
@@ -21,7 +22,7 @@ interface Props {
   onClearQueue?: () => void;
 }
 
-export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool, metrics, elapsedMs, onInterrupt, onScrollToBottom, todos, queuedCount = 0, queueItems, onCancelQueued, onClearQueue }: Props) {
+export function StickyRunBar({ agentName = null, isRunning, turnEnded, currentAction, currentTool, metrics, elapsedMs, onInterrupt, onScrollToBottom, todos, queuedCount = 0, queueItems, onCancelQueued, onClearQueue }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Treat "process still running but turn ended" as idle — agent is just cleaning up
@@ -67,7 +68,7 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
             Session: {metrics.turnCount} turn{metrics.turnCount !== 1 ? "s" : ""}
             {" · "}{formatDuration(metrics.durationMs)}
           </span>
-          <ContextWindowIndicator metrics={metrics} />
+          <ContextWindowIndicator agentName={agentName} metrics={metrics} />
         </div>
       </div>
     );
@@ -122,7 +123,7 @@ export function StickyRunBar({ isRunning, turnEnded, currentAction, currentTool,
 
         {/* Metrics */}
         <div className="flex items-center gap-3 shrink-0 text-[11px] text-content-3">
-          <ContextWindowIndicator metrics={metrics} />
+          <ContextWindowIndicator agentName={agentName} metrics={metrics} />
           <span>{formatDuration(elapsedMs)}</span>
           {displayCount > 0 && (
             <button
@@ -209,11 +210,11 @@ function formatModelName(raw: string): string {
 
 // ── Context Window Indicator ──────────────────────────────
 
-function ContextWindowIndicator({ metrics }: { metrics: TurnMetrics }) {
-  const summary = getTokenUsageSummary(metrics);
+function ContextWindowIndicator({ agentName, metrics }: { agentName: string | null; metrics: TurnMetrics }) {
+  const summary = getTokenUsageSummary(metrics, agentName);
   if (!summary) return null;
 
-  const { totalTokens, contextWindow, pct } = summary;
+  const { totalTokens, pct, title } = summary;
 
   // Color thresholds: green → yellow → orange → red
   const barColor =
@@ -228,7 +229,7 @@ function ContextWindowIndicator({ metrics }: { metrics: TurnMetrics }) {
     "text-content-3";
 
   return (
-    <div className="flex items-center gap-1.5" title={`${formatTokenCount(totalTokens)} / ${formatTokenCount(contextWindow)} tokens (${Math.round(pct)}%)`}>
+    <div className="flex items-center gap-1.5" title={title}>
       {/* Mini progress bar */}
       <div className="w-12 h-1.5 rounded-full bg-surface-2 overflow-hidden">
         <div
@@ -249,19 +250,42 @@ function formatTokenCount(n: number): string {
   return String(n);
 }
 
-function getTokenUsageSummary(metrics: TurnMetrics): { totalTokens: number; contextWindow: number; pct: number } | null {
+const CODEX_CONTEXT_BASELINE_TOKENS = 12_000;
+
+function getTokenUsageSummary(
+  metrics: TurnMetrics,
+  agentName: string | null = null,
+): { totalTokens: number; pct: number; title: string } | null {
   // Only show this widget when we know the model's context window. Some adapters
   // only expose aggregate turn token totals, which can far exceed any single
   // request's context occupancy and would be misleading here.
   const contextWindow = metrics.contextWindow;
   if (contextWindow <= 0) return null;
 
-  const totalTokens = metrics.inputTokens + metrics.outputTokens;
+  const totalTokens = agentName === "codex" && metrics.contextTokens > 0
+    ? metrics.contextTokens
+    : metrics.inputTokens + metrics.outputTokens;
   if (totalTokens <= 0) return null;
 
-  const pct = Math.min((totalTokens / contextWindow) * 100, 100);
+  if (agentName === "codex") {
+    const effectiveWindow = contextWindow - CODEX_CONTEXT_BASELINE_TOKENS;
+    if (effectiveWindow <= 0) return null;
 
-  return { totalTokens, contextWindow, pct };
+    const effectiveUsed = Math.max(totalTokens - CODEX_CONTEXT_BASELINE_TOKENS, 0);
+    const pct = Math.min((effectiveUsed / effectiveWindow) * 100, 100);
+    return {
+      totalTokens,
+      pct,
+      title: `${formatTokenCount(totalTokens)} used (${Math.round(pct)}% of effective context)`,
+    };
+  }
+
+  const pct = Math.min((totalTokens / contextWindow) * 100, 100);
+  return {
+    totalTokens,
+    pct,
+    title: `${formatTokenCount(totalTokens)} / ${formatTokenCount(contextWindow)} tokens (${Math.round(pct)}%)`,
+  };
 }
 
 // ── Tool Action Formatting ──────────────────────────────

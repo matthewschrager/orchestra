@@ -510,6 +510,17 @@ describe("parseAgentPrompt", () => {
     expect(result!.subagentType).toBe("Explore");
   });
 
+  test("extracts Codex spawn_agent payloads", () => {
+    const input = JSON.stringify({
+      agent_type: "explorer",
+      message: "Inspect the auth module and report back",
+    });
+    const result = parseAgentPrompt(input);
+    expect(result).not.toBeNull();
+    expect(result!.description).toBe("Inspect the auth module and report back");
+    expect(result!.subagentType).toBe("explorer");
+  });
+
   test("handles malformed JSON gracefully", () => {
     const result = parseAgentPrompt("not json");
     expect(result).not.toBeNull();
