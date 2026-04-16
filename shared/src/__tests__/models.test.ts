@@ -5,6 +5,7 @@ describe("getModelOptions", () => {
   test("returns claude models", () => {
     const options = getModelOptions("claude");
     expect(options.length).toBeGreaterThan(0);
+    expect(options.some((o) => o.value === "claude-opus-4-7")).toBe(true);
     expect(options.some((o) => o.value === "claude-sonnet-4-6")).toBe(true);
     expect(options.some((o) => o.value === "claude-opus-4-6")).toBe(true);
     expect(options.some((o) => o.value === "claude-haiku-3-5")).toBe(true);
@@ -25,7 +26,7 @@ describe("getModelOptions", () => {
 
 describe("isModelSupported", () => {
   test("returns true for valid claude model", () => {
-    expect(isModelSupported("claude", "claude-opus-4-6")).toBe(true);
+    expect(isModelSupported("claude", "claude-opus-4-7")).toBe(true);
   });
 
   test("returns true for valid codex model", () => {
@@ -49,6 +50,7 @@ describe("isModelSupported", () => {
 
 describe("getModelLabel", () => {
   test("returns display name for valid model", () => {
+    expect(getModelLabel("claude", "claude-opus-4-7")).toBe("Opus 4.7");
     expect(getModelLabel("claude", "claude-opus-4-6")).toBe("Opus 4.6");
     expect(getModelLabel("claude", "claude-sonnet-4-6")).toBe("Sonnet 4.6");
     expect(getModelLabel("codex", "gpt-5.4")).toBe("GPT-5.4");

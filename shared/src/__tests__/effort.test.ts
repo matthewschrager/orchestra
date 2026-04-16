@@ -10,7 +10,7 @@ describe("effort helpers", () => {
       "high",
       "xhigh",
     ]);
-    expect(getEffortLabel("codex", "xhigh")).toBe("Max");
+    expect(getEffortLabel("codex", "xhigh")).toBe("Extra High");
   });
 
   test("returns claude-specific effort options", () => {
@@ -18,13 +18,15 @@ describe("effort helpers", () => {
       "low",
       "medium",
       "high",
+      "xhigh",
     ]);
     expect(getEffortLabel("claude", "medium")).toBe("Medium");
+    expect(getEffortLabel("claude", "xhigh")).toBe("Extra High");
   });
 
   test("validates effort support by agent", () => {
     expect(isEffortLevelSupported("codex", "xhigh")).toBe(true);
-    expect(isEffortLevelSupported("claude", "xhigh")).toBe(false);
+    expect(isEffortLevelSupported("claude", "xhigh")).toBe(true);
     expect(isEffortLevelSupported("claude", "minimal")).toBe(false);
     expect(isEffortLevelSupported("claude", "high")).toBe(true);
     expect(isEffortLevelSupported("unknown", "high")).toBe(false);

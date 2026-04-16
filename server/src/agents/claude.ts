@@ -79,7 +79,7 @@ export class ClaudeAdapter implements AgentAdapter {
   /** Legacy per-turn session — creates a new subprocess per call */
   start(opts: StartOpts): AgentSession {
     const abortController = new AbortController();
-    const effort = opts.effortLevel === "low" || opts.effortLevel === "medium" || opts.effortLevel === "high"
+    const effort = opts.effortLevel === "low" || opts.effortLevel === "medium" || opts.effortLevel === "high" || opts.effortLevel === "xhigh"
       ? opts.effortLevel
       : undefined;
     const model = opts.model || undefined;
@@ -114,7 +114,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
   /** Persistent session — subprocess stays alive between turns, follow-ups via streamInput() */
   startPersistent(opts: StartOpts): PersistentSession {
-    const effort = opts.effortLevel === "low" || opts.effortLevel === "medium" || opts.effortLevel === "high"
+    const effort = opts.effortLevel === "low" || opts.effortLevel === "medium" || opts.effortLevel === "high" || opts.effortLevel === "xhigh"
       ? opts.effortLevel
       : undefined;
     const model = opts.model || undefined;

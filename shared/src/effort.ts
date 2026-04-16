@@ -10,13 +10,14 @@ const CODEX_EFFORT_OPTIONS: readonly EffortOption[] = [
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
-  { value: "xhigh", label: "Max" },
+  { value: "xhigh", label: "Extra High" },
 ];
 
 const CLAUDE_EFFORT_OPTIONS: readonly EffortOption[] = [
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra High" },
 ];
 
 export function getEffortOptions(agent: string): readonly EffortOption[] {
@@ -41,7 +42,7 @@ export const ALL_EFFORT_OPTIONS: readonly EffortOption[] = [
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
   { value: "minimal", label: "Minimal (Codex)" },
-  { value: "xhigh", label: "Max (Codex)" },
+  { value: "xhigh", label: "Extra High" },
 ];
 
 export function getEffortLabel(agent: string, effortLevel: EffortLevel | null | undefined): string | null {

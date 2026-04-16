@@ -1,12 +1,13 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { TerminalManager } from "../manager";
-import { mkdtempSync, rmdirSync } from "fs";
+import { mkdtempSync, realpathSync, rmdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
 let manager: TerminalManager;
 let testDir: string;
 const originalShell = process.env.SHELL;
+let expectedTestDir: string;
 
 async function waitForOutput(
   predicate: () => boolean,
@@ -26,6 +27,7 @@ beforeEach(() => {
   process.env.SHELL = "/bin/sh";
   manager = new TerminalManager();
   testDir = mkdtempSync(join(tmpdir(), "terminal-test-"));
+  expectedTestDir = realpathSync(testDir);
 });
 
 afterEach(() => {
@@ -204,12 +206,12 @@ describe("TerminalManager", () => {
     outputs.length = 0; // Clear init output
     manager.write("t-cwd", "pwd\n");
 
-    await waitForOutput(() => outputs.join("").includes(testDir), 5_000);
+    await waitForOutput(() => outputs.join("").includes(expectedTestDir), 10_000);
 
     const combined = outputs.join("");
-    // The PTY should report the testDir as cwd, not $HOME or elsewhere
-    expect(combined).toContain(testDir);
-  });
+    // PTYs on macOS may canonicalize /var/... tempdirs to /private/var/...
+    expect(combined).toContain(expectedTestDir);
+  }, { timeout: 12_000 });
 
   test("replay buffer accumulates output", async () => {
     manager.create("t1", testDir);

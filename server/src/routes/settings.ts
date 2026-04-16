@@ -10,6 +10,7 @@ const VALID_EFFORT_LEVELS: readonly string[] = ALL_EFFORT_OPTIONS.map((o) => o.v
 
 const DEFAULT_INACTIVITY_TIMEOUT_MINUTES = 30;
 const DEFAULT_AUTO_SCROLL_THREADS = true;
+const DEFAULT_EFFORT_LEVEL: EffortLevel = "xhigh";
 
 function parseBooleanSetting(raw: string | undefined, fallback: boolean): boolean {
   if (raw === "true" || raw === "1") return true;
@@ -31,7 +32,9 @@ function resolveSettings(db: DB): Settings {
     remoteUrl: raw.remoteUrl || "",
     defaultModelClaude: raw.defaultModelClaude || "",
     defaultModelCodex: raw.defaultModelCodex || "",
-    defaultEffortLevel: (VALID_EFFORT_LEVELS.includes(raw.defaultEffortLevel ?? "") ? raw.defaultEffortLevel as EffortLevel : "") as EffortLevel | "",
+    defaultEffortLevel: (VALID_EFFORT_LEVELS.includes(raw.defaultEffortLevel ?? "")
+      ? raw.defaultEffortLevel
+      : DEFAULT_EFFORT_LEVEL) as EffortLevel,
     defaultAgent: raw.defaultAgent || "",
   };
 }
