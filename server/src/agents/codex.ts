@@ -18,6 +18,10 @@ interface CodexParserOptions {
   cwd?: string;
 }
 
+const SUBAGENT_TOOL_NAME = "Agent";
+const SPAWN_AGENT_TOOL_NAME = "spawn_agent";
+const WAIT_AGENT_TOOL_NAME = "wait_agent";
+
 export class CodexAdapter implements AgentAdapter {
   name = "codex";
 
@@ -292,6 +296,16 @@ export class CodexParser {
 
       case "mcp_tool_call": {
         const toolName = (item.tool as string) ?? "McpTool";
+        const subagentStart = this.buildSubagentStart(toolName, item.arguments);
+        if (subagentStart) {
+          return {
+            messages: [],
+            deltas: [
+              { deltaType: "tool_start", toolName: SUBAGENT_TOOL_NAME },
+              { deltaType: "tool_input", toolInput: subagentStart.toolInput },
+            ],
+          };
+        }
         const askUser = extractAskUserRequest(toolName, item.arguments);
         if (askUser) {
           return {
@@ -430,6 +444,13 @@ export class CodexParser {
         const args = item.arguments;
         const result = item.result as { content?: unknown } | undefined;
         const error = item.error as { message?: string } | undefined;
+        const subagentMessage = this.buildSubagentToolMessage(toolName, args, result, error);
+        if (subagentMessage) {
+          return {
+            messages: [subagentMessage],
+            deltas: [{ deltaType: "tool_end" }],
+          };
+        }
         const askUser = error?.message ? null : extractAskUserRequest(toolName, args);
         if (askUser) {
           return {
@@ -569,6 +590,153 @@ export class CodexParser {
     });
   }
 
+  private buildSubagentStart(toolName: string, args: unknown): { toolInput: string } | null {
+    if (toolName !== SPAWN_AGENT_TOOL_NAME) return null;
+    return { toolInput: this.stringifySubagentInput(args) };
+  }
+
+  private buildSubagentToolMessage(
+    toolName: string,
+    args: unknown,
+    result: { content?: unknown; structured_content?: unknown } | undefined,
+    error: { message?: string } | undefined,
+  ): ParsedMessage | null {
+    if (toolName === SPAWN_AGENT_TOOL_NAME) {
+      const subagentId = this.extractSubagentIdFromValue(result);
+      const errorOutput = error?.message ? `Error: ${error.message}` : undefined;
+      return {
+        role: "tool",
+        content: errorOutput ?? "",
+        toolName: SUBAGENT_TOOL_NAME,
+        toolInput: this.stringifySubagentInput(args),
+        toolOutput: errorOutput,
+        metadata: this.buildSubagentMetadata({
+          sourceToolName: toolName,
+          subagentId,
+          isError: Boolean(errorOutput),
+        }),
+      };
+    }
+
+    if (toolName === WAIT_AGENT_TOOL_NAME) {
+      const subagentId = this.extractSingleWaitTarget(args);
+      if (!subagentId) return null;
+
+      const parsedResult = error?.message
+        ? {
+            toolOutput: `Error: ${error.message}`,
+            metadata: { isError: true },
+          }
+        : this.parseMcpToolResult(result);
+      return {
+        role: "tool",
+        content: parsedResult.toolOutput,
+        toolName: SUBAGENT_TOOL_NAME,
+        toolInput: null,
+        toolOutput: parsedResult.toolOutput || undefined,
+        metadata: this.buildSubagentMetadata({
+          sourceToolName: toolName,
+          subagentId,
+          isError: parsedResult.metadata?.isError === true,
+          images: Array.isArray(parsedResult.metadata?.images) ? parsedResult.metadata.images : undefined,
+        }),
+      };
+    }
+
+    return null;
+  }
+
+  private stringifySubagentInput(args: unknown): string {
+    const record = isRecord(args) ? args : {};
+    const prompt = this.extractSubagentPrompt(record);
+    const payload: Record<string, unknown> = {
+      description: this.extractSubagentDescription(record, prompt),
+    };
+    if (prompt) payload.prompt = prompt;
+
+    const subagentType = this.extractSubagentType(record);
+    if (subagentType) payload.subagent_type = subagentType;
+
+    const target = this.extractSingleWaitTarget(record);
+    if (target) payload.subagent_id = target;
+
+    return JSON.stringify(payload);
+  }
+
+  private extractSubagentPrompt(args: Record<string, unknown>): string | null {
+    if (typeof args.message === "string" && args.message.trim()) return args.message.trim();
+
+    const items = Array.isArray(args.items) ? args.items : [];
+    for (const item of items) {
+      if (!isRecord(item)) continue;
+      if (typeof item.text === "string" && item.text.trim()) return item.text.trim();
+    }
+
+    return null;
+  }
+
+  private extractSubagentDescription(args: Record<string, unknown>, prompt: string | null): string {
+    if (typeof args.description === "string" && args.description.trim()) return args.description.trim();
+    if (prompt) return prompt.slice(0, 120);
+    return "Sub-agent task";
+  }
+
+  private extractSubagentType(args: Record<string, unknown>): string | undefined {
+    const value = args.agent_type ?? args.subagent_type ?? args.agentType ?? args.subagentType;
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  }
+
+  private extractSingleWaitTarget(args: unknown): string | undefined {
+    if (!isRecord(args)) return undefined;
+    if (typeof args.target === "string" && args.target.trim()) return args.target.trim();
+    const targets = Array.isArray(args.targets)
+      ? args.targets.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+    return targets.length === 1 ? targets[0] : undefined;
+  }
+
+  private extractSubagentIdFromValue(value: unknown, depth = 0): string | undefined {
+    if (depth > 4 || value === null || value === undefined) return undefined;
+    if (typeof value === "string") return undefined;
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const nested = this.extractSubagentIdFromValue(item, depth + 1);
+        if (nested) return nested;
+      }
+      return undefined;
+    }
+
+    if (!isRecord(value)) return undefined;
+
+    const direct = value.agent_id ?? value.agentId ?? value.subagent_id ?? value.subagentId ?? value.id;
+    if (typeof direct === "string" && direct.trim()) return direct.trim();
+
+    for (const nestedValue of Object.values(value)) {
+      const nested = this.extractSubagentIdFromValue(nestedValue, depth + 1);
+      if (nested) return nested;
+    }
+    return undefined;
+  }
+
+  private buildSubagentMetadata({
+    sourceToolName,
+    subagentId,
+    isError,
+    images,
+  }: {
+    sourceToolName: string;
+    subagentId?: string;
+    isError?: boolean;
+    images?: unknown[];
+  }): Record<string, unknown> {
+    const metadata: Record<string, unknown> = { sourceToolName };
+    if (subagentId) metadata.subagentId = subagentId;
+    if (isError) metadata.isError = true;
+    if (images && images.length > 0) metadata.images = images;
+    return metadata;
+  }
+
   private parseMcpToolResult(
     result: { content?: unknown; structured_content?: unknown } | undefined,
   ): Pick<ParsedMessage, "toolOutput" | "metadata"> & { toolOutput: string } {
@@ -702,4 +870,8 @@ function dedupeToolImages<T extends { src: string }>(images: T[]): T[] {
     seen.add(image.src);
     return true;
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
