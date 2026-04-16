@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.55.1] - 2026-04-16
+
+### Changed
+
+- **Pinned task list now scrolls instead of taking over the screen** — long TODO lists (20+ items) no longer push the input bar off-screen; the list caps at 40% of viewport height and scrolls internally. Collapse the header as before to hide it entirely.
+
 ## [0.1.55.0] - 2026-04-16
 
 ### Added
