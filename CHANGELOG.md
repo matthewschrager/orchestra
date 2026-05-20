@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.56.0] - 2026-04-16
+
+### Added
+
+- **LSP plugin PATH doctor** — Orchestra now checks on startup whether your enabled Claude Code LSP plugins have their language-server binaries installed. When `~/.claude/settings.json` enables a plugin like `pyright-lsp` but `pyright-langserver` isn't on PATH, the SDK would previously fail mid-turn with an unrecoverable agent error. The doctor surfaces the problem before the failure: a warning card in Settings (with copy-paste install commands for pyright, typescript-language-server, rust-analyzer, ruby-lsp, gopls), plus a summary in the server startup log. Also detects when a plugin is enabled but its marketplace manifest is missing entirely. Respects `$CLAUDE_CONFIG_DIR` for non-default Claude Code setups.
+- **`GET /api/diagnostics/lsp` endpoint** — returns each enabled LSP plugin's status (`ok`, `missing`, or `manifest-missing`), install hint (curated map for common language servers), and reason. Supports `?refresh=1` to re-run the check after installing a binary.
+- **LSP doctor regression coverage** — 25 tests covering plugin-ID parsing, enablement heuristics (boolean / version-array / string), multi-server plugins, manifest-missing surfacing, install-hint lookup, marketplace manifest loading against a temp directory, and route shape contracts.
+
 ## [0.1.55.1] - 2026-04-16
 
 ### Changed

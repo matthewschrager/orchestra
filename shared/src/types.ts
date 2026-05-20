@@ -288,6 +288,56 @@ export interface Settings {
   defaultAgent: string;
 }
 
+// ── LSP Plugin Diagnostics ──────────────────────────────
+
+/**
+ * One entry per enabled LSP plugin found in `~/.claude/settings.json`.
+ * Orchestra inherits the user's CLI plugin config via `settingSources: ["user", ...]`,
+ * which means any enabled `*-lsp@*` plugin will cause the SDK to spawn its language
+ * server. If the binary is missing from PATH, that spawn fails and the agent turn
+ * errors out. This diagnostic surfaces the mismatch on server startup so the user
+ * can install the binary (or disable the plugin) before hitting the error mid-turn.
+ */
+export interface LspPluginDiagnostic {
+  /** Full plugin ID, e.g. "pyright-lsp@claude-plugins-official" */
+  pluginId: string;
+  /** Plugin short name, e.g. "pyright-lsp" */
+  pluginName: string;
+  /** Marketplace name, e.g. "claude-plugins-official" */
+  marketplace: string;
+  /** LSP server identifier within the plugin (e.g. "pyright", "typescript") */
+  serverName: string;
+  /** Binary the plugin expects, e.g. "pyright-langserver" */
+  command: string;
+  /**
+   * - `"ok"`: binary was resolved on PATH
+   * - `"missing"`: binary not found on PATH (primary failure mode)
+   * - `"manifest-missing"`: plugin is enabled in settings but we couldn't find
+   *    its marketplace manifest — the SDK will fail with a different error.
+   */
+  status: "ok" | "missing" | "manifest-missing";
+  /**
+   * When status === "ok", indicates the binary was resolved. We intentionally
+   * do NOT include the absolute path — returning it would leak the server
+   * user's home directory layout and toolchain choices to any authenticated
+   * client (see adversarial review #19).
+   */
+  resolved: boolean;
+  /** Human-readable install hint from the curated map, if any. */
+  installHint: string | null;
+  /**
+   * Populated when status === "manifest-missing" — tells the user *why* we
+   * couldn't check this plugin. Null for "ok" / "missing".
+   */
+  reason: string | null;
+}
+
+export interface LspDiagnosticsResponse {
+  diagnostics: LspPluginDiagnostic[];
+  /** ISO timestamp of the last check */
+  checkedAt: string;
+}
+
 // ── Tailscale Detection ─────────────────────────────────
 
 export interface TailscaleStatus {

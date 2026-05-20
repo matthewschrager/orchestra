@@ -3,6 +3,7 @@ import { ALL_EFFORT_OPTIONS, type EffortLevel, type ModelOption, type Settings }
 import { api } from "../hooks/useApi";
 import { PushNotificationSettings } from "./PushNotificationSettings";
 import { RemoteAccessSettings } from "./RemoteAccessSettings";
+import { LspDiagnosticsSection } from "./LspDiagnosticsSection";
 
 interface Props {
   onClose: () => void;
@@ -182,6 +183,9 @@ export function SettingsPanel({ onClose, agents = [], onDefaultEffortChange, onD
 
             {/* Push Notifications */}
             <PushNotificationSettings />
+
+            {/* LSP plugin PATH diagnostics (self-hides when healthy) */}
+            <LspDiagnosticsSection />
 
             {/* Worktree Root */}
             <div>
